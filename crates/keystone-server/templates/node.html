@@ -26,7 +26,8 @@
 </nav>
 
 <section class="tab-panel active" data-panel="overview">
-  <div id="overview-widgets" data-json="{{ widgets_json }}"></div>
+  <div class="overview-toolbar" id="overview-toolbar"></div>
+  <div id="overview-widgets" data-json="{{ widgets_json }}" data-layout="{{ layout_json }}" data-presets="{{ presets_json }}" data-source="{{ dash_source }}" data-node="{{ node_id }}" data-poll-secs="{{ poll_secs }}"></div>
   <details class="raw-metrics">
     <summary>All samples</summary>
     <table>
@@ -83,7 +84,7 @@
 </section>
 <section class="tab-panel" data-panel="settings">
   <h2>Node settings</h2>
-  <p class="muted">These apply to this node in the UI only. Agent config on the machine is unchanged.</p>
+  <p class="muted">Display name, notes, and network interfaces apply to this UI. Poll interval also updates a connected agent at runtime; <code>agent.toml</code> on the machine is unchanged.</p>
   {% if settings_saved %}<p>Saved.</p>{% endif %}
   <form class="stack wide" method="post" action="/nodes/{{ node_id }}/settings">
     <label>Display name
@@ -91,6 +92,10 @@
     </label>
     <label>Notes
       <textarea name="notes" rows="4">{{ notes }}</textarea>
+    </label>
+    <label>Poll interval (seconds)
+      <input type="number" name="poll_secs" min="1" max="60" step="1" value="{{ poll_secs }}">
+      <span class="muted">Agent push and this page’s widget refresh. 1–60 seconds, default 1.</span>
     </label>
     <label>Network interfaces (one per line)
       <textarea name="network_devices" rows="4" placeholder="leave empty for automatic">{{ network_devices_text }}</textarea>

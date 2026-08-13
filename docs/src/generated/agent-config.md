@@ -12,7 +12,7 @@ Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.
 | `docker` | object |  |
 | `ingest_token` | string | Shared ingest token. This cannot call Docker manage APIs. |
 | `ingest_url` | string | gRPC ingest URL, for example `http://keystone.example:9100`. |
-| `interval_secs` | integer | Push interval in seconds. |
+| `interval_secs` | integer | Push interval in seconds. Default 1. A connected server can override this at runtime from the node's Settings poll interval. |
 | `labels` | object | Extra labels attached to every sample (`key=value` in TOML map). |
 | `node_id` | string | Stable node id. Defaults to hostname when empty. |
 

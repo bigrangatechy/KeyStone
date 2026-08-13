@@ -6,7 +6,8 @@
 
 ingest_url = "http://keystone.home.arpa:9100"
 ingest_token = "change-me"
-interval_secs = 15
+# Overridden while connected by node Settings (poll interval, default 1s).
+interval_secs = 1
 buffer_dir = "/var/lib/keystone/agent-buffer"
 
 [labels]

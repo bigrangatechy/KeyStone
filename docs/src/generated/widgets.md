@@ -2,7 +2,7 @@
 
 # Dashboard widgets
 
-The node overview is a list of widgets, not a hard-coded page. Add a `WidgetKind` variant, hydrate it, and draw it in `app.js`. Layout JSON is stored per node when customised; otherwise the built-in default is used.
+The node overview is a customisable widget dashboard. Add a `WidgetKind` variant, hydrate it, draw it in `app.js`, and register a preset so the picker can place it. Layout JSON is stored per node when customised; otherwise the built-in default is used. The overview refreshes from `/api/v1/nodes/{id}/dashboard` at the node's poll interval (Settings, default 1s). A connected agent is told to push at the same interval; `agent.toml` `interval_secs` is the fallback until then.
 
 | Kind | Description |
 |---|---|
@@ -10,3 +10,39 @@ The node overview is a list of widgets, not a hard-coded page. Add a `WidgetKind
 | `gauge` | Donut 0–100% from a ratio or used/total pair |
 | `bar_list` | One usage bar per labeled series (filesystems) |
 | `sparkline` | Short history sparkline of one metric |
+
+## Presets
+
+These are the cards the overview **Customize** picker can add.
+
+| Id | Group | Kind | Description |
+|---|---|---|---|
+| `cpu` | CPU | `gauge` | Donut of overall CPU usage |
+| `cpu_spark` | CPU | `sparkline` | CPU usage over the last 15 minutes |
+| `cpu_stat` | CPU | `stat` | CPU usage as a percentage |
+| `cpu_temp` | CPU | `stat` | CPU package / SoC temperature |
+| `cpu_temp_spark` | CPU | `sparkline` | CPU temperature over the last 15 minutes |
+| `memory` | Memory | `gauge` | Donut of used / total RAM |
+| `memory_spark` | Memory | `sparkline` | Used RAM over the last 15 minutes |
+| `memory_stat` | Memory | `stat` | Used RAM as a number |
+| `memory_avail` | Memory | `stat` | Memory available for new work |
+| `load` | Load | `sparkline` | 1 minute load average sparkline |
+| `load_stat` | Load | `stat` | 1 minute load average |
+| `load5` | Load | `sparkline` | 5 minute load average sparkline |
+| `load15` | Load | `stat` | 15 minute load average |
+| `load15_spark` | Load | `sparkline` | 15 minute load average sparkline |
+| `uptime` | System | `stat` | Time since last boot |
+| `agent` | System | `stat` | Whether the agent is pushing |
+| `temps` | System | `bar_list` | Every hardware monitor and thermal-zone sensor |
+| `hottest` | System | `stat` | Hottest sensor on the node |
+| `disks` | Disk | `bar_list` | Used space per filesystem |
+| `net_rx` | Network | `sparkline` | Receive rate sparkline |
+| `net_tx` | Network | `sparkline` | Transmit rate sparkline |
+| `net_rx_stat` | Network | `stat` | Current receive rate |
+| `net_tx_stat` | Network | `stat` | Current transmit rate |
+| `gpu` | GPU | `gauge` | Donut of GPU busy (average if several cards) |
+| `gpu_mem` | GPU | `gauge` | Donut of GPU memory used / total |
+| `gpu_spark` | GPU | `sparkline` | GPU busy over the last 15 minutes |
+| `gpu_list` | GPU | `bar_list` | One busy bar per GPU |
+| `gpu_temp` | GPU | `stat` | Hottest GPU temperature |
+| `gpu_temps` | GPU | `bar_list` | Temperature per GPU |

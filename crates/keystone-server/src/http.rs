@@ -16,7 +16,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use keystone_core::docker::DockerOp;
 use keystone_core::metrics::catalog;
 use keystone_core::rbac::Permission;
-use keystone_core::widgets::{hydrate, Dashboard, WidgetKind};
+use keystone_core::widgets::{hydrate, presets, Dashboard, WidgetKind};
 use keystone_core::NodeSettings;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -46,7 +46,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/catalog", get(catalog_api))
         .route(
             "/api/v1/nodes/{id}/dashboard",
-            get(dashboard_get).put(dashboard_put),
+            get(dashboard_get)
+                .put(dashboard_put)
+                .delete(dashboard_delete),
         )
         .route("/logout", post(logout))
         .layer(middleware::from_fn_with_state(
@@ -417,8 +419,9 @@ async fn node_setup_page(
     let token = state.config.ingest_token.clone();
     let awaiting = node.awaiting_agent();
     let agent_toml = format!(
-        "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{}\"\ninterval_secs = 15\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n\n[docker]\nenabled = {docker}\nmanage = {docker}\nallow_exec = false\ncompose_paths = []\n",
-        node.node_id
+        "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{}\"\ninterval_secs = {}\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n\n[docker]\nenabled = {docker}\nmanage = {docker}\nallow_exec = false\ncompose_paths = []\n",
+        node.node_id,
+        node_settings(&state, &id).poll_interval_secs()
     );
     Html(
         NodeSetupTemplate {
@@ -456,10 +459,14 @@ struct NodeTemplate {
     networks_json: String,
     docker_error: String,
     widgets_json: String,
+    layout_json: String,
+    presets_json: String,
+    dash_source: String,
     display_name: String,
     notes: String,
     network_devices_text: String,
     detected_nics: String,
+    poll_secs: u32,
     settings_saved: bool,
 }
 
@@ -536,8 +543,11 @@ async fn node_page(
         return (StatusCode::NOT_FOUND, "node not found").into_response();
     };
     let samples = state.stores.series.latest_samples(&id).unwrap_or_default();
+    let (dash, dash_source) = effective_dashboard(&state, &id);
     let widgets_json = serde_json::to_string(&hydrate_node_widgets(&state, &id, &samples))
         .unwrap_or_else(|_| "[]".into());
+    let layout_json = serde_json::to_string(&dash).unwrap_or_else(|_| "{}".into());
+    let presets_json = serde_json::to_string(&presets()).unwrap_or_else(|_| "[]".into());
     let metrics = samples
         .iter()
         .map(|s| MetricRow {
@@ -612,10 +622,14 @@ async fn node_page(
             networks_json,
             docker_error,
             widgets_json,
+            layout_json,
+            presets_json,
+            dash_source: dash_source.into(),
             display_name: settings.display_name.clone(),
             notes: settings.notes.clone(),
             network_devices_text: settings.network_devices.join("\n"),
             detected_nics: nics.join(", "),
+            poll_secs: settings.poll_interval_secs() as u32,
             settings_saved: q.saved.as_deref() == Some("1"),
         }
         .render()
@@ -630,6 +644,8 @@ struct NodeSettingsForm {
     notes: String,
     #[serde(default)]
     network_devices: String,
+    #[serde(default)]
+    poll_secs: Option<u32>,
 }
 
 async fn node_settings_post(
@@ -650,12 +666,16 @@ async fn node_settings_post(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
             .collect(),
+        poll_secs: NodeSettings::clamp_poll_secs(form.poll_secs.unwrap_or(1)),
     };
     let encoded = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
     let _ = state
         .stores
         .metadata
         .set_node_settings_json(&id, Some(&encoded));
+    state
+        .agents
+        .nudge_poll_interval(&id, settings.poll_interval_secs());
     Redirect::to(&format!("/nodes/{id}?saved=1&panel=settings")).into_response()
 }
 
@@ -943,6 +963,26 @@ pub async fn dashboard_put(
         .metadata
         .set_node_dashboard_json(&id, Some(&encoded))
     {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "node not found").into_response(),
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/nodes/{id}/dashboard",
+    params(("id" = String, Path, description = "Node id")),
+    responses(
+        (status = 204, description = "Reset to default"),
+        (status = 404, description = "Unknown node")
+    )
+)]
+/// Clear a custom layout so the built-in default is used again.
+pub async fn dashboard_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    match state.stores.metadata.set_node_dashboard_json(&id, None) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (StatusCode::NOT_FOUND, "node not found").into_response(),
     }

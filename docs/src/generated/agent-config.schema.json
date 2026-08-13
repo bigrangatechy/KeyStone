@@ -36,8 +36,8 @@
       "type": "string"
     },
     "interval_secs": {
-      "description": "Push interval in seconds.",
-      "default": 15,
+      "description": "Push interval in seconds. Default 1. A connected server can override this at runtime from the node's Settings poll interval.",
+      "default": 1,
       "type": "integer",
       "format": "uint64",
       "minimum": 0.0

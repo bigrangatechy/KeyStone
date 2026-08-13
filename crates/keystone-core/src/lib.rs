@@ -9,12 +9,14 @@
 pub mod config;
 pub mod docker;
 pub mod docs;
+pub mod gpu;
 pub mod metrics;
 pub mod net;
 pub mod node;
 pub mod rbac;
 pub mod sample;
 pub mod settings;
+pub mod temp;
 pub mod widgets;
 
 pub use config::{
@@ -26,6 +28,6 @@ pub use node::NodeIdentity;
 pub use rbac::Permission;
 pub use sample::{Label, Sample};
 pub use settings::NodeSettings;
-pub use widgets::{Dashboard, WidgetInstance, WidgetKind};
+pub use widgets::{presets, Dashboard, WidgetInstance, WidgetKind, WidgetPreset};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

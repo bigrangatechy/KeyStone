@@ -22,7 +22,7 @@
 sudo install -d -m 0750 /etc/keystone
 # paste the config above into /etc/keystone/agent.toml
 sudo systemctl enable --now keystone-agent</pre>
-<p>From a source checkout (smoke test, no root). Change <code>buffer_dir</code> to a writable path such as <code>/tmp/keystone/agent-buffer</code>:</p>
+<p>From a source checkout (smoke test, no root). Change <code>buffer_dir</code> to a writable path such as <code>.smoke/agent-buffer</code>:</p>
 <pre class="snippet"># save the config as agent.toml, then:
 cargo run -p keystone-agent -- --config agent.toml</pre>
 <p><a href="/nodes/{{ node_id }}">Open node</a> · <a href="/">All nodes</a></p>

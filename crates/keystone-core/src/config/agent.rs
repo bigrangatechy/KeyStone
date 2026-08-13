@@ -18,7 +18,8 @@ pub struct AgentConfig {
     /// Extra labels attached to every sample (`key=value` in TOML map).
     #[serde(default)]
     pub labels: std::collections::BTreeMap<String, String>,
-    /// Push interval in seconds.
+    /// Push interval in seconds. Default 1. A connected server can override
+    /// this at runtime from the node's Settings poll interval.
     #[serde(default = "default_interval")]
     pub interval_secs: u64,
     /// Directory for on-disk push buffer when the server is unreachable.
@@ -29,7 +30,7 @@ pub struct AgentConfig {
 }
 
 fn default_interval() -> u64 {
-    15
+    1
 }
 
 fn default_buffer() -> String {

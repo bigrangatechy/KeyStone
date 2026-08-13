@@ -280,7 +280,7 @@
         block.appendChild(track);
         card.appendChild(block);
       });
-      if (!(w.rows && w.rows.length)) card.appendChild(el("p", "muted", "No filesystems yet."));
+      if (!(w.rows && w.rows.length)) card.appendChild(el("p", "muted", "No series yet."));
     } else if (w.kind === "sparkline") {
       card.appendChild(el("div", "stat", w.display || "—"));
       card.appendChild(sparkline(w.spark || []));
@@ -296,15 +296,252 @@
     return card;
   }
 
-  const widgets = document.getElementById("overview-widgets");
-  if (widgets) {
-    const data = parse(widgets);
-    const grid = el("div", "widget-grid");
-    if (Array.isArray(data) && data.length) {
-      data.forEach((w) => grid.appendChild(renderWidget(w)));
-    } else {
-      grid.appendChild(el("p", "muted", "No samples yet. Widgets fill in after the agent heartbeats."));
+  function parseAttr(node, name) {
+    try {
+      return JSON.parse(node.getAttribute(name) || "null");
+    } catch (e) {
+      return null;
     }
-    widgets.replaceChildren(grid);
+  }
+
+  function clone(v) {
+    return JSON.parse(JSON.stringify(v));
+  }
+
+  const widgetsHost = document.getElementById("overview-widgets");
+  if (widgetsHost) {
+    const nodeId = widgetsHost.getAttribute("data-node");
+    const pollSecs = Math.max(1, Math.min(60, Number(widgetsHost.getAttribute("data-poll-secs") || 1) || 1));
+    const toolbar = document.getElementById("overview-toolbar");
+    const presets = parseAttr(widgetsHost, "data-presets") || [];
+    let layout = parseAttr(widgetsHost, "data-layout") || { version: 1, widgets: [] };
+    let source = widgetsHost.getAttribute("data-source") || "default";
+    let hydrated = parse(widgetsHost);
+    let editing = false;
+    let backup = null;
+    const dashUrl = "/api/v1/nodes/" + encodeURIComponent(nodeId) + "/dashboard";
+
+    function paintWidgets() {
+      const byId = {};
+      (Array.isArray(hydrated) ? hydrated : []).forEach((w) => {
+        byId[w.id] = w;
+      });
+      const grid = el("div", "widget-grid");
+      const items = (layout && layout.widgets) || [];
+      if (!items.length) {
+        grid.appendChild(el("p", "muted", "No widgets yet. Use Customize to add some."));
+      }
+      items.forEach((spec, idx) => {
+        const h = Object.assign({
+          id: spec.id,
+          kind: spec.kind,
+          title: spec.title,
+          span: spec.span,
+          display: "—",
+          tone: "",
+          rows: [],
+          spark: []
+        }, byId[spec.id] || {});
+        h.title = spec.title;
+        h.span = spec.span;
+        h.kind = spec.kind;
+        const card = renderWidget(h);
+        if (editing) {
+          card.classList.add("editing");
+          card.insertBefore(editChrome(idx), card.firstChild);
+        }
+        grid.appendChild(card);
+      });
+      widgetsHost.replaceChildren(grid);
+    }
+
+    function editChrome(idx) {
+      const row = el("div", "widget-edit");
+      const n = layout.widgets.length;
+      const span = Number(layout.widgets[idx].span) || 1;
+      function addBtn(label, fn, disabled) {
+        const b = el("button", null, label);
+        b.type = "button";
+        b.disabled = !!disabled;
+        b.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          fn();
+        });
+        row.appendChild(b);
+      }
+      addBtn("↑", () => moveWidget(idx, -1), idx === 0);
+      addBtn("↓", () => moveWidget(idx, 1), idx >= n - 1);
+      addBtn("−", () => setSpan(idx, span - 1), span <= 1);
+      addBtn("+", () => setSpan(idx, span + 1), span >= 4);
+      addBtn("Remove", () => {
+        layout.widgets.splice(idx, 1);
+        paintAll();
+      });
+      return row;
+    }
+
+    function moveWidget(idx, dir) {
+      const j = idx + dir;
+      if (j < 0 || j >= layout.widgets.length) return;
+      const w = layout.widgets[idx];
+      layout.widgets[idx] = layout.widgets[j];
+      layout.widgets[j] = w;
+      paintAll();
+    }
+
+    function setSpan(idx, span) {
+      layout.widgets[idx].span = Math.max(1, Math.min(4, span));
+      paintAll();
+    }
+
+    function uniqueId(base) {
+      const used = {};
+      (layout.widgets || []).forEach((w) => { used[w.id] = true; });
+      if (!used[base]) return base;
+      let n = 2;
+      while (used[base + "-" + n]) n += 1;
+      return base + "-" + n;
+    }
+
+    function addPreset(id) {
+      const p = presets.find((x) => x.id === id);
+      if (!p || !p.widget) return;
+      const w = clone(p.widget);
+      w.id = uniqueId(p.widget.id || p.id);
+      layout.widgets.push(w);
+      paintAll();
+    }
+
+    function paintToolbar() {
+      if (!toolbar) return;
+      toolbar.replaceChildren();
+      if (!editing) {
+        const b = el("button", null, "Customize");
+        b.type = "button";
+        b.addEventListener("click", enterEdit);
+        toolbar.appendChild(b);
+        toolbar.appendChild(el("span", "muted", source === "custom" ? "Custom layout" : "Default layout"));
+        return;
+      }
+      const select = document.createElement("select");
+      select.appendChild(new Option("Add widget…", ""));
+      const groups = {};
+      presets.forEach((p) => {
+        (groups[p.group] || (groups[p.group] = [])).push(p);
+      });
+      Object.keys(groups).sort().forEach((g) => {
+        const og = document.createElement("optgroup");
+        og.label = g;
+        groups[g].forEach((p) => {
+          og.appendChild(new Option((p.widget && p.widget.title ? p.widget.title : p.id) + " — " + (p.description || ""), p.id));
+        });
+        select.appendChild(og);
+      });
+      select.addEventListener("change", () => {
+        if (!select.value) return;
+        addPreset(select.value);
+        select.value = "";
+      });
+      toolbar.appendChild(select);
+      const save = el("button", null, "Save");
+      save.type = "button";
+      save.addEventListener("click", saveLayout);
+      toolbar.appendChild(save);
+      const cancel = el("button", null, "Cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", cancelEdit);
+      toolbar.appendChild(cancel);
+      const reset = el("button", null, "Reset to default");
+      reset.type = "button";
+      reset.addEventListener("click", resetLayout);
+      toolbar.appendChild(reset);
+    }
+
+    function paintAll() {
+      paintToolbar();
+      paintWidgets();
+    }
+
+    function enterEdit() {
+      editing = true;
+      backup = clone(layout);
+      paintAll();
+    }
+
+    function cancelEdit() {
+      editing = false;
+      if (backup) layout = backup;
+      backup = null;
+      paintAll();
+    }
+
+    async function saveLayout() {
+      try {
+        const r = await fetch(dashUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(layout)
+        });
+        if (!r.ok) {
+          window.alert("Could not save layout: " + (await r.text()));
+          return;
+        }
+        editing = false;
+        backup = null;
+        source = "custom";
+        await refresh();
+      } catch (e) {
+        window.alert("Could not save layout.");
+      }
+    }
+
+    async function resetLayout() {
+      if (!window.confirm("Reset this node’s dashboard to the built-in default?")) return;
+      try {
+        const r = await fetch(dashUrl, { method: "DELETE" });
+        if (!r.ok) {
+          window.alert("Could not reset layout: " + (await r.text()));
+          return;
+        }
+        editing = false;
+        backup = null;
+        source = "default";
+        await refresh();
+      } catch (e) {
+        window.alert("Could not reset layout.");
+      }
+    }
+
+    async function refresh() {
+      try {
+        const r = await fetch(dashUrl);
+        if (r.status === 401 || r.status === 403) return "auth";
+        if (!r.ok) return;
+        const j = await r.json();
+        hydrated = j.widgets;
+        if (!editing) {
+          if (j.layout) layout = j.layout;
+          if (j.source) source = j.source;
+          paintAll();
+        } else {
+          paintWidgets();
+        }
+      } catch (e) {}
+    }
+
+    paintAll();
+    if (nodeId) {
+      let inflight = false;
+      const timer = setInterval(async () => {
+        if (document.hidden || inflight) return;
+        inflight = true;
+        try {
+          const status = await refresh();
+          if (status === "auth") clearInterval(timer);
+        } finally {
+          inflight = false;
+        }
+      }, pollSecs * 1000);
+    }
   }
 })();

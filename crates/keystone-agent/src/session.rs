@@ -9,6 +9,7 @@ use keystone_core::config::AgentConfig;
 use keystone_core::docker::DockerOp;
 use keystone_core::node::NodeIdentity;
 use keystone_core::sample::{self, Label, Sample};
+use keystone_core::NodeSettings;
 use keystone_proto::ingest_client::IngestClient;
 use keystone_proto::{
     agent_to_server, server_to_agent, Ack, AgentToServer, CommandResult, Heartbeat, PushFrame,
@@ -89,6 +90,7 @@ async fn connect_session(
     let docker_push = docker.is_some();
 
     let mut interval = tokio::time::interval(Duration::from_secs(cfg.interval_secs.max(1)));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -116,7 +118,21 @@ async fn connect_session(
                         handle_ack(&ack);
                     }
                     Ok(Some(ServerToAgent { body: Some(server_to_agent::Body::Command(cmd)) })) => {
-                        let result = handle_command(docker, &cmd.op, &cmd.payload_json).await;
+                        let result = if cmd.op == "set_interval" {
+                            match parse_set_interval(&cmd.payload_json) {
+                                Ok(secs) => {
+                                    interval = tokio::time::interval(Duration::from_secs(secs));
+                                    interval.set_missed_tick_behavior(
+                                        tokio::time::MissedTickBehavior::Delay,
+                                    );
+                                    info!("push interval set to {secs}s");
+                                    Ok(serde_json::json!({ "interval_secs": secs }))
+                                }
+                                Err(e) => Err(e),
+                            }
+                        } else {
+                            handle_command(docker, &cmd.op, &cmd.payload_json).await
+                        };
                         let body = match result {
                             Ok(payload) => CommandResult {
                                 request_id: cmd.request_id,
@@ -153,6 +169,16 @@ fn handle_ack(ack: &Ack) {
     if !ack.ok {
         warn!("ingest nack: {}", ack.error);
     }
+}
+
+fn parse_set_interval(payload_json: &str) -> anyhow::Result<u64> {
+    let v: serde_json::Value = if payload_json.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(payload_json).context("set_interval payload")?
+    };
+    let secs = v.get("interval_secs").and_then(|x| x.as_u64()).unwrap_or(1);
+    Ok(NodeSettings::clamp_poll_secs(secs as u32) as u64)
 }
 
 async fn handle_command(
@@ -244,5 +270,19 @@ pub fn identity_from_heartbeat(hb: &Heartbeat) -> NodeIdentity {
                 value: l.value.clone(),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_interval_clamps() {
+        assert_eq!(parse_set_interval(r#"{"interval_secs":1}"#).unwrap(), 1);
+        assert_eq!(parse_set_interval(r#"{"interval_secs":0}"#).unwrap(), 1);
+        assert_eq!(parse_set_interval(r#"{"interval_secs":99}"#).unwrap(), 60);
+        assert_eq!(parse_set_interval("{}").unwrap(), 1);
+        assert_eq!(parse_set_interval("").unwrap(), 1);
     }
 }

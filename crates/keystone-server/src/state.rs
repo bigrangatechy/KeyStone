@@ -47,6 +47,26 @@ impl AgentRegistry {
         self.inner.lock().contains_key(node_id)
     }
 
+    /// Queue a command without waiting for a result. No-op if the agent is offline.
+    pub fn nudge(&self, node_id: &str, op: &str, payload_json: String) {
+        let cmd = Command {
+            request_id: Uuid::new_v4().to_string(),
+            op: op.to_string(),
+            payload_json,
+        };
+        if let Some(agent) = self.inner.lock().get_mut(node_id) {
+            let _ = agent.cmd_tx.try_send(cmd);
+        }
+    }
+
+    pub fn nudge_poll_interval(&self, node_id: &str, secs: u64) {
+        self.nudge(
+            node_id,
+            "set_interval",
+            serde_json::json!({ "interval_secs": secs }).to_string(),
+        );
+    }
+
     pub fn complete(&self, node_id: &str, result: keystone_proto::CommandResult) {
         let mut inner = self.inner.lock();
         if let Some(agent) = inner.get_mut(node_id) {

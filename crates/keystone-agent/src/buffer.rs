@@ -17,7 +17,7 @@ impl DiskBuffer {
         let dir = dir.into();
         std::fs::create_dir_all(&dir).with_context(|| {
             format!(
-                "create buffer dir {} (need write access; examples use /tmp/keystone/agent-buffer)",
+                "create buffer dir {} (need write access; examples use .smoke/agent-buffer)",
                 dir.display()
             )
         })?;

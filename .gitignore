@@ -8,3 +8,4 @@
 *.swp
 /docs/book
 /public
+/.smoke

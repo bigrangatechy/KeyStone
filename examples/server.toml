@@ -3,11 +3,11 @@
 
 # Example KeyStone server config for a local smoke test (writable without root).
 # Packaged installs use /var/lib/keystone. Set KEYSTONE_ADMIN_PASSWORD on first
-# start if password_hash is empty.
+# start if password_hash is empty. Run `cargo run` from the repo root.
 
 http_listen = "0.0.0.0:8080"
 grpc_listen = "0.0.0.0:9100"
-data_dir = "/tmp/keystone"
+data_dir = ".smoke"
 ingest_token = "change-me"
 retention_hours = 168
 

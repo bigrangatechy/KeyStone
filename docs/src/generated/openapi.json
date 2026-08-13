@@ -93,6 +93,32 @@
             "description": "Unknown node"
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "crate::http"
+        ],
+        "summary": "Clear a custom layout so the built-in default is used again.",
+        "operationId": "dashboard_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Reset to default"
+          },
+          "404": {
+            "description": "Unknown node"
+          }
+        }
       }
     }
   },

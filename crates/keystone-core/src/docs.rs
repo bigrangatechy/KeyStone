@@ -81,11 +81,24 @@ pub fn widgets_markdown() -> String {
     let mut out = String::from(GENERATED_BANNER);
     out.push_str("# Dashboard widgets\n\n");
     out.push_str(
-        "The node overview is a list of widgets, not a hard-coded page. Add a `WidgetKind` variant, hydrate it, and draw it in `app.js`. Layout JSON is stored per node when customised; otherwise the built-in default is used.\n\n",
+        "The node overview is a customisable widget dashboard. Add a `WidgetKind` variant, hydrate it, draw it in `app.js`, and register a preset so the picker can place it. Layout JSON is stored per node when customised; otherwise the built-in default is used. The overview refreshes from `/api/v1/nodes/{id}/dashboard` at the node's poll interval (Settings, default 1s). A connected agent is told to push at the same interval; `agent.toml` `interval_secs` is the fallback until then.\n\n",
     );
     out.push_str("| Kind | Description |\n|---|---|\n");
     for k in WidgetKind::iter() {
         out.push_str(&format!("| `{}` | {} |\n", k.as_str(), k.description()));
+    }
+    out.push_str(
+        "\n## Presets\n\nThese are the cards the overview **Customize** picker can add.\n\n",
+    );
+    out.push_str("| Id | Group | Kind | Description |\n|---|---|---|---|\n");
+    for p in crate::widgets::presets() {
+        out.push_str(&format!(
+            "| `{}` | {} | `{}` | {} |\n",
+            p.id,
+            p.group,
+            p.widget.kind.as_str(),
+            p.description.replace('|', "\\|")
+        ));
     }
     out
 }

@@ -65,6 +65,20 @@ form.login label { display: flex; flex-direction: column; gap: 0.25rem; color: v
 
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
 .page-head h1 { margin: 0.2rem 0; }
+.overview-toolbar {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+  margin: 0 0 0.75rem;
+}
+.overview-toolbar select {
+  font: inherit; background: var(--card); color: var(--fg);
+  border: 1px solid var(--line); padding: 0.35rem 0.65rem; border-radius: 4px;
+  max-width: 22rem;
+}
+.widget-edit {
+  display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0 0 0.45rem;
+}
+.widget-edit button { font-size: 0.75rem; padding: 0.12rem 0.4rem; }
+.widget.editing { outline: 1px dashed var(--line); }
 a.btn, .btn {
   display: inline-block; background: var(--card); color: var(--fg);
   border: 1px solid var(--line); padding: 0.4rem 0.75rem; border-radius: 4px;

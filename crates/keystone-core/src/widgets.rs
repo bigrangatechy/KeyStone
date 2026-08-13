@@ -7,10 +7,8 @@
 //! 1. Add a [`WidgetKind`] variant and a line in [`WidgetKind::description`].
 //! 2. Fill values in [`hydrate`].
 //! 3. Draw it in `crates/keystone-server/src/static/app.js` (`renderWidget`).
-//! 4. Optionally place it in [`Dashboard::default_node`].
-//!
-//! Layout is data ([`Dashboard`] JSON). The default is used until a node has a
-//! saved layout — that is the hook for a customisable per-node UI.
+//! 4. Register a [`presets`] entry so the overview picker can place it.
+//! 5. Optionally include it on the built-in default dashboard.
 
 use std::collections::{HashMap, HashSet};
 
@@ -91,6 +89,49 @@ pub struct WidgetInstance {
     pub invert: bool,
 }
 
+impl WidgetInstance {
+    pub fn new(
+        id: impl Into<String>,
+        kind: WidgetKind,
+        title: impl Into<String>,
+        metrics: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            kind,
+            title: title.into(),
+            span: 1,
+            metrics: metrics.into_iter().map(Into::into).collect(),
+            label: None,
+            invert: false,
+        }
+    }
+
+    pub fn with_span(mut self, span: u8) -> Self {
+        self.span = span;
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_invert(mut self) -> Self {
+        self.invert = true;
+        self
+    }
+}
+
+/// A catalog entry the node overview picker can drop onto a dashboard.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WidgetPreset {
+    pub id: String,
+    pub group: String,
+    pub description: String,
+    pub widget: WidgetInstance,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Dashboard {
     pub version: u32,
@@ -100,99 +141,27 @@ pub struct Dashboard {
 impl Dashboard {
     pub const VERSION: u32 = 1;
 
+    const DEFAULT_IDS: &'static [&'static str] = &[
+        "cpu", "cpu_temp", "memory", "load", "uptime", "disks", "temps", "load15", "agent",
+        "net_rx", "net_tx", "gpu", "gpu_mem", "gpu_temp",
+    ];
+
     /// Built-in overview until the node has a saved layout.
     pub fn default_node() -> Self {
+        let catalog = presets();
         Self {
             version: Self::VERSION,
-            widgets: vec![
-                WidgetInstance {
-                    id: "cpu".into(),
-                    kind: WidgetKind::Gauge,
-                    title: "CPU".into(),
-                    span: 1,
-                    metrics: vec!["node_cpu_usage_ratio".into()],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "memory".into(),
-                    kind: WidgetKind::Gauge,
-                    title: "Memory".into(),
-                    span: 1,
-                    metrics: vec![
-                        "node_memory_used_bytes".into(),
-                        "node_memory_total_bytes".into(),
-                    ],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "load".into(),
-                    kind: WidgetKind::Sparkline,
-                    title: "Load".into(),
-                    span: 1,
-                    metrics: vec!["node_load1".into()],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "uptime".into(),
-                    kind: WidgetKind::Stat,
-                    title: "Uptime".into(),
-                    span: 1,
-                    metrics: vec!["node_uptime_seconds".into()],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "disks".into(),
-                    kind: WidgetKind::BarList,
-                    title: "Disks".into(),
-                    span: 2,
-                    metrics: vec![
-                        "node_filesystem_avail_bytes".into(),
-                        "node_filesystem_size_bytes".into(),
-                    ],
-                    label: Some("mountpoint".into()),
-                    invert: true,
-                },
-                WidgetInstance {
-                    id: "load15".into(),
-                    kind: WidgetKind::Stat,
-                    title: "Load 15m".into(),
-                    span: 1,
-                    metrics: vec!["node_load15".into()],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "agent".into(),
-                    kind: WidgetKind::Stat,
-                    title: "Agent".into(),
-                    span: 1,
-                    metrics: vec!["keystone_agent_up".into()],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "net_rx".into(),
-                    kind: WidgetKind::Sparkline,
-                    title: "Network in".into(),
-                    span: 2,
-                    metrics: vec!["node_network_receive_bytes_per_second".into()],
-                    label: None,
-                    invert: false,
-                },
-                WidgetInstance {
-                    id: "net_tx".into(),
-                    kind: WidgetKind::Sparkline,
-                    title: "Network out".into(),
-                    span: 2,
-                    metrics: vec!["node_network_transmit_bytes_per_second".into()],
-                    label: None,
-                    invert: false,
-                },
-            ],
+            widgets: Self::DEFAULT_IDS
+                .iter()
+                .map(|id| {
+                    catalog
+                        .iter()
+                        .find(|p| p.id == *id)
+                        .unwrap_or_else(|| panic!("missing widget preset {id}"))
+                        .widget
+                        .clone()
+                })
+                .collect(),
         }
     }
 
@@ -244,6 +213,317 @@ impl Dashboard {
             }
         }
         Ok(())
+    }
+}
+
+/// Cards the overview picker can add. Default dashboards are a subset of these ids.
+pub fn presets() -> Vec<WidgetPreset> {
+    vec![
+        preset(
+            "cpu",
+            "CPU",
+            "Donut of overall CPU usage",
+            WidgetInstance::new("cpu", WidgetKind::Gauge, "CPU", ["node_cpu_usage_ratio"]),
+        ),
+        preset(
+            "cpu_spark",
+            "CPU",
+            "CPU usage over the last 15 minutes",
+            WidgetInstance::new(
+                "cpu_spark",
+                WidgetKind::Sparkline,
+                "CPU",
+                ["node_cpu_usage_ratio"],
+            ),
+        ),
+        preset(
+            "cpu_stat",
+            "CPU",
+            "CPU usage as a percentage",
+            WidgetInstance::new(
+                "cpu_stat",
+                WidgetKind::Stat,
+                "CPU",
+                ["node_cpu_usage_ratio"],
+            ),
+        ),
+        preset(
+            "cpu_temp",
+            "CPU",
+            "CPU package / SoC temperature",
+            WidgetInstance::new(
+                "cpu_temp",
+                WidgetKind::Stat,
+                "CPU temp",
+                ["node_cpu_temperature_celsius"],
+            ),
+        ),
+        preset(
+            "cpu_temp_spark",
+            "CPU",
+            "CPU temperature over the last 15 minutes",
+            WidgetInstance::new(
+                "cpu_temp_spark",
+                WidgetKind::Sparkline,
+                "CPU temp",
+                ["node_cpu_temperature_celsius"],
+            ),
+        ),
+        preset(
+            "memory",
+            "Memory",
+            "Donut of used / total RAM",
+            WidgetInstance::new(
+                "memory",
+                WidgetKind::Gauge,
+                "Memory",
+                ["node_memory_used_bytes", "node_memory_total_bytes"],
+            ),
+        ),
+        preset(
+            "memory_spark",
+            "Memory",
+            "Used RAM over the last 15 minutes",
+            WidgetInstance::new(
+                "memory_spark",
+                WidgetKind::Sparkline,
+                "Memory",
+                ["node_memory_used_bytes"],
+            ),
+        ),
+        preset(
+            "memory_stat",
+            "Memory",
+            "Used RAM as a number",
+            WidgetInstance::new(
+                "memory_stat",
+                WidgetKind::Stat,
+                "Memory",
+                ["node_memory_used_bytes"],
+            ),
+        ),
+        preset(
+            "memory_avail",
+            "Memory",
+            "Memory available for new work",
+            WidgetInstance::new(
+                "memory_avail",
+                WidgetKind::Stat,
+                "Mem available",
+                ["node_memory_available_bytes"],
+            ),
+        ),
+        preset(
+            "load",
+            "Load",
+            "1 minute load average sparkline",
+            WidgetInstance::new("load", WidgetKind::Sparkline, "Load", ["node_load1"]),
+        ),
+        preset(
+            "load_stat",
+            "Load",
+            "1 minute load average",
+            WidgetInstance::new("load_stat", WidgetKind::Stat, "Load 1m", ["node_load1"]),
+        ),
+        preset(
+            "load5",
+            "Load",
+            "5 minute load average sparkline",
+            WidgetInstance::new("load5", WidgetKind::Sparkline, "Load 5m", ["node_load5"]),
+        ),
+        preset(
+            "load15",
+            "Load",
+            "15 minute load average",
+            WidgetInstance::new("load15", WidgetKind::Stat, "Load 15m", ["node_load15"]),
+        ),
+        preset(
+            "load15_spark",
+            "Load",
+            "15 minute load average sparkline",
+            WidgetInstance::new(
+                "load15_spark",
+                WidgetKind::Sparkline,
+                "Load 15m",
+                ["node_load15"],
+            ),
+        ),
+        preset(
+            "uptime",
+            "System",
+            "Time since last boot",
+            WidgetInstance::new(
+                "uptime",
+                WidgetKind::Stat,
+                "Uptime",
+                ["node_uptime_seconds"],
+            ),
+        ),
+        preset(
+            "agent",
+            "System",
+            "Whether the agent is pushing",
+            WidgetInstance::new("agent", WidgetKind::Stat, "Agent", ["keystone_agent_up"]),
+        ),
+        preset(
+            "temps",
+            "System",
+            "Every hardware monitor and thermal-zone sensor",
+            WidgetInstance::new(
+                "temps",
+                WidgetKind::BarList,
+                "Temperatures",
+                ["node_hwmon_temp_celsius", "node_hwmon_temp_max_celsius"],
+            )
+            .with_span(2)
+            .with_label("sensor"),
+        ),
+        preset(
+            "hottest",
+            "System",
+            "Hottest sensor on the node",
+            WidgetInstance::new(
+                "hottest",
+                WidgetKind::Stat,
+                "Hottest",
+                ["node_hwmon_temp_celsius"],
+            ),
+        ),
+        preset(
+            "disks",
+            "Disk",
+            "Used space per filesystem",
+            WidgetInstance::new(
+                "disks",
+                WidgetKind::BarList,
+                "Disks",
+                ["node_filesystem_avail_bytes", "node_filesystem_size_bytes"],
+            )
+            .with_span(2)
+            .with_label("mountpoint")
+            .with_invert(),
+        ),
+        preset(
+            "net_rx",
+            "Network",
+            "Receive rate sparkline",
+            WidgetInstance::new(
+                "net_rx",
+                WidgetKind::Sparkline,
+                "Network in",
+                ["node_network_receive_bytes_per_second"],
+            )
+            .with_span(2),
+        ),
+        preset(
+            "net_tx",
+            "Network",
+            "Transmit rate sparkline",
+            WidgetInstance::new(
+                "net_tx",
+                WidgetKind::Sparkline,
+                "Network out",
+                ["node_network_transmit_bytes_per_second"],
+            )
+            .with_span(2),
+        ),
+        preset(
+            "net_rx_stat",
+            "Network",
+            "Current receive rate",
+            WidgetInstance::new(
+                "net_rx_stat",
+                WidgetKind::Stat,
+                "Net in",
+                ["node_network_receive_bytes_per_second"],
+            ),
+        ),
+        preset(
+            "net_tx_stat",
+            "Network",
+            "Current transmit rate",
+            WidgetInstance::new(
+                "net_tx_stat",
+                WidgetKind::Stat,
+                "Net out",
+                ["node_network_transmit_bytes_per_second"],
+            ),
+        ),
+        preset(
+            "gpu",
+            "GPU",
+            "Donut of GPU busy (average if several cards)",
+            WidgetInstance::new("gpu", WidgetKind::Gauge, "GPU", ["node_gpu_usage_ratio"]),
+        ),
+        preset(
+            "gpu_mem",
+            "GPU",
+            "Donut of GPU memory used / total",
+            WidgetInstance::new(
+                "gpu_mem",
+                WidgetKind::Gauge,
+                "GPU memory",
+                ["node_gpu_memory_used_bytes", "node_gpu_memory_total_bytes"],
+            ),
+        ),
+        preset(
+            "gpu_spark",
+            "GPU",
+            "GPU busy over the last 15 minutes",
+            WidgetInstance::new(
+                "gpu_spark",
+                WidgetKind::Sparkline,
+                "GPU",
+                ["node_gpu_usage_ratio"],
+            )
+            .with_label("gpu"),
+        ),
+        preset(
+            "gpu_list",
+            "GPU",
+            "One busy bar per GPU",
+            WidgetInstance::new(
+                "gpu_list",
+                WidgetKind::BarList,
+                "GPUs",
+                ["node_gpu_usage_ratio"],
+            )
+            .with_span(2)
+            .with_label("gpu"),
+        ),
+        preset(
+            "gpu_temp",
+            "GPU",
+            "Hottest GPU temperature",
+            WidgetInstance::new(
+                "gpu_temp",
+                WidgetKind::Stat,
+                "GPU temp",
+                ["node_gpu_temperature_celsius"],
+            ),
+        ),
+        preset(
+            "gpu_temps",
+            "GPU",
+            "Temperature per GPU",
+            WidgetInstance::new(
+                "gpu_temps",
+                WidgetKind::BarList,
+                "GPU temps",
+                ["node_gpu_temperature_celsius"],
+            )
+            .with_span(2)
+            .with_label("gpu"),
+        ),
+    ]
+}
+
+fn preset(id: &str, group: &str, description: &str, widget: WidgetInstance) -> WidgetPreset {
+    WidgetPreset {
+        id: id.into(),
+        group: group.into(),
+        description: description.into(),
+        widget,
     }
 }
 
@@ -374,38 +654,50 @@ fn fill_sparkline(
     unit: &str,
 ) {
     let metric = &w.metrics[0];
-    let labeled: Vec<&Sample> = latest
-        .iter()
-        .filter(|s| s.metric == *metric && label(s, "device").is_some())
-        .collect();
-    if !labeled.is_empty() {
-        let names: Vec<&str> = labeled.iter().filter_map(|s| label(s, "device")).collect();
-        let agg = net::aggregate_ifaces(names, &settings.network_devices);
-        let mut sum = 0.0;
-        let mut keys = Vec::new();
-        for s in labeled {
-            let Some(dev) = label(s, "device") else {
-                continue;
+    if let Some(lname) = spark_label(w, latest, metric) {
+        let labeled: Vec<&Sample> = latest
+            .iter()
+            .filter(|s| s.metric == *metric && label(s, lname).is_some())
+            .collect();
+        if !labeled.is_empty() {
+            let names: Vec<&str> = labeled.iter().filter_map(|s| label(s, lname)).collect();
+            let included: Vec<&str> = if lname == "device" {
+                net::aggregate_ifaces(names, &settings.network_devices)
+            } else {
+                names
             };
-            if !agg.contains(&dev) {
-                continue;
+            let mode = combine_mode(unit);
+            let mut acc = 0.0;
+            let mut n = 0u32;
+            let mut keys = Vec::new();
+            for s in labeled {
+                let Some(dev) = label(s, lname) else {
+                    continue;
+                };
+                if !included.contains(&dev) {
+                    continue;
+                }
+                acc = combine_add(mode, acc, n, s.value);
+                n += 1;
+                keys.push(s.labels_key());
+                out.rows.push(HydratedRow {
+                    label: dev.into(),
+                    display: format_value(s.value, unit),
+                    ratio: None,
+                });
             }
-            sum += s.value;
-            keys.push(s.labels_key());
-            out.rows.push(HydratedRow {
-                label: dev.into(),
-                display: format_value(s.value, unit),
-                ratio: None,
-            });
+            out.rows.sort_by(|a, b| a.label.cmp(&b.label));
+            if n > 0 {
+                let value = combine_finish(mode, acc, n);
+                out.value = Some(value);
+                out.display = format_value(value, unit);
+            }
+            out.spark = merge_spark(history, metric, &keys, mode);
+            if out.spark.is_empty() {
+                out.spark = merge_spark(history, metric, &[String::new()], Combine::Sum);
+            }
+            return;
         }
-        out.rows.sort_by(|a, b| a.label.cmp(&b.label));
-        out.value = Some(sum);
-        out.display = format_value(sum, unit);
-        out.spark = merge_spark(history, metric, &keys);
-        if out.spark.is_empty() {
-            out.spark = merge_spark(history, metric, &[String::new()]);
-        }
-        return;
     }
     let key = (metric.clone(), String::new());
     if let Some(points) = history.get(&key) {
@@ -427,16 +719,59 @@ fn merge_spark(
     history: &HashMap<(String, String), Vec<(i64, f64)>>,
     metric: &str,
     label_keys: &[String],
+    mode: Combine,
 ) -> Vec<SparkPoint> {
-    let mut by_t: std::collections::BTreeMap<i64, f64> = std::collections::BTreeMap::new();
+    let mut by_t: std::collections::BTreeMap<i64, (f64, u32)> = std::collections::BTreeMap::new();
     for lk in label_keys {
         if let Some(points) = history.get(&(metric.to_string(), lk.clone())) {
             for (t, v) in points {
-                *by_t.entry(*t).or_insert(0.0) += *v;
+                let e = by_t.entry(*t).or_insert((0.0, 0));
+                e.0 = combine_add(mode, e.0, e.1, *v);
+                e.1 += 1;
             }
         }
     }
-    by_t.into_iter().map(|(t, v)| SparkPoint { t, v }).collect()
+    by_t.into_iter()
+        .map(|(t, (v, n))| SparkPoint {
+            t,
+            v: combine_finish(mode, v, n),
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Combine {
+    Sum,
+    Mean,
+    Max,
+}
+
+fn combine_mode(unit: &str) -> Combine {
+    match unit {
+        "ratio" => Combine::Mean,
+        "celsius" => Combine::Max,
+        _ => Combine::Sum,
+    }
+}
+
+fn combine_add(mode: Combine, acc: f64, n: u32, value: f64) -> f64 {
+    match mode {
+        Combine::Sum | Combine::Mean => acc + value,
+        Combine::Max => {
+            if n == 0 {
+                value
+            } else {
+                acc.max(value)
+            }
+        }
+    }
+}
+
+fn combine_finish(mode: Combine, acc: f64, n: u32) -> f64 {
+    match mode {
+        Combine::Mean if n > 0 => acc / f64::from(n),
+        _ => acc,
+    }
 }
 
 fn bar_rows(w: &WidgetInstance, latest: &[Sample], unit: &str) -> Vec<HydratedRow> {
@@ -455,6 +790,7 @@ fn bar_rows(w: &WidgetInstance, latest: &[Sample], unit: &str) -> Vec<HydratedRo
         .iter()
         .filter(|s| s.metric == *primary)
         .filter(|s| label(s, "fstype").is_none_or(|ft| !NOISY_FSTYPE.contains(&ft)))
+        .filter(|s| !(w.label.is_some() && s.labels.is_empty()))
         .filter_map(|s| {
             let mut value = s.value;
             let total = totals.get(&s.labels_key()).copied();
@@ -467,7 +803,16 @@ fn bar_rows(w: &WidgetInstance, latest: &[Sample], unit: &str) -> Vec<HydratedRo
             }
             let ratio = total
                 .filter(|t| *t > 0.0)
-                .map(|t| (value / t).clamp(0.0, 1.0));
+                .map(|t| (value / t).clamp(0.0, 1.0))
+                .or_else(|| {
+                    if unit == "ratio" {
+                        Some(value.clamp(0.0, 1.0))
+                    } else if unit == "celsius" {
+                        Some((value / 100.0).clamp(0.0, 1.0))
+                    } else {
+                        None
+                    }
+                });
             let title = label_name
                 .and_then(|n| label(s, n).map(str::to_string))
                 .filter(|t| !t.is_empty())
@@ -485,6 +830,21 @@ fn bar_rows(w: &WidgetInstance, latest: &[Sample], unit: &str) -> Vec<HydratedRo
         .collect();
     rows.sort_by(|a, b| a.label.cmp(&b.label));
     rows
+}
+
+fn spark_label<'a>(w: &'a WidgetInstance, latest: &[Sample], metric: &str) -> Option<&'a str> {
+    if let Some(name) = w.label.as_deref() {
+        return Some(name);
+    }
+    for name in ["device", "gpu", "sensor"] {
+        if latest
+            .iter()
+            .any(|s| s.metric == metric && label(s, name).is_some())
+        {
+            return Some(name);
+        }
+    }
+    None
 }
 
 fn find_unlabeled<'a>(latest: &'a [Sample], name: &str) -> Option<&'a Sample> {
@@ -524,6 +884,7 @@ pub fn format_value(value: f64, unit: &str) -> String {
         }
         "load" => format!("{value:.2}"),
         "bytes_per_second" => format!("{}/s", format_bytes(value)),
+        "celsius" => format!("{value:.0}°C"),
         "packets" | "errors" => format!("{value:.0}"),
         _ => format!("{value:.2}"),
     }
@@ -661,5 +1022,74 @@ mod tests {
     fn bad_layout_falls_back_to_default() {
         let d = Dashboard::parse_or_default(Some(r#"{"version":9,"widgets":[]}"#));
         assert_eq!(d, Dashboard::default_node());
+    }
+
+    #[test]
+    fn presets_are_valid_and_cover_default() {
+        let catalog = presets();
+        let mut ids = std::collections::HashSet::new();
+        for p in &catalog {
+            assert!(ids.insert(p.id.as_str()), "duplicate preset {}", p.id);
+            assert_eq!(p.id, p.widget.id);
+            Dashboard {
+                version: 1,
+                widgets: vec![p.widget.clone()],
+            }
+            .validate()
+            .unwrap_or_else(|e| panic!("{}: {e}", p.id));
+        }
+        for id in Dashboard::DEFAULT_IDS {
+            assert!(catalog.iter().any(|p| p.id == *id), "default id {id}");
+        }
+    }
+
+    #[test]
+    fn gpu_bar_list_uses_ratio() {
+        let samples = vec![Sample::new("node_gpu_usage_ratio", 0.4, 1)
+            .with_label("gpu", "card0")
+            .with_label("vendor", "amd")];
+        let w = WidgetInstance::new(
+            "gpu_list",
+            WidgetKind::BarList,
+            "GPUs",
+            ["node_gpu_usage_ratio"],
+        )
+        .with_label("gpu");
+        let rows = bar_rows(&w, &samples, "ratio");
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].ratio.unwrap() - 0.4).abs() < 1e-9);
+        assert_eq!(rows[0].display, "40%");
+    }
+
+    #[test]
+    fn formats_celsius() {
+        assert_eq!(format_value(52.4, "celsius"), "52°C");
+    }
+
+    #[test]
+    fn temps_bar_list_skips_hottest_aggregate_and_uses_max() {
+        let samples = vec![
+            Sample::new("node_hwmon_temp_celsius", 45.0, 1)
+                .with_label("sensor", "Package id 0")
+                .with_label("chip", "coretemp")
+                .with_label("kind", "cpu"),
+            Sample::new("node_hwmon_temp_max_celsius", 90.0, 1)
+                .with_label("sensor", "Package id 0")
+                .with_label("chip", "coretemp")
+                .with_label("kind", "cpu"),
+            Sample::new("node_hwmon_temp_celsius", 45.0, 1),
+        ];
+        let w = WidgetInstance::new(
+            "temps",
+            WidgetKind::BarList,
+            "Temperatures",
+            ["node_hwmon_temp_celsius", "node_hwmon_temp_max_celsius"],
+        )
+        .with_label("sensor");
+        let rows = bar_rows(&w, &samples, "celsius");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Package id 0");
+        assert!((rows[0].ratio.unwrap() - 0.5).abs() < 1e-9);
+        assert!(rows[0].display.contains("45°C"));
     }
 }

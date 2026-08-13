@@ -11,7 +11,8 @@ use crate::http::{CatalogApi, NodeDashboardApi};
     paths(
         crate::http::catalog_api,
         crate::http::dashboard_get,
-        crate::http::dashboard_put
+        crate::http::dashboard_put,
+        crate::http::dashboard_delete
     ),
     components(schemas(CatalogApi, NodeDashboardApi))
 )]
@@ -49,6 +50,14 @@ pub fn spec_markdown() -> String {
                     .and_then(|o| o.summary.clone())
                     .unwrap_or_default();
                 out.push_str(&format!("| PUT | `{path}` | {summary} |\n"));
+            }
+            if item.delete.is_some() {
+                let summary = item
+                    .delete
+                    .as_ref()
+                    .and_then(|o| o.summary.clone())
+                    .unwrap_or_default();
+                out.push_str(&format!("| DELETE | `{path}` | {summary} |\n"));
             }
         }
     }

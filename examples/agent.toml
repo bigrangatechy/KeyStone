@@ -3,12 +3,14 @@
 
 # Example KeyStone agent config for a local smoke test (writable without root).
 # Packaged installs use /var/lib/keystone/agent-buffer.
+# Run `cargo run` from the repo root.
 
 ingest_url = "http://127.0.0.1:9100"
 ingest_token = "change-me"
 # node_id defaults to hostname when omitted
-interval_secs = 15
-buffer_dir = "/tmp/keystone/agent-buffer"
+# Overridden while connected by node Settings (poll interval, default 1s).
+interval_secs = 1
+buffer_dir = ".smoke/agent-buffer"
 
 [labels]
 role = "example"

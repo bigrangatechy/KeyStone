@@ -65,11 +65,11 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
             .with_context(|| format!("config {}", config_path.display()))?
     } else {
         tracing::warn!(
-            "config {} missing, using defaults (data in /tmp/keystone)",
+            "config {} missing, using defaults (data in .smoke)",
             config_path.display()
         );
         ServerConfig {
-            data_dir: "/tmp/keystone".into(),
+            data_dir: ".smoke".into(),
             ..ServerConfig::default()
         }
     };

@@ -5,6 +5,7 @@ use std::pin::Pin;
 
 use keystone_core::node::NodeIdentity;
 use keystone_core::sample::{self, Label, Sample};
+use keystone_core::NodeSettings;
 use keystone_proto::ingest_server::{Ingest, IngestServer};
 use keystone_proto::{
     agent_to_server, server_to_agent, Ack, AgentToServer, Heartbeat, PushFrame, ServerToAgent,
@@ -52,6 +53,18 @@ impl Ingest for IngestSvc {
                                                 let _ = state.stores.metadata.set_online(&old, false);
                                             }
                                             state.agents.connect(id.clone(), cmd_tx.clone());
+                                            let settings = NodeSettings::parse_or_default(
+                                                state
+                                                    .stores
+                                                    .metadata
+                                                    .node_settings_json(&id)
+                                                    .ok()
+                                                    .flatten()
+                                                    .as_deref(),
+                                            );
+                                            state
+                                                .agents
+                                                .nudge_poll_interval(&id, settings.poll_interval_secs());
                                             node_id = Some(id.clone());
                                             info!("agent session {id}");
                                         }

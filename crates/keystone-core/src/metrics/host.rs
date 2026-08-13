@@ -182,3 +182,66 @@ define_metric! {
     labels: ["device"],
     stability: Stability::Stable,
 }
+
+define_metric! {
+    name: "node_gpu_usage_ratio",
+    ty: MetricType::Gauge,
+    unit: "ratio",
+    help: "GPU busy ratio (0–1). Labeled by gpu; unlabeled series is the average of cards that report usage",
+    labels: ["gpu", "vendor"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_gpu_memory_used_bytes",
+    ty: MetricType::Gauge,
+    unit: "bytes",
+    help: "GPU memory used. Labeled by gpu; unlabeled series is the sum across cards",
+    labels: ["gpu", "vendor"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_gpu_memory_total_bytes",
+    ty: MetricType::Gauge,
+    unit: "bytes",
+    help: "GPU memory total. Labeled by gpu; unlabeled series is the sum across cards",
+    labels: ["gpu", "vendor"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_gpu_temperature_celsius",
+    ty: MetricType::Gauge,
+    unit: "celsius",
+    help: "GPU temperature. Labeled by gpu; unlabeled series is the hottest card",
+    labels: ["gpu", "vendor"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_hwmon_temp_celsius",
+    ty: MetricType::Gauge,
+    unit: "celsius",
+    help: "Hardware monitor temperature. Labeled by sensor/chip/kind (cpu, gpu, disk, nic, acpi, other); unlabeled series is the hottest reading",
+    labels: ["sensor", "chip", "kind"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_hwmon_temp_max_celsius",
+    ty: MetricType::Gauge,
+    unit: "celsius",
+    help: "High/critical threshold for the matching hwmon sensor, when the driver exposes one",
+    labels: ["sensor", "chip", "kind"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_cpu_temperature_celsius",
+    ty: MetricType::Gauge,
+    unit: "celsius",
+    help: "CPU package / SoC temperature (Tctl, Package, or hottest CPU sensor)",
+    labels: [],
+    stability: Stability::Stable,
+}
