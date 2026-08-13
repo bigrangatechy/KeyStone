@@ -48,7 +48,8 @@ depends = "$auto, adduser"
 license-file = ["../../COPYING", "0"]
 extended-description = """KeyStone agent for Debian and Raspberry Pi OS (64-bit).
 Pushes host metrics to a KeyStone server. Optional Docker Engine access
-via the local socket. No node cap."""
+via the local socket. Install on every node, including the UI host if you
+want that machine in the dashboard. No node cap."""
 assets = [
     ["target/release/keystone-agent", "usr/bin/", "755"],
     ["../../packaging/deb/agent/agent.toml", "etc/keystone/agent.toml", "640"],

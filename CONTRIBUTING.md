@@ -55,7 +55,7 @@ By making a contribution to this project, I certify that:
 
 Reference material is generated from Rust types. Do not edit files under
 `docs/src/generated/` by hand. After changing metrics, config, Docker ops,
-RBAC, CLI, or HTTP APIs, run:
+RBAC, widgets, CLI, or HTTP APIs, run:
 
 ```
 cargo xtask docs
@@ -73,6 +73,7 @@ cargo test --workspace
 cargo deny check
 cargo xtask docs
 cargo deb -p keystone-agent   # optional; CI also builds arm64
+cargo deb -p keystone-server
 ```
 
 Use SPDX headers on new source files:

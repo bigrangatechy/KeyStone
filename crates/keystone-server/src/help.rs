@@ -28,6 +28,11 @@ pub fn sections() -> Vec<HelpSection> {
             markdown: docs::docker_ops_markdown(),
         },
         HelpSection {
+            slug: "widgets".into(),
+            title: "Dashboard widgets".into(),
+            markdown: docs::widgets_markdown(),
+        },
+        HelpSection {
             slug: "agent-config".into(),
             title: "Agent configuration".into(),
             markdown: docs::agent_config_markdown(),

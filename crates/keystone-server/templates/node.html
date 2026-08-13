@@ -9,7 +9,8 @@
     <p class="muted"><code>{{ node_id }}</code> · {{ os }} {{ kernel }} · agent {{ agent_version }}
       {% if !docker_version.is_empty() %}· Docker {{ docker_version }}{% endif %}
       · last seen {{ last_seen }}
-      · {% if connected %}control connected{% else if online %}seen, not connected{% else %}offline{% endif %}
+      · {% if connected %}control connected{% else if awaiting %}awaiting agent{% else if online %}seen, not connected{% else %}offline{% endif %}
+      · <a href="/nodes/{{ node_id }}/setup">install agent</a>
     </p>
   </div>
 </section>
@@ -21,19 +22,23 @@
   <button type="button" data-tab="images">Images</button>
   <button type="button" data-tab="volumes">Volumes</button>
   <button type="button" data-tab="networks">Networks</button>
+  <button type="button" data-tab="settings">Settings</button>
 </nav>
 
 <section class="tab-panel active" data-panel="overview">
-  <h2>Host metrics</h2>
-  <table>
-    <thead><tr><th>Metric</th><th>Labels</th><th>Value</th></tr></thead>
-    <tbody>
-      {% for m in metrics %}
-      <tr><td><code>{{ m.metric }}</code></td><td>{{ m.labels }}</td><td>{{ m.value }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if metrics.is_empty() %}<p class="muted">No samples stored yet.</p>{% endif %}
+  <div id="overview-widgets" data-json="{{ widgets_json }}"></div>
+  <details class="raw-metrics">
+    <summary>All samples</summary>
+    <table>
+      <thead><tr><th>Metric</th><th>Labels</th><th>Value</th></tr></thead>
+      <tbody>
+        {% for m in metrics %}
+        <tr><td><code>{{ m.metric }}</code></td><td>{{ m.labels }}</td><td>{{ m.value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if metrics.is_empty() %}<p class="muted">No samples stored yet.</p>{% endif %}
+  </details>
 </section>
 
 {% if !docker_error.is_empty() %}
@@ -75,5 +80,23 @@
     <button type="submit">Create</button>
   </form>
   <div id="networks" data-json="{{ networks_json }}" data-node="{{ node_id }}"></div>
+</section>
+<section class="tab-panel" data-panel="settings">
+  <h2>Node settings</h2>
+  <p class="muted">These apply to this node in the UI only. Agent config on the machine is unchanged.</p>
+  {% if settings_saved %}<p>Saved.</p>{% endif %}
+  <form class="stack wide" method="post" action="/nodes/{{ node_id }}/settings">
+    <label>Display name
+      <input name="display_name" value="{{ display_name }}" placeholder="{{ hostname }}">
+    </label>
+    <label>Notes
+      <textarea name="notes" rows="4">{{ notes }}</textarea>
+    </label>
+    <label>Network interfaces (one per line)
+      <textarea name="network_devices" rows="4" placeholder="leave empty for automatic">{{ network_devices_text }}</textarea>
+      <span class="muted">Empty = skip loopback/docker/veth, or fall back to every non-lo device. Detected: {% if detected_nics.is_empty() %}none yet{% else %}{{ detected_nics }}{% endif %}</span>
+    </label>
+    <button type="submit">Save settings</button>
+  </form>
 </section>
 {% endblock %}

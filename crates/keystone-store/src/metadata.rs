@@ -88,6 +88,8 @@ impl Metadata {
             );
             ",
         )?;
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN dashboard_json TEXT", []);
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN settings_json TEXT", []);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -279,11 +281,86 @@ impl Metadata {
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
+
+    /// Enrol a node from the UI before its agent has connected. No seat limit.
+    pub fn register_node(
+        &self,
+        node_id: &str,
+        hostname: &str,
+        labels_json: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO nodes (
+                node_id, hostname, agent_version, os, kernel, docker_version,
+                labels_json, last_seen_unix, online
+             ) VALUES (?1, ?2, '', 'awaiting-agent', '', NULL, ?3, 0, 0)
+             ON CONFLICT(node_id) DO UPDATE SET
+                hostname = excluded.hostname
+                WHERE nodes.last_seen_unix = 0",
+            params![node_id, hostname, labels_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn node_dashboard_json(&self, node_id: &str) -> anyhow::Result<Option<String>> {
+        let conn = self.conn.lock();
+        let json = conn
+            .query_row(
+                "SELECT dashboard_json FROM nodes WHERE node_id = ?1",
+                params![node_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(json)
+    }
+
+    pub fn set_node_dashboard_json(&self, node_id: &str, json: Option<&str>) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let n = conn.execute(
+            "UPDATE nodes SET dashboard_json = ?1 WHERE node_id = ?2",
+            params![json, node_id],
+        )?;
+        if n == 0 {
+            anyhow::bail!("node not found");
+        }
+        Ok(())
+    }
+
+    pub fn node_settings_json(&self, node_id: &str) -> anyhow::Result<Option<String>> {
+        let conn = self.conn.lock();
+        let json = conn
+            .query_row(
+                "SELECT settings_json FROM nodes WHERE node_id = ?1",
+                params![node_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(json)
+    }
+
+    pub fn set_node_settings_json(&self, node_id: &str, json: Option<&str>) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let n = conn.execute(
+            "UPDATE nodes SET settings_json = ?1 WHERE node_id = ?2",
+            params![json, node_id],
+        )?;
+        if n == 0 {
+            anyhow::bail!("node not found");
+        }
+        Ok(())
+    }
 }
 
 impl NodeRecord {
     pub fn last_seen(&self) -> DateTime<Utc> {
         DateTime::from_timestamp(self.last_seen_unix, 0).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+    }
+
+    pub fn awaiting_agent(&self) -> bool {
+        self.last_seen_unix == 0
     }
 }
 
@@ -317,6 +394,31 @@ mod tests {
             db.upsert_heartbeat(&id, true).unwrap();
         }
         assert_eq!(db.list_nodes().unwrap().len(), 50);
+        db.register_node("pi-hole", "pi-hole", "[]").unwrap();
+        assert_eq!(db.list_nodes().unwrap().len(), 51);
+        let pending = db.get_node("pi-hole").unwrap().unwrap();
+        assert!(pending.awaiting_agent());
+        db.upsert_heartbeat(
+            &NodeIdentity {
+                node_id: "pi-hole".into(),
+                hostname: "pi-hole".into(),
+                agent_version: "0.1.0".into(),
+                os: "linux".into(),
+                kernel: "1".into(),
+                docker_version: None,
+                labels: vec![],
+            },
+            true,
+        )
+        .unwrap();
+        assert!(!db.get_node("pi-hole").unwrap().unwrap().awaiting_agent());
+        db.set_node_dashboard_json("pi-hole", Some(r#"{"version":1,"widgets":[]}"#))
+            .unwrap();
+        assert!(db
+            .node_dashboard_json("pi-hole")
+            .unwrap()
+            .unwrap()
+            .contains("widgets"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

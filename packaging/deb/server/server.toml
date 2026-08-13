@@ -3,7 +3,7 @@
 #
 # Packaged default. Set KEYSTONE_ADMIN_PASSWORD once, or put a hash in
 # auth.password_hash (keystone hash-password). Then:
-#   systemctl enable --now keystone
+#   systemctl enable --now keystone-server
 
 http_listen = "0.0.0.0:8080"
 grpc_listen = "0.0.0.0:9100"

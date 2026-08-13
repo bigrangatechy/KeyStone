@@ -11,7 +11,9 @@ node cap.
 
 Agents **push** catalog metrics (and optional container aggregates) over a
 gRPC session. The same session carries Docker commands so NAT works. The
-server can also **scrape** Prometheus exporters and SNMP devices.
+server can also **scrape** Prometheus exporters and SNMP devices. Each node
+overview is a widget dashboard (gauges, sparklines, disk bars); new cards
+are added as a `WidgetKind`, not a new page.
 
 Reference chapters under *Generated reference* are produced by
 `cargo xtask docs` from the Rust types this version compiles. The running

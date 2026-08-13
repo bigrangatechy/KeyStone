@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 [Unit]
-Description=KeyStone server (unlimited-node monitoring)
+Description=KeyStone server (UI and ingest)
 Documentation=https://git.bigrangatech.com/Ranga/keystone
 After=network-online.target
 Wants=network-online.target
@@ -11,7 +11,7 @@ Wants=network-online.target
 Type=simple
 User=keystone
 Group=keystone
-EnvironmentFile=-/etc/default/keystone
+EnvironmentFile=-/etc/default/keystone-server
 ExecStart=/usr/bin/keystone serve --config /etc/keystone/server.toml
 Restart=on-failure
 RestartSec=5

@@ -1,0 +1,23 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Add node — KeyStone{% endblock %}
+{% block content %}
+<h1>Add node</h1>
+<p class="muted">This server is the only UI. Register a hostname here, then install the agent on that machine. It will show up in this list — there is no per-node dashboard to install.</p>
+{% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+<form class="stack" method="post" action="/nodes">
+  <label>Hostname
+    <input name="hostname" required autofocus placeholder="pi-hole">
+  </label>
+  <label>Node ID (optional)
+    <input name="node_id" placeholder="defaults to hostname">
+  </label>
+  <label>Agent ingest URL (gRPC)
+    <input name="ingest_url" value="{{ ingest_url }}">
+    <span class="muted">What the agent uses to reach this server, not the UI port.</span>
+  </label>
+  <label class="check"><input type="checkbox" name="docker" value="on"> This node runs Docker</label>
+  <button type="submit">Add node</button>
+</form>
+{% endblock %}

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -44,6 +45,63 @@ impl RedbSeries {
 
     pub fn latest_samples(&self, node_id: &str) -> anyhow::Result<Vec<Sample>> {
         <Self as SeriesStore>::latest(self, node_id)
+    }
+
+    /// Points for one series, oldest first, at or after `since_ms`.
+    pub fn history(
+        &self,
+        node_id: &str,
+        metric: &str,
+        labels_key: &str,
+        since_ms: i64,
+    ) -> anyhow::Result<Vec<(i64, f64)>> {
+        let start = format!("{node_id}\0{metric}\0{labels_key}\0{since_ms}");
+        let end = format!("{node_id}\0{metric}\0{labels_key}\0{}", i64::MAX);
+        let tx = self.db.begin_read()?;
+        let series = tx.open_table(SERIES)?;
+        let mut points = Vec::new();
+        for entry in series.range(start.as_str()..end.as_str())? {
+            let (k, v) = entry?;
+            let ts = k
+                .value()
+                .rsplit('\0')
+                .next()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            points.push((ts, v.value()));
+        }
+        Ok(points)
+    }
+
+    /// All labeled series for a metric, oldest first per labels_key.
+    pub fn history_all(
+        &self,
+        node_id: &str,
+        metric: &str,
+        since_ms: i64,
+    ) -> anyhow::Result<HashMap<String, Vec<(i64, f64)>>> {
+        let start = format!("{node_id}\0{metric}\0");
+        let end = format!("{node_id}\0{metric}\u{0001}");
+        let tx = self.db.begin_read()?;
+        let series = tx.open_table(SERIES)?;
+        let mut by_labels: HashMap<String, Vec<(i64, f64)>> = HashMap::new();
+        for entry in series.range(start.as_str()..end.as_str())? {
+            let (k, v) = entry?;
+            let key = k.value();
+            let mut parts = key.split('\0');
+            let _node = parts.next();
+            let _metric = parts.next();
+            let labels = parts.next().unwrap_or("").to_string();
+            let ts = parts
+                .next()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            if ts < since_ms {
+                continue;
+            }
+            by_labels.entry(labels).or_default().push((ts, v.value()));
+        }
+        Ok(by_labels)
     }
 
     fn prune(&self, tx: &redb::WriteTransaction) -> anyhow::Result<()> {
@@ -141,6 +199,20 @@ mod tests {
         let got = store.latest("n1").unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].value, 1.5);
+        let ts = now_ms();
+        store
+            .write(
+                "n1",
+                &[
+                    Sample::new("node_load1", 1.0, ts - 2000),
+                    Sample::new("node_load1", 2.0, ts - 1000),
+                    Sample::new("node_load1", 3.0, ts),
+                ],
+            )
+            .unwrap();
+        let hist = store.history("n1", "node_load1", "", ts - 1500).unwrap();
+        assert!(hist.len() >= 2);
+        assert!(hist.iter().all(|(t, _)| *t >= ts - 1500));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

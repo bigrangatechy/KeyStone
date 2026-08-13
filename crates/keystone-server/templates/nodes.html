@@ -3,8 +3,13 @@
 {% extends "layout.html" %}
 {% block title %}Nodes — KeyStone{% endblock %}
 {% block content %}
-<h1>Nodes</h1>
-<p class="muted">No seat limit. Click a node for metrics and Docker.</p>
+<div class="page-head">
+  <div>
+    <h1>Nodes</h1>
+    <p class="muted">One UI for the whole lab. No seat limit. Add a machine here, then install the agent on it.</p>
+  </div>
+  <a class="btn" href="/nodes/new">Add node</a>
+</div>
 <table>
   <thead>
     <tr>
@@ -26,12 +31,17 @@
       <td>{{ n.agent_version }}</td>
       <td>{{ n.docker_version }}</td>
       <td>{{ n.last_seen }}</td>
-      <td>{% if n.connected %}connected{% else if n.online %}online{% else %}offline{% endif %}</td>
+      <td>
+        {{ n.status }}
+        {% if n.status == "awaiting agent" %}
+        · <a href="/nodes/{{ n.node_id }}/setup">install agent</a>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 {% if nodes.is_empty() %}
-<p>No nodes yet. Start <code>keystone-agent</code> with a matching ingest token.</p>
+<p>No nodes yet. <a href="/nodes/new">Add a node</a> from this server, then install <code>keystone-agent</code> on that machine.</p>
 {% endif %}
 {% endblock %}

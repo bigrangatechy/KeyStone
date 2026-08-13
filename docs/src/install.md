@@ -5,9 +5,17 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Install
 
-Homelab default is a **.deb** on each machine (Debian, Ubuntu, Raspberry Pi
-OS 64-bit). There is no node cap: install the agent on 10 boxes the same
-way you install it on one.
+Two `.deb` packages, on purpose: **one UI**, agents on every other machine.
+
+| Package | Role | Install on |
+|---|---|---|
+| `keystone-server` | HTTP UI + gRPC ingest | **One** machine |
+| `keystone-agent` | Collectors + optional Docker | **Every** node you want in the dashboard |
+
+They do not conflict. Put both on the UI host if that box should show up as a node too.
+
+Homelab default is Debian / Ubuntu / 64-bit Raspberry Pi OS. There is no node
+cap: install the agent on 10 boxes the same way you install it on one.
 
 ## Packages (amd64 and arm64)
 
@@ -24,24 +32,23 @@ uname -m
 
 You want `arm64` and `aarch64`.
 
-Install the matching artifact (example):
+Install the matching artifacts (example, 64-bit Pi):
 
 ```
+# The one UI box (optional: agent as well, so this host is in the list)
+sudo apt install ./keystone-server_0.1.0-1_arm64.deb
+sudo apt install ./keystone-agent_0.1.0-1_arm64.deb   # optional on the UI host
+
+# Every other node: agent only
 sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
-```
-
-On the box that runs the UI:
-
-```
-sudo apt install ./keystone_0.1.0-1_arm64.deb
 ```
 
 Then edit `/etc/keystone/agent.toml` or `/etc/keystone/server.toml` (same
 ingest token on every agent), set `KEYSTONE_ADMIN_PASSWORD` in
-`/etc/default/keystone` for the first server start, and:
+`/etc/default/keystone-server` for the first server start, and:
 
 ```
-sudo systemctl enable --now keystone          # server
+sudo systemctl enable --now keystone-server   # UI + ingest, one machine
 sudo systemctl enable --now keystone-agent    # every node
 ```
 
@@ -106,3 +113,15 @@ allow_exec = false
 ```
 
 There is no license file or seat count to raise when you add nodes.
+
+## Add a node (one UI)
+
+The dashboard runs on **one** machine. Other boxes only run `keystone-agent`.
+After the server is up, open the UI, click **Add node**, and enter the
+hostname. KeyStone registers it as “awaiting agent” and shows a generated
+`agent.toml` (ingest URL on the gRPC port, shared token, `node_id`).
+
+Install that config on the remote host and start the agent. The next
+heartbeat replaces “awaiting agent” with “connected”. You can also skip the
+form: an unknown agent that connects with a matching token is enrolled
+automatically.

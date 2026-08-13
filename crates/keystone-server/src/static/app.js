@@ -14,6 +14,11 @@
         if (panel) panel.classList.add("active");
       });
     });
+    const want = new URLSearchParams(location.search).get("panel");
+    if (want) {
+      const btn = tabs.querySelector('[data-tab="' + want + '"]');
+      if (btn) btn.click();
+    }
   }
 
   function parse(el) {
@@ -176,5 +181,130 @@
       table.appendChild(body);
       networks.replaceChildren(table);
     }
+  }
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function donut(ratio) {
+    const r = 36;
+    const c = 2 * Math.PI * r;
+    const p = Math.max(0, Math.min(1, Number(ratio) || 0));
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    bg.setAttribute("cx", "50");
+    bg.setAttribute("cy", "50");
+    bg.setAttribute("r", String(r));
+    bg.setAttribute("fill", "none");
+    bg.setAttribute("stroke", "var(--line)");
+    bg.setAttribute("stroke-width", "10");
+    const fg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    fg.setAttribute("cx", "50");
+    fg.setAttribute("cy", "50");
+    fg.setAttribute("r", String(r));
+    fg.setAttribute("fill", "none");
+    fg.setAttribute("stroke-width", "10");
+    fg.setAttribute("stroke-linecap", "round");
+    fg.setAttribute("stroke-dasharray", (p * c) + " " + c);
+    fg.setAttribute("transform", "rotate(-90 50 50)");
+    fg.setAttribute("class", "fill");
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", "50");
+    label.setAttribute("y", "55");
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("fill", "currentColor");
+    label.setAttribute("font-size", "18");
+    label.setAttribute("font-weight", "650");
+    label.textContent = Math.round(p * 100) + "%";
+    svg.appendChild(bg);
+    svg.appendChild(fg);
+    svg.appendChild(label);
+    return svg;
+  }
+
+  function sparkline(points) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 240 64");
+    svg.setAttribute("class", "spark");
+    svg.setAttribute("preserveAspectRatio", "none");
+    if (!points || points.length < 2) {
+      return svg;
+    }
+    const vs = points.map((p) => p.v);
+    const min = Math.min.apply(null, vs);
+    const max = Math.max.apply(null, vs);
+    const span = (max - min) || 1;
+    const pad = 4;
+    const d = points.map((p, i) => {
+      const x = pad + i * (240 - 2 * pad) / Math.max(points.length - 1, 1);
+      const y = 64 - pad - ((p.v - min) / span) * (64 - 2 * pad);
+      return (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+    }).join(" ");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  function renderWidget(w) {
+    const card = el("article", "widget span-" + (w.span || 1) + (w.tone ? " tone-" + w.tone : ""));
+    card.appendChild(el("h3", null, w.title || w.id));
+    const empty = w.display === "—" && !(w.rows && w.rows.length) && !(w.spark && w.spark.length);
+    if (empty) card.classList.add("empty");
+    if (w.kind === "gauge") {
+      if (w.ratio == null) {
+        card.classList.add("empty");
+        card.appendChild(el("div", "stat", "—"));
+      } else {
+        const wrap = el("div", "gauge-wrap");
+        wrap.appendChild(donut(w.ratio));
+        wrap.appendChild(el("div", "gauge-caption", w.display || "—"));
+        card.appendChild(wrap);
+      }
+    } else if (w.kind === "bar_list") {
+      (w.rows || []).forEach((row) => {
+        const block = el("div", "bar-row" + (row.ratio >= 0.9 ? " tone-crit" : row.ratio >= 0.75 ? " tone-warn" : " tone-ok"));
+        const meta = el("div", "bar-meta");
+        meta.appendChild(el("span", null, row.label || ""));
+        meta.appendChild(el("span", null, row.display || ""));
+        block.appendChild(meta);
+        const track = el("div", "bar-track");
+        const fill = el("div", "bar-fill");
+        fill.style.width = Math.round((Number(row.ratio) || 0) * 100) + "%";
+        track.appendChild(fill);
+        block.appendChild(track);
+        card.appendChild(block);
+      });
+      if (!(w.rows && w.rows.length)) card.appendChild(el("p", "muted", "No filesystems yet."));
+    } else if (w.kind === "sparkline") {
+      card.appendChild(el("div", "stat", w.display || "—"));
+      card.appendChild(sparkline(w.spark || []));
+      (w.rows || []).forEach((row) => {
+        const meta = el("div", "bar-meta");
+        meta.appendChild(el("span", null, row.label || ""));
+        meta.appendChild(el("span", null, row.display || ""));
+        card.appendChild(meta);
+      });
+    } else {
+      card.appendChild(el("div", "stat", w.display || "—"));
+    }
+    return card;
+  }
+
+  const widgets = document.getElementById("overview-widgets");
+  if (widgets) {
+    const data = parse(widgets);
+    const grid = el("div", "widget-grid");
+    if (Array.isArray(data) && data.length) {
+      data.forEach((w) => grid.appendChild(renderWidget(w)));
+    } else {
+      grid.appendChild(el("p", "muted", "No samples yet. Widgets fill in after the agent heartbeats."));
+    }
+    widgets.replaceChildren(grid);
   }
 })();

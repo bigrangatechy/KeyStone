@@ -3,13 +3,17 @@
 
 use utoipa::OpenApi;
 
-use crate::http::CatalogApi;
+use crate::http::{CatalogApi, NodeDashboardApi};
 
 #[derive(OpenApi)]
 #[openapi(
     info(title = "KeyStone", version = env!("CARGO_PKG_VERSION")),
-    paths(crate::http::catalog_api),
-    components(schemas(CatalogApi))
+    paths(
+        crate::http::catalog_api,
+        crate::http::dashboard_get,
+        crate::http::dashboard_put
+    ),
+    components(schemas(CatalogApi, NodeDashboardApi))
 )]
 pub struct ApiDoc;
 
@@ -37,6 +41,14 @@ pub fn spec_markdown() -> String {
                     .and_then(|o| o.summary.clone())
                     .unwrap_or_default();
                 out.push_str(&format!("| GET | `{path}` | {summary} |\n"));
+            }
+            if item.put.is_some() {
+                let summary = item
+                    .put
+                    .as_ref()
+                    .and_then(|o| o.summary.clone())
+                    .unwrap_or_default();
+                out.push_str(&format!("| PUT | `{path}` | {summary} |\n"));
             }
         }
     }

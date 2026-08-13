@@ -26,15 +26,26 @@ side when both are offered.
 
 ## Install
 
-Homelab path is a **.deb** per machine (Debian, Ubuntu, 64-bit Raspberry Pi
-OS). CI builds `amd64` and `arm64` (Pi 4/5). See [docs/src/install.md](docs/src/install.md).
+Two Debian packages. That is the easy path: **one UI**, agents everywhere else.
+
+| Package | On which machines | Unit |
+|---|---|---|
+| `keystone-server` | One box (the dashboard) | `keystone-server.service` |
+| `keystone-agent` | Every box you want in the UI, including the server host if you want it monitored | `keystone-agent.service` |
+
+They do not conflict. CI builds `amd64` and `arm64` (Pi 4/5). See [docs/src/install.md](docs/src/install.md).
 
 ```
+# UI machine
+sudo apt install ./keystone-server_0.1.0-1_arm64.deb ./keystone-agent_0.1.0-1_arm64.deb
+sudo systemctl enable --now keystone-server keystone-agent
+
+# Every other node
 sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
 sudo systemctl enable --now keystone-agent
 ```
 
-Build packages with `cargo deb -p keystone-agent` (or `--target aarch64-unknown-linux-gnu`).
+Build with `cargo deb -p keystone-server` and `cargo deb -p keystone-agent`.
 
 ## Install from source
 

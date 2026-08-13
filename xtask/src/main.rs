@@ -28,6 +28,7 @@ fn docs() -> anyhow::Result<()> {
     write(&gen.join("metrics.md"), docs::metrics_markdown())?;
     write(&gen.join("permissions.md"), docs::permissions_markdown())?;
     write(&gen.join("docker-ops.md"), docs::docker_ops_markdown())?;
+    write(&gen.join("widgets.md"), docs::widgets_markdown())?;
     write(&gen.join("agent-config.md"), docs::agent_config_markdown())?;
     write(
         &gen.join("server-config.md"),

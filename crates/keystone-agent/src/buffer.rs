@@ -15,7 +15,12 @@ pub struct DiskBuffer {
 impl DiskBuffer {
     pub fn new(dir: impl Into<PathBuf>) -> anyhow::Result<Self> {
         let dir = dir.into();
-        std::fs::create_dir_all(&dir).with_context(|| format!("buffer dir {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).with_context(|| {
+            format!(
+                "create buffer dir {} (need write access; examples use /tmp/keystone/agent-buffer)",
+                dir.display()
+            )
+        })?;
         Ok(Self { dir })
     }
 

@@ -10,9 +10,12 @@ pub mod config;
 pub mod docker;
 pub mod docs;
 pub mod metrics;
+pub mod net;
 pub mod node;
 pub mod rbac;
 pub mod sample;
+pub mod settings;
+pub mod widgets;
 
 pub use config::{
     AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape,
@@ -22,5 +25,7 @@ pub use metrics::{catalog, is_known_metric, MetricDef, MetricType, Stability};
 pub use node::NodeIdentity;
 pub use rbac::Permission;
 pub use sample::{Label, Sample};
+pub use settings::NodeSettings;
+pub use widgets::{Dashboard, WidgetInstance, WidgetKind};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

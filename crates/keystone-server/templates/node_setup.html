@@ -1,0 +1,29 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Install agent — {{ hostname }}{% endblock %}
+{% block content %}
+<h1>Install agent on {{ hostname }}</h1>
+<p class="muted"><code>{{ node_id }}</code>
+  {% if awaiting %}· awaiting first heartbeat{% else %}· agent has checked in{% endif %}
+  · ingest <code>{{ ingest_url }}</code>
+</p>
+<p>There is still only this UI. Copy the config onto <strong>{{ hostname }}</strong> and start the agent there. When it connects, this node moves from “awaiting agent” to “connected”.
+{% if docker %} Docker manage is enabled in the snippet.{% endif %}
+</p>
+
+<h2>Agent config</h2>
+<p class="muted">Write as <code>/etc/keystone/agent.toml</code> (package) or pass <code>--config</code>.</p>
+<pre class="snippet">{{ agent_toml }}</pre>
+
+<h2>On that machine</h2>
+<p>Package (64-bit Raspberry Pi OS / Debian):</p>
+<pre class="snippet">sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
+sudo install -d -m 0750 /etc/keystone
+# paste the config above into /etc/keystone/agent.toml
+sudo systemctl enable --now keystone-agent</pre>
+<p>From a source checkout (smoke test, no root). Change <code>buffer_dir</code> to a writable path such as <code>/tmp/keystone/agent-buffer</code>:</p>
+<pre class="snippet"># save the config as agent.toml, then:
+cargo run -p keystone-agent -- --config agent.toml</pre>
+<p><a href="/nodes/{{ node_id }}">Open node</a> · <a href="/">All nodes</a></p>
+{% endblock %}

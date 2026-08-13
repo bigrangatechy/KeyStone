@@ -7,3 +7,5 @@ KeyStone 0.1.0
 | Method | Path | Summary |
 |---|---|---|
 | GET | `/api/v1/catalog` | Metric catalog allowlist compiled into this binary. |
+| GET | `/api/v1/nodes/{id}/dashboard` | Layout JSON plus hydrated widget values. PUT saves a custom per-node layout. |
+| PUT | `/api/v1/nodes/{id}/dashboard` | Save a custom per-node dashboard layout. |

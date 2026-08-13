@@ -20,6 +20,14 @@ Unknown names are dropped at ingest. This table is the allowlist.
 | `node_memory_available_bytes` | gauge | bytes | stable | — | Estimate of memory available for starting new applications |
 | `node_memory_total_bytes` | gauge | bytes | stable | — | Total physical memory |
 | `node_memory_used_bytes` | gauge | bytes | stable | — | Used physical memory |
+| `node_network_receive_bytes_per_second` | gauge | bytes_per_second | stable | device | Receive rate. Labeled by device; unlabeled series is the sum of non-virtual interfaces |
+| `node_network_receive_bytes_total` | counter | bytes | stable | device | Total bytes received on a network interface |
+| `node_network_receive_errs_total` | counter | errors | stable | device | Receive errors on a network interface |
+| `node_network_receive_packets_total` | counter | packets | stable | device | Total packets received on a network interface |
+| `node_network_transmit_bytes_per_second` | gauge | bytes_per_second | stable | device | Transmit rate. Labeled by device; unlabeled series is the sum of non-virtual interfaces |
+| `node_network_transmit_bytes_total` | counter | bytes | stable | device | Total bytes transmitted on a network interface |
+| `node_network_transmit_errs_total` | counter | errors | stable | device | Transmit errors on a network interface |
+| `node_network_transmit_packets_total` | counter | packets | stable | device | Total packets transmitted on a network interface |
 | `node_uptime_seconds` | gauge | seconds | stable | — | Seconds since boot |
 | `snmp_scrape_ok` | gauge | boolean | stable | target | 1 if the last SNMP scrape of this target succeeded |
 | `snmp_sys_uptime_ticks` | gauge | ticks | stable | target | SNMP sysUpTime.0 (TimeTicks, hundredths of a second) |

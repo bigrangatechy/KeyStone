@@ -47,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
                     "metrics" => print!("{}", docs::metrics_markdown()),
                     "permissions" => print!("{}", docs::permissions_markdown()),
                     "docker" => print!("{}", docs::docker_ops_markdown()),
+                    "widgets" => print!("{}", docs::widgets_markdown()),
                     "agent-config" => print!("{}", docs::agent_config_markdown()),
                     "server-config" => print!("{}", docs::server_config_markdown()),
                     other => anyhow::bail!("unknown docs section {other}"),

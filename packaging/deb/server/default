@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 The KeyStone Authors
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Optional environment for keystone.service
+# Optional environment for keystone-server.service
 # KEYSTONE_ADMIN_PASSWORD=  # first start only, if auth.password_hash is empty
 # KEYSTONE_INGEST_TOKEN=change-me

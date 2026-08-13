@@ -110,3 +110,75 @@ define_metric! {
     labels: [],
     stability: Stability::Stable,
 }
+
+define_metric! {
+    name: "node_network_receive_bytes_total",
+    ty: MetricType::Counter,
+    unit: "bytes",
+    help: "Total bytes received on a network interface",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_transmit_bytes_total",
+    ty: MetricType::Counter,
+    unit: "bytes",
+    help: "Total bytes transmitted on a network interface",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_receive_packets_total",
+    ty: MetricType::Counter,
+    unit: "packets",
+    help: "Total packets received on a network interface",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_transmit_packets_total",
+    ty: MetricType::Counter,
+    unit: "packets",
+    help: "Total packets transmitted on a network interface",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_receive_errs_total",
+    ty: MetricType::Counter,
+    unit: "errors",
+    help: "Receive errors on a network interface",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_transmit_errs_total",
+    ty: MetricType::Counter,
+    unit: "errors",
+    help: "Transmit errors on a network interface",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_receive_bytes_per_second",
+    ty: MetricType::Gauge,
+    unit: "bytes_per_second",
+    help: "Receive rate. Labeled by device; unlabeled series is the sum of non-virtual interfaces",
+    labels: ["device"],
+    stability: Stability::Stable,
+}
+
+define_metric! {
+    name: "node_network_transmit_bytes_per_second",
+    ty: MetricType::Gauge,
+    unit: "bytes_per_second",
+    help: "Transmit rate. Labeled by device; unlabeled series is the sum of non-virtual interfaces",
+    labels: ["device"],
+    stability: Stability::Stable,
+}

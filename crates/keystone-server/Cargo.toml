@@ -53,22 +53,23 @@ uuid.workspace = true
 trycmd = "0.15"
 
 [package.metadata.deb]
-name = "keystone"
+name = "keystone-server"
 section = "net"
 priority = "optional"
 depends = "$auto, adduser"
 license-file = ["../../COPYING", "0"]
-extended-description = """KeyStone server for Debian and Raspberry Pi OS (64-bit).
-Central ingest, Prometheus/SNMP scrape, per-node UI, and living /help.
-No node cap. Prefer a Pi 4 with 2 GB+ or a Pi 5 if this box is the server."""
+extended-description = """KeyStone server (the UI) for Debian and Raspberry Pi OS (64-bit).
+Central ingest, Prometheus/SNMP scrape, per-node dashboard, and living /help.
+Install this on one machine. Other nodes only need keystone-agent.
+The two packages do not conflict: install both on the UI host to monitor it too."""
 assets = [
     ["target/release/keystone", "usr/bin/", "755"],
     ["../../packaging/deb/server/server.toml", "etc/keystone/server.toml", "640"],
-    ["../../packaging/deb/server/default", "etc/default/keystone", "644"],
+    ["../../packaging/deb/server/default", "etc/default/keystone-server", "644"],
 ]
 conf-files = [
     "/etc/keystone/server.toml",
-    "/etc/default/keystone",
+    "/etc/default/keystone-server",
 ]
 maintainer-scripts = "../../packaging/deb/server"
-systemd-units = { unit-name = "keystone", enable = true, start = false, unit-scripts = "../../packaging/deb/server" }
+systemd-units = { unit-name = "keystone-server", enable = true, start = false, unit-scripts = "../../packaging/deb/server" }

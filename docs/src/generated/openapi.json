@@ -33,6 +33,67 @@
           }
         }
       }
+    },
+    "/api/v1/nodes/{id}/dashboard": {
+      "get": {
+        "tags": [
+          "crate::http"
+        ],
+        "summary": "Layout JSON plus hydrated widget values. PUT saves a custom per-node layout.",
+        "operationId": "dashboard_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dashboard layout and widgets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeDashboardApi"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::http"
+        ],
+        "summary": "Save a custom per-node dashboard layout.",
+        "operationId": "dashboard_put",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Saved"
+          },
+          "400": {
+            "description": "Invalid layout"
+          },
+          "404": {
+            "description": "Unknown node"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -79,6 +140,21 @@
           "unit": {
             "type": "string"
           }
+        }
+      },
+      "NodeDashboardApi": {
+        "type": "object",
+        "required": [
+          "source",
+          "layout",
+          "widgets"
+        ],
+        "properties": {
+          "layout": {},
+          "source": {
+            "type": "string"
+          },
+          "widgets": {}
         }
       }
     }
