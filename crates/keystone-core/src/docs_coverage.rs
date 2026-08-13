@@ -1,0 +1,57 @@
+// SPDX-FileCopyrightText: 2026 The KeyStone Authors
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use crate::docker::DockerOp;
+use crate::metrics::catalog;
+use crate::rbac::Permission;
+use crate::widgets::WidgetKind;
+use strum::IntoEnumIterator;
+
+const DEV_METRICS: &str = include_str!("../../../docs/dev/src/metrics.md");
+const DEV_DOCKER: &str = include_str!("../../../docs/dev/src/docker.md");
+const DEV_PERMISSIONS: &str = include_str!("../../../docs/dev/src/permissions.md");
+const DEV_WIDGETS: &str = include_str!("../../../docs/dev/src/widgets.md");
+
+#[test]
+fn developer_metrics_doc_lists_catalog() {
+    for def in catalog() {
+        let needle = format!("`{}`", def.name);
+        assert!(
+            DEV_METRICS.contains(&needle),
+            "docs/dev/src/metrics.md missing {needle}"
+        );
+    }
+}
+
+#[test]
+fn developer_docker_doc_lists_ops() {
+    for op in DockerOp::iter() {
+        let needle = format!("`{}`", op.as_str());
+        assert!(
+            DEV_DOCKER.contains(&needle),
+            "docs/dev/src/docker.md missing {needle}"
+        );
+    }
+}
+
+#[test]
+fn developer_permissions_doc_lists_permissions() {
+    for p in Permission::iter() {
+        let needle = format!("`{}`", p.as_str());
+        assert!(
+            DEV_PERMISSIONS.contains(&needle),
+            "docs/dev/src/permissions.md missing {needle}"
+        );
+    }
+}
+
+#[test]
+fn developer_widgets_doc_lists_kinds() {
+    for kind in WidgetKind::iter() {
+        let needle = format!("`{}`", kind.as_str());
+        assert!(
+            DEV_WIDGETS.contains(&needle),
+            "docs/dev/src/widgets.md missing {needle}"
+        );
+    }
+}

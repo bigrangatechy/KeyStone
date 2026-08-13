@@ -1,17 +1,15 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Process configuration (listen addresses, data directory, bootstrap).
-/// Source of truth for `docs/src/generated/server-config.md`.
 ///
 /// After first start, ingest token, series retention, and scrape jobs are
 /// stored in the Settings UI (SQLite). TOML values seed that row once.
 /// `KEYSTONE_INGEST_TOKEN` always overrides the stored token. Listen
 /// addresses, `data_dir`, and auth username stay in this file.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// HTTP UI and API listen address.
     #[serde(default = "default_http")]
@@ -71,7 +69,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerAuth {
     /// Local admin username.
     #[serde(default = "default_user")]
@@ -94,7 +92,7 @@ impl Default for ServerAuth {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrometheusScrape {
     /// Job name stored as the node_id if `node_id` is empty.
     pub name: String,
@@ -107,7 +105,7 @@ pub struct PrometheusScrape {
     pub node_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SnmpScrape {
     pub name: String,
     /// `host:port` (port defaults to 161 if omitted).

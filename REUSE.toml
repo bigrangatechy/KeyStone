@@ -6,8 +6,8 @@ version = 1
 [[annotations]]
 path = [
     "Cargo.lock",
-    "docs/src/generated/**",
     "docs/book.toml",
+    "docs/dev/book.toml",
     "crates/keystone-agent/tests/cmd/**",
     "crates/keystone-server/tests/cmd/**",
     "packaging/deb/**",

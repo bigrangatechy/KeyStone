@@ -52,13 +52,13 @@ reuse:
 docs:
   stage: docs
   script:
-    - cargo run -p xtask -- docs
-    - git diff --exit-code -- docs/src/generated
     - cargo install mdbook --locked
     - mdbook build docs
+    - mdbook build docs/dev
   artifacts:
     paths:
       - docs/book
+      - docs/dev/book
     expire_in: 1 week
 
 .deb:
@@ -98,8 +98,9 @@ pages:
   stage: pages
   needs: ["docs"]
   script:
-    - mkdir -p public
-    - cp -r docs/book/html public/ || cp -r docs/book public/
+    - mkdir -p public/dev
+    - if [ -d docs/book/html ]; then cp -r docs/book/html/. public/; else cp -r docs/book/. public/; fi
+    - if [ -d docs/dev/book/html ]; then cp -r docs/dev/book/html/. public/dev/; else cp -r docs/dev/book/. public/dev/; fi
   artifacts:
     paths:
       - public

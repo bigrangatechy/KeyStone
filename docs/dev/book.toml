@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[book]
+title = "KeyStone developer documentation"
+authors = ["The KeyStone Authors"]
+language = "en"
+src = "src"
+
+[output.html]
+no-section-label = true
+git-repository-url = "http://git.bigrangatech.com/Ranga/keystone"

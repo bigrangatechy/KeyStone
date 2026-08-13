@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use anyhow::Context;
 use clap::Parser;
 use keystone_core::config::{self, ServerConfig};
-use keystone_core::docs;
 use keystone_server::auth;
 use keystone_server::cli::{Command, ServerCli};
 use keystone_server::state::AppState;
@@ -43,15 +42,14 @@ async fn main() -> anyhow::Result<()> {
             if section == "all" {
                 print!("{}", help::all_markdown());
             } else {
-                match section.as_str() {
-                    "metrics" => print!("{}", docs::metrics_markdown()),
-                    "permissions" => print!("{}", docs::permissions_markdown()),
-                    "docker" => print!("{}", docs::docker_ops_markdown()),
-                    "widgets" => print!("{}", docs::widgets_markdown()),
-                    "agent-config" => print!("{}", docs::agent_config_markdown()),
-                    "server-config" => print!("{}", docs::server_config_markdown()),
-                    other => anyhow::bail!("unknown docs section {other}"),
-                }
+                let Some(sec) = help::section_by_slug(&section) else {
+                    let slugs: Vec<_> = help::sections().into_iter().map(|s| s.slug).collect();
+                    anyhow::bail!(
+                        "unknown docs section {section}; try one of: all, {}",
+                        slugs.join(", ")
+                    );
+                };
+                print!("{}", sec.markdown);
             }
             Ok(())
         }

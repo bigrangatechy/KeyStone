@@ -9,6 +9,9 @@
 //! 3. Draw it in `crates/keystone-server/src/static/app.js` (`renderWidget`).
 //! 4. Register a [`presets`] entry so the overview picker can place it.
 //! 5. Optionally include it on the built-in default dashboard.
+//!
+//! Operator Customize behaviour is in `docs/src/dashboard.md`. Extension
+//! steps and preset ids are in `docs/dev/src/widgets.md`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,7 +23,7 @@ use crate::net;
 use crate::sample::Sample;
 use crate::settings::NodeSettings;
 
-/// How a card is drawn. The UI, layout JSON, and `/help` all use this enum.
+/// How a card is drawn. The UI and layout JSON use this enum.
 #[derive(
     Debug,
     Clone,
@@ -539,8 +542,8 @@ fn preset(id: &str, group: &str, description: &str, widget: WidgetInstance) -> W
 }
 
 /// Built-in picker cards plus one card per temperature sensor in `latest`.
-/// The living `/help` table is [`presets`] only; node-specific sensors are
-/// offered in Customize after the agent has pushed samples.
+/// Node-specific sensors are offered in Customize after the agent has pushed
+/// samples.
 pub fn presets_for_samples(latest: &[Sample]) -> Vec<WidgetPreset> {
     let mut out = presets();
     let mut used: HashSet<String> = out.iter().map(|p| p.id.clone()).collect();

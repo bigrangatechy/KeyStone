@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(
     name = "keystone",
-    about = "KeyStone server: unlimited-node monitoring, per-node Docker, living /help",
+    about = "KeyStone server: unlimited-node monitoring, per-node Docker",
     version
 )]
 pub struct ServerCli {
@@ -28,15 +28,12 @@ pub enum Command {
         )]
         config: PathBuf,
     },
-    /// Print living documentation (same text as /help) to stdout
+    /// Print operator documentation (same text as /help) to stdout
     Docs {
+        /// Chapter slug (`introduction`, `install`, …) or `all`
         #[arg(long, default_value = "all")]
         section: String,
     },
     /// Hash a password for `auth.password_hash` (reads KEYSTONE_ADMIN_PASSWORD or prompt via stdin)
     HashPassword,
-}
-
-pub fn markdown_help() -> String {
-    clap_markdown::help_markdown::<ServerCli>()
 }

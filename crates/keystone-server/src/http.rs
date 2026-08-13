@@ -19,7 +19,6 @@ use keystone_core::rbac::Permission;
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 use crate::auth;
 use crate::help;
@@ -1051,7 +1050,7 @@ async fn help_index() -> impl IntoResponse {
 }
 
 async fn help_section(Path(slug): Path<String>) -> Response {
-    let Some(sec) = help::section(&slug) else {
+    let Some(sec) = help::section_by_slug(&slug) else {
         return (StatusCode::NOT_FOUND, "unknown help section").into_response();
     };
     let sections = help::sections();
@@ -1070,27 +1069,21 @@ async fn help_section(Path(slug): Path<String>) -> Response {
     .into_response()
 }
 
-#[derive(Serialize, ToSchema)]
-pub struct CatalogMetric {
-    pub name: String,
-    pub metric_type: String,
-    pub unit: String,
-    pub help: String,
-    pub labels: Vec<String>,
+#[derive(Serialize)]
+struct CatalogMetric {
+    name: String,
+    metric_type: String,
+    unit: String,
+    help: String,
+    labels: Vec<String>,
 }
 
-#[derive(Serialize, ToSchema)]
-pub struct CatalogApi {
-    pub metrics: Vec<CatalogMetric>,
+#[derive(Serialize)]
+struct CatalogApi {
+    metrics: Vec<CatalogMetric>,
 }
 
-/// Metric catalog allowlist compiled into this binary.
-#[utoipa::path(
-    get,
-    path = "/api/v1/catalog",
-    responses((status = 200, description = "Catalog", body = CatalogApi))
-)]
-pub async fn catalog_api() -> Json<CatalogApi> {
+async fn catalog_api() -> Json<CatalogApi> {
     let metrics = catalog()
         .iter()
         .map(|d| CatalogMetric {
@@ -1104,21 +1097,14 @@ pub async fn catalog_api() -> Json<CatalogApi> {
     Json(CatalogApi { metrics })
 }
 
-#[derive(Serialize, ToSchema)]
-pub struct NodeDashboardApi {
-    pub source: String,
-    pub layout: serde_json::Value,
-    pub widgets: serde_json::Value,
+#[derive(Serialize)]
+struct NodeDashboardApi {
+    source: String,
+    layout: serde_json::Value,
+    widgets: serde_json::Value,
 }
 
-/// Layout JSON plus hydrated widget values. PUT saves a custom per-node layout.
-#[utoipa::path(
-    get,
-    path = "/api/v1/nodes/{id}/dashboard",
-    params(("id" = String, Path, description = "Node id")),
-    responses((status = 200, description = "Dashboard layout and widgets", body = NodeDashboardApi))
-)]
-pub async fn dashboard_get(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+async fn dashboard_get(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
         return (StatusCode::NOT_FOUND, "node not found").into_response();
     }
@@ -1133,18 +1119,7 @@ pub async fn dashboard_get(State(state): State<AppState>, Path(id): Path<String>
     .into_response()
 }
 
-#[utoipa::path(
-    put,
-    path = "/api/v1/nodes/{id}/dashboard",
-    params(("id" = String, Path, description = "Node id")),
-    responses(
-        (status = 204, description = "Saved"),
-        (status = 400, description = "Invalid layout"),
-        (status = 404, description = "Unknown node")
-    )
-)]
-/// Save a custom per-node dashboard layout.
-pub async fn dashboard_put(
+async fn dashboard_put(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
@@ -1170,17 +1145,7 @@ pub async fn dashboard_put(
     }
 }
 
-#[utoipa::path(
-    delete,
-    path = "/api/v1/nodes/{id}/dashboard",
-    params(("id" = String, Path, description = "Node id")),
-    responses(
-        (status = 204, description = "Reset to default"),
-        (status = 404, description = "Unknown node")
-    )
-)]
-/// Clear a custom layout so the built-in default is used again.
-pub async fn dashboard_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+async fn dashboard_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
         return (StatusCode::NOT_FOUND, "node not found").into_response();
     }

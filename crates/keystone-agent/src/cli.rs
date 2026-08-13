@@ -20,7 +20,3 @@ pub struct AgentCli {
     )]
     pub config: PathBuf,
 }
-
-pub fn markdown_help() -> String {
-    clap_markdown::help_markdown::<AgentCli>()
-}

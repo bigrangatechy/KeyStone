@@ -6,8 +6,8 @@ use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 
 use crate::rbac::Permission;
 
-/// Docker operations the agent may perform. The UI, control RPC, audit log,
-/// and `/help` all use this enum — do not list actions in hand-written docs.
+/// Docker operations the agent may perform. The UI, control RPC, and audit
+/// log all use this enum. Keep `docs/dev/src/docker.md` in sync.
 #[derive(
     Debug,
     Clone,

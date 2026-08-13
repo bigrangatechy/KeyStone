@@ -1,16 +1,15 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.
+/// Agent configuration.
 ///
 /// Required to find the server: `ingest_url`, `ingest_token`, `node_id`,
 /// `buffer_dir`, and optional `docker.host`. Poll interval, Docker
 /// enable/manage/exec, labels, and compose paths are node Settings once
 /// connected; TOML is the fallback until then.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// gRPC ingest URL, for example `http://keystone.example:9100`.
     pub ingest_url: String,
@@ -61,7 +60,7 @@ impl Default for AgentConfig {
 ///
 /// Socket access is root-equivalent. `manage` is opt-in. `allow_exec` is a
 /// further gate because exec is a root shell on the host namespaces.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DockerConfig {
     /// Observe Docker (list/inspect/stats/logs) via the engine socket.
     /// Fallback until node Settings `docker_enabled` is applied.

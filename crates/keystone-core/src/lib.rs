@@ -3,12 +3,12 @@
 
 //! Shared types for KeyStone: metric catalog, config, RBAC, Docker ops.
 //!
-//! Reference documentation is rendered from these types (`docs` module).
-//! Do not duplicate metric or permission lists in hand-written markdown.
+//! Operator docs live in `docs/src/` (served at `/help`). Internals live in
+//! `docs/dev/`. Coverage tests fail if the developer pages miss a catalog
+//! name, `DockerOp`, or `Permission`.
 
 pub mod config;
 pub mod docker;
-pub mod docs;
 pub mod gpu;
 pub mod metrics;
 pub mod net;
@@ -33,3 +33,6 @@ pub use widgets::{
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[cfg(test)]
+mod docs_coverage;

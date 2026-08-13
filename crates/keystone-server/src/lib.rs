@@ -6,7 +6,6 @@ pub mod cli;
 pub mod help;
 pub mod http;
 pub mod ingest;
-pub mod openapi;
 pub mod scrape;
 pub mod state;
 

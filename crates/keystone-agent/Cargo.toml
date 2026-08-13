@@ -21,7 +21,6 @@ bollard.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 clap.workspace = true
-clap-markdown.workspace = true
 futures-util.workspace = true
 hostname.workspace = true
 keystone-core.workspace = true

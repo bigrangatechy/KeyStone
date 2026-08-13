@@ -9,12 +9,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Shared types, metric catalog, config, RBAC, and living-doc renderers for KeyStone"
+description = "Shared types, metric catalog, config, RBAC, and widgets for KeyStone"
 
 [dependencies]
-clap.workspace = true
 inventory.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true

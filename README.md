@@ -33,7 +33,8 @@ Two Debian packages. That is the easy path: **one UI**, agents everywhere else.
 | `keystone-server` | One box (the dashboard) | `keystone-server.service` |
 | `keystone-agent` | Every box you want in the UI, including the server host if you want it monitored | `keystone-agent.service` |
 
-They do not conflict. CI builds `amd64` and `arm64` (Pi 4/5). See [docs/src/install.md](docs/src/install.md).
+They do not conflict. CI builds `amd64` and `arm64` (Pi 4/5). See
+[docs/src/install.md](docs/src/install.md).
 
 ```
 # UI machine
@@ -44,8 +45,6 @@ sudo systemctl enable --now keystone-server keystone-agent
 sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
 sudo systemctl enable --now keystone-agent
 ```
-
-Build with `cargo deb -p keystone-server` and `cargo deb -p keystone-agent`.
 
 ## Install from source
 
@@ -71,17 +70,16 @@ config). The ingest token is seeded from the server config (or
 `KEYSTONE_INGEST_TOKEN`) and then edited in **Settings**. Agents must
 present the same token.
 
-## Living documentation
+## Documentation
 
-Reference docs are generated from the same types the process runs:
+Operator chapters live in [`docs/src/`](docs/src/) (install, Settings,
+dashboards, Docker, security). The running server serves **this version**
+at `/help` after login. `keystone docs` prints the same text.
 
-```
-cargo xtask docs
-```
-
-The running server serves **this version's** docs at `/help` (after login).
-The mdBook in `docs/` is published by GitLab Pages. Do not copy metric
-tables into this README; they will go stale. See [CONTRIBUTING.md](CONTRIBUTING.md).
+How to extend the catalog, widgets, ingest protocol, and crates is in
+[`docs/dev/src/`](docs/dev/src/) — not mixed into `/help`. GitLab Pages
+publishes the operator book at the site root and the developer book at
+`/dev/`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Architecture (short)
 
@@ -95,6 +93,6 @@ tables into this README; they will go stale. See [CONTRIBUTING.md](CONTRIBUTING.
 ## Security
 
 Docker socket access is root-equivalent on that host. Enable Docker and
-`docker.manage` from the node’s Settings (opt-in). Container `exec` is off
-by default. Mutating Docker calls require a logged-in UI session, not the
-ingest token. See the threat-model chapter in the book.
+manage from the node’s Settings (opt-in). Container `exec` is off by
+default. Mutating Docker calls require a logged-in UI session, not the
+ingest token. See the operator [security](docs/src/security.md) chapter.

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Metric catalog. The running agent and server drop names that are not listed
-//! here. `cargo xtask docs` and `/help` render this module; do not copy the
-//! list elsewhere.
+//! here. Keep `docs/dev/src/metrics.md` in sync (coverage test). Operator
+//! meaning lives in `docs/src/metrics.md`.
 
 use std::sync::OnceLock;
 

@@ -51,18 +51,22 @@ By making a contribution to this project, I certify that:
     this project or the open source license(s) involved.
 ```
 
-## Living documentation
+## Documentation
 
-Reference material is generated from Rust types. Do not edit files under
-`docs/src/generated/` by hand. After changing metrics, config, Docker ops,
-RBAC, widgets, CLI, or HTTP APIs, run:
+Operator docs (`docs/src/`) are hand-written and compiled into the server
+(`/help`, `keystone docs`). Developer docs (`docs/dev/src/`) are a separate
+book: catalog, widgets, ingest, stores, HTTP API. Do not put crate-level
+how-tos in the operator book.
+
+After adding a catalog metric, `DockerOp`, or `Permission`, mention it in
+the matching developer chapter (backticks around the name). `cargo test`
+fails if those pages miss a variant. Update an operator chapter when an
+admin would notice the change.
 
 ```
-cargo xtask docs
+mdbook build docs
+mdbook build docs/dev
 ```
-
-CI fails if that output is dirty. Conceptual pages in `docs/src/` (install,
-threat model) are hand-written.
 
 ## Checks
 
@@ -71,7 +75,8 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo deny check
-cargo xtask docs
+mdbook build docs
+mdbook build docs/dev
 cargo deb -p keystone-agent   # optional; CI also builds arm64
 cargo deb -p keystone-server
 ```
