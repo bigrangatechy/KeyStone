@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Packaged default. Edit ingest_url and ingest_token, then:
+#   systemctl enable --now keystone-agent
+
+ingest_url = "http://keystone.home.arpa:9100"
+ingest_token = "change-me"
+interval_secs = 15
+buffer_dir = "/var/lib/keystone/agent-buffer"
+
+[labels]
+role = "homelab"
+
+[docker]
+enabled = false
+manage = false
+allow_exec = false
+compose_paths = []

@@ -39,3 +39,24 @@ uuid.workspace = true
 
 [dev-dependencies]
 trycmd = "0.15"
+
+[package.metadata.deb]
+name = "keystone-agent"
+section = "net"
+priority = "optional"
+depends = "$auto, adduser"
+license-file = ["../../COPYING", "0"]
+extended-description = """KeyStone agent for Debian and Raspberry Pi OS (64-bit).
+Pushes host metrics to a KeyStone server. Optional Docker Engine access
+via the local socket. No node cap."""
+assets = [
+    ["target/release/keystone-agent", "usr/bin/", "755"],
+    ["../../packaging/deb/agent/agent.toml", "etc/keystone/agent.toml", "640"],
+    ["../../packaging/deb/agent/default", "etc/default/keystone-agent", "644"],
+]
+conf-files = [
+    "/etc/keystone/agent.toml",
+    "/etc/default/keystone-agent",
+]
+maintainer-scripts = "../../packaging/deb/agent"
+systemd-units = { unit-name = "keystone-agent", enable = true, start = false, unit-scripts = "../../packaging/deb/agent" }

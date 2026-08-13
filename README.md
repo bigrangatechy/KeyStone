@@ -24,6 +24,18 @@ A binary linked with Apache-2.0-only crates is distributed under GPLv3
 (the `or-later` choice). Prefer MIT-or-Apache dependencies and take the MIT
 side when both are offered.
 
+## Install
+
+Homelab path is a **.deb** per machine (Debian, Ubuntu, 64-bit Raspberry Pi
+OS). CI builds `amd64` and `arm64` (Pi 4/5). See [docs/src/install.md](docs/src/install.md).
+
+```
+sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
+sudo systemctl enable --now keystone-agent
+```
+
+Build packages with `cargo deb -p keystone-agent` (or `--target aarch64-unknown-linux-gnu`).
+
 ## Install from source
 
 Rust 1.85 or newer is required.

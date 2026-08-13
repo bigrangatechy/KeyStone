@@ -1,0 +1,31 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+set -e
+
+case "$1" in
+configure)
+	if ! getent group keystone >/dev/null; then
+		addgroup --system keystone
+	fi
+	if ! getent passwd keystone >/dev/null; then
+		adduser --system --ingroup keystone --home /var/lib/keystone \
+			--no-create-home --gecos "KeyStone" keystone
+	fi
+	mkdir -p /var/lib/keystone/agent-buffer
+	chown -R keystone:keystone /var/lib/keystone
+	chmod 0750 /var/lib/keystone
+	if [ -f /etc/keystone/agent.toml ]; then
+		chown root:keystone /etc/keystone/agent.toml
+		chmod 0640 /etc/keystone/agent.toml
+	fi
+	if getent group docker >/dev/null; then
+		adduser keystone docker >/dev/null || true
+	fi
+	;;
+esac
+
+#DEBHELPER#
+
+exit 0

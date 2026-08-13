@@ -1,0 +1,28 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+set -e
+
+case "$1" in
+configure)
+	if ! getent group keystone >/dev/null; then
+		addgroup --system keystone
+	fi
+	if ! getent passwd keystone >/dev/null; then
+		adduser --system --ingroup keystone --home /var/lib/keystone \
+			--no-create-home --gecos "KeyStone" keystone
+	fi
+	mkdir -p /var/lib/keystone
+	chown -R keystone:keystone /var/lib/keystone
+	chmod 0750 /var/lib/keystone
+	if [ -f /etc/keystone/server.toml ]; then
+		chown root:keystone /etc/keystone/server.toml
+		chmod 0640 /etc/keystone/server.toml
+	fi
+	;;
+esac
+
+#DEBHELPER#
+
+exit 0

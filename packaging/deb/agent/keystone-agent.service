@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[Unit]
+Description=KeyStone agent (unlimited-node monitoring)
+Documentation=https://git.bigrangatech.com/Ranga/keystone
+After=network-online.target
+Wants=network-online.target
+# docker.service is optional; the agent runs without Engine.
+
+[Service]
+Type=simple
+User=keystone
+Group=keystone
+EnvironmentFile=-/etc/default/keystone-agent
+ExecStart=/usr/bin/keystone-agent --config /etc/keystone/agent.toml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/keystone -/run/docker.sock -/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[Unit]
+Description=KeyStone server (unlimited-node monitoring)
+Documentation=https://git.bigrangatech.com/Ranga/keystone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keystone
+Group=keystone
+EnvironmentFile=-/etc/default/keystone
+ExecStart=/usr/bin/keystone serve --config /etc/keystone/server.toml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/keystone
+
+[Install]
+WantedBy=multi-user.target

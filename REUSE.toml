@@ -10,6 +10,7 @@ path = [
     "docs/book.toml",
     "crates/keystone-agent/tests/cmd/**",
     "crates/keystone-server/tests/cmd/**",
+    "packaging/deb/**",
 ]
 SPDX-FileCopyrightText = "2026 The KeyStone Authors"
 SPDX-License-Identifier = "GPL-2.0-or-later"

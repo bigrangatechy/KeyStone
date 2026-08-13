@@ -72,6 +72,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo deny check
 cargo xtask docs
+cargo deb -p keystone-agent   # optional; CI also builds arm64
 ```
 
 Use SPDX headers on new source files:
