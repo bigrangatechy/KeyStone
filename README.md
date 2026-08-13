@@ -67,7 +67,9 @@ keystone-agent --config examples/agent.toml
 ```
 
 Set `KEYSTONE_ADMIN_PASSWORD` on first server start (or put a hash in
-config). The ingest token on the agent must match the server.
+config). The ingest token is seeded from the server config (or
+`KEYSTONE_INGEST_TOKEN`) and then edited in **Settings**. Agents must
+present the same token.
 
 ## Living documentation
 
@@ -92,7 +94,7 @@ tables into this README; they will go stale. See [CONTRIBUTING.md](CONTRIBUTING.
 
 ## Security
 
-Docker socket access is root-equivalent on that host. `docker.manage` is
-opt-in. Container `exec` is off by default. Mutating Docker calls require a
-logged-in UI session, not the ingest token. See the threat-model chapter in
-the book.
+Docker socket access is root-equivalent on that host. Enable Docker and
+`docker.manage` from the node’s Settings (opt-in). Container `exec` is off
+by default. Mutating Docker calls require a logged-in UI session, not the
+ingest token. See the threat-model chapter in the book.

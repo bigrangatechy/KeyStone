@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ServerConfig",
-  "description": "Server configuration. Source of truth for `docs/src/generated/server-config.md`.",
+  "description": "Process configuration (listen addresses, data directory, bootstrap). Source of truth for `docs/src/generated/server-config.md`.\n\nAfter first start, ingest token, series retention, and scrape jobs are stored in the Settings UI (SQLite). TOML values seed that row once. `KEYSTONE_INGEST_TOKEN` always overrides the stored token. Listen addresses, `data_dir`, and auth username stay in this file.",
   "type": "object",
   "properties": {
     "auth": {
@@ -31,11 +31,12 @@
       "type": "string"
     },
     "ingest_token": {
-      "description": "Shared ingest token. Agents must present this. It cannot mutate Docker.",
+      "description": "Bootstrap ingest token. Copied into Settings on first start. After that, change it in the UI. `KEYSTONE_INGEST_TOKEN` always wins.",
       "default": "",
       "type": "string"
     },
     "prometheus_scrape": {
+      "description": "Bootstrap Prometheus scrape jobs. Copied into Settings on first start.",
       "default": [],
       "type": "array",
       "items": {
@@ -43,13 +44,14 @@
       }
     },
     "retention_hours": {
-      "description": "Series retention in hours.",
-      "default": 168,
+      "description": "Bootstrap series retention in hours (default 24). Copied into Settings on first start; change it in the UI afterwards.",
+      "default": 24,
       "type": "integer",
       "format": "uint32",
       "minimum": 0.0
     },
     "snmp_scrape": {
+      "description": "Bootstrap SNMP scrape jobs. Copied into Settings on first start.",
       "default": [],
       "type": "array",
       "items": {

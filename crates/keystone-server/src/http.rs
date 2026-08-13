@@ -16,8 +16,8 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use keystone_core::docker::DockerOp;
 use keystone_core::metrics::catalog;
 use keystone_core::rbac::Permission;
-use keystone_core::widgets::{hydrate, presets, Dashboard, WidgetKind};
-use keystone_core::NodeSettings;
+use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
+use keystone_core::{NodeSettings, ServerSettings};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -35,6 +35,8 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}", get(node_page))
         .route("/nodes/{id}/setup", get(node_setup_page))
         .route("/nodes/{id}/settings", post(node_settings_post))
+        .route("/settings", get(settings_page).post(settings_post))
+        .route("/settings/rotate-token", post(settings_rotate_token))
         .route("/nodes/{id}/docker/{op}", post(docker_action))
         .route("/nodes/{id}/containers/{cid}/logs", get(container_logs_sse))
         .route(
@@ -177,6 +179,168 @@ async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
     let mut cookie = Cookie::from(SESSION_COOKIE);
     cookie.set_path("/");
     (jar.remove(cookie), Redirect::to("/login")).into_response()
+}
+
+#[derive(Template)]
+#[template(path = "settings.html")]
+struct SettingsTemplate {
+    retention_hours: u32,
+    ingest_token: String,
+    ingest_token_env_override: bool,
+    prometheus_scrape: String,
+    snmp_scrape: String,
+    username: String,
+    saved: bool,
+    rotated: bool,
+    error: String,
+}
+
+#[derive(Deserialize)]
+struct SettingsQuery {
+    saved: Option<String>,
+    rotated: Option<String>,
+}
+
+fn settings_view(
+    state: &AppState,
+    stored: &ServerSettings,
+    saved: bool,
+    rotated: bool,
+    error: String,
+    prometheus_scrape: Option<String>,
+    snmp_scrape: Option<String>,
+) -> SettingsTemplate {
+    SettingsTemplate {
+        retention_hours: ServerSettings::clamp_retention_hours(stored.retention_hours),
+        ingest_token: if state.ingest_token_env_override() {
+            state.ingest_token()
+        } else {
+            stored.ingest_token.clone()
+        },
+        ingest_token_env_override: state.ingest_token_env_override(),
+        prometheus_scrape: prometheus_scrape
+            .unwrap_or_else(|| ServerSettings::format_prometheus_lines(&stored.prometheus_scrape)),
+        snmp_scrape: snmp_scrape
+            .unwrap_or_else(|| ServerSettings::format_snmp_lines(&stored.snmp_scrape)),
+        username: state.config.auth.username.clone(),
+        saved,
+        rotated,
+        error,
+    }
+}
+
+async fn settings_page(
+    State(state): State<AppState>,
+    Query(q): Query<SettingsQuery>,
+) -> impl IntoResponse {
+    let stored = state.stored_server_settings();
+    Html(
+        settings_view(
+            &state,
+            &stored,
+            q.saved.as_deref() == Some("1"),
+            q.rotated.as_deref() == Some("1"),
+            String::new(),
+            None,
+            None,
+        )
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+#[derive(Deserialize)]
+struct ServerSettingsForm {
+    #[serde(default)]
+    retention_hours: Option<u32>,
+    #[serde(default)]
+    ingest_token: String,
+    #[serde(default)]
+    prometheus_scrape: String,
+    #[serde(default)]
+    snmp_scrape: String,
+    #[serde(default)]
+    new_password: String,
+    #[serde(default)]
+    new_password_confirm: String,
+}
+
+async fn settings_post(
+    State(state): State<AppState>,
+    Form(form): Form<ServerSettingsForm>,
+) -> Response {
+    let fail = |state: &AppState, error: String, form: &ServerSettingsForm| {
+        let mut stored = state.stored_server_settings();
+        stored.retention_hours = form.retention_hours.unwrap_or(stored.retention_hours);
+        stored.ingest_token = form.ingest_token.clone();
+        Html(
+            settings_view(
+                state,
+                &stored,
+                false,
+                false,
+                error,
+                Some(form.prometheus_scrape.clone()),
+                Some(form.snmp_scrape.clone()),
+            )
+            .render()
+            .unwrap_or_else(|e| e.to_string()),
+        )
+        .into_response()
+    };
+    let prom = match ServerSettings::parse_prometheus_lines(&form.prometheus_scrape) {
+        Ok(j) => j,
+        Err(error) => return fail(&state, error, &form),
+    };
+    let snmp = match ServerSettings::parse_snmp_lines(&form.snmp_scrape) {
+        Ok(j) => j,
+        Err(error) => return fail(&state, error, &form),
+    };
+    let new_password = form.new_password.trim();
+    let confirm = form.new_password_confirm.trim();
+    if new_password != confirm {
+        return fail(
+            &state,
+            "new password and confirmation do not match".into(),
+            &form,
+        );
+    }
+    if !new_password.is_empty() {
+        match auth::hash_password(new_password) {
+            Ok(hash) => {
+                if let Err(e) = state
+                    .stores
+                    .metadata
+                    .upsert_user(&state.config.auth.username, &hash)
+                {
+                    return fail(&state, format!("could not update password: {e}"), &form);
+                }
+            }
+            Err(e) => return fail(&state, format!("could not hash password: {e}"), &form),
+        }
+    }
+    let mut next = state.stored_server_settings();
+    next.retention_hours =
+        ServerSettings::clamp_retention_hours(form.retention_hours.unwrap_or(next.retention_hours));
+    if !state.ingest_token_env_override() {
+        next.ingest_token = form.ingest_token.trim().to_string();
+    }
+    next.prometheus_scrape = prom;
+    next.snmp_scrape = snmp;
+    if let Err(e) = state.save_server_settings(&next) {
+        return fail(&state, format!("could not save: {e}"), &form);
+    }
+    Redirect::to("/settings?saved=1").into_response()
+}
+
+async fn settings_rotate_token(State(state): State<AppState>) -> Response {
+    if state.ingest_token_env_override() {
+        return Redirect::to("/settings").into_response();
+    }
+    let mut next = state.stored_server_settings();
+    next.ingest_token = auth::generate_ingest_token();
+    let _ = state.save_server_settings(&next);
+    Redirect::to("/settings?rotated=1").into_response()
 }
 
 #[derive(Template)]
@@ -346,6 +510,18 @@ async fn add_node_post(
                 .into_response();
             }
             let docker = form.docker == "on" || form.docker == "true" || form.docker == "1";
+            if docker {
+                let settings = NodeSettings {
+                    docker_enabled: true,
+                    docker_manage: true,
+                    ..Default::default()
+                };
+                let encoded = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
+                let _ = state
+                    .stores
+                    .metadata
+                    .set_node_settings_json(&node_id, Some(&encoded));
+            }
             let ingest = form
                 .ingest_url
                 .as_deref()
@@ -415,13 +591,13 @@ async fn node_setup_page(
         .ingest_url
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config.grpc_listen));
-    let docker = q.docker.as_deref() == Some("true");
-    let token = state.config.ingest_token.clone();
+    let settings = node_settings(&state, &id);
+    let docker = q.docker.as_deref() == Some("true") || settings.docker_enabled;
+    let token = state.ingest_token();
     let awaiting = node.awaiting_agent();
     let agent_toml = format!(
-        "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{}\"\ninterval_secs = {}\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n\n[docker]\nenabled = {docker}\nmanage = {docker}\nallow_exec = false\ncompose_paths = []\n",
+        "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{}\"\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n",
         node.node_id,
-        node_settings(&state, &id).poll_interval_secs()
     );
     Html(
         NodeSetupTemplate {
@@ -467,6 +643,11 @@ struct NodeTemplate {
     network_devices_text: String,
     detected_nics: String,
     poll_secs: u32,
+    labels_text: String,
+    docker_enabled: bool,
+    docker_manage: bool,
+    docker_allow_exec: bool,
+    compose_paths_text: String,
     settings_saved: bool,
 }
 
@@ -547,7 +728,8 @@ async fn node_page(
     let widgets_json = serde_json::to_string(&hydrate_node_widgets(&state, &id, &samples))
         .unwrap_or_else(|_| "[]".into());
     let layout_json = serde_json::to_string(&dash).unwrap_or_else(|_| "{}".into());
-    let presets_json = serde_json::to_string(&presets()).unwrap_or_else(|_| "[]".into());
+    let presets_json =
+        serde_json::to_string(&presets_for_samples(&samples)).unwrap_or_else(|_| "[]".into());
     let metrics = samples
         .iter()
         .map(|s| MetricRow {
@@ -630,6 +812,11 @@ async fn node_page(
             network_devices_text: settings.network_devices.join("\n"),
             detected_nics: nics.join(", "),
             poll_secs: settings.poll_interval_secs() as u32,
+            labels_text: settings.labels_text(),
+            docker_enabled: settings.docker_enabled,
+            docker_manage: settings.docker_manage,
+            docker_allow_exec: settings.docker_allow_exec,
+            compose_paths_text: settings.compose_paths.join("\n"),
             settings_saved: q.saved.as_deref() == Some("1"),
         }
         .render()
@@ -646,6 +833,23 @@ struct NodeSettingsForm {
     network_devices: String,
     #[serde(default)]
     poll_secs: Option<u32>,
+    #[serde(default)]
+    labels: String,
+    #[serde(default)]
+    docker_enabled: String,
+    #[serde(default)]
+    docker_manage: String,
+    #[serde(default)]
+    docker_allow_exec: String,
+    #[serde(default)]
+    compose_paths: String,
+}
+
+fn form_flag(s: &str) -> bool {
+    matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "on" | "true" | "1" | "yes"
+    )
 }
 
 async fn node_settings_post(
@@ -656,26 +860,24 @@ async fn node_settings_post(
     if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
         return (StatusCode::NOT_FOUND, "node not found").into_response();
     }
+    let docker_enabled = form_flag(&form.docker_enabled);
     let settings = NodeSettings {
         display_name: form.display_name.trim().to_string(),
         notes: form.notes.trim().to_string(),
-        network_devices: form
-            .network_devices
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect(),
+        network_devices: NodeSettings::parse_lines(&form.network_devices),
         poll_secs: NodeSettings::clamp_poll_secs(form.poll_secs.unwrap_or(1)),
+        docker_enabled,
+        docker_manage: docker_enabled && form_flag(&form.docker_manage),
+        docker_allow_exec: docker_enabled && form_flag(&form.docker_allow_exec),
+        compose_paths: NodeSettings::parse_lines(&form.compose_paths),
+        labels: NodeSettings::parse_labels(&form.labels),
     };
     let encoded = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
     let _ = state
         .stores
         .metadata
         .set_node_settings_json(&id, Some(&encoded));
-    state
-        .agents
-        .nudge_poll_interval(&id, settings.poll_interval_secs());
+    state.agents.nudge_runtime(&id, &settings);
     Redirect::to(&format!("/nodes/{id}?saved=1&panel=settings")).into_response()
 }
 

@@ -4,7 +4,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Server configuration. Source of truth for `docs/src/generated/server-config.md`.
+/// Process configuration (listen addresses, data directory, bootstrap).
+/// Source of truth for `docs/src/generated/server-config.md`.
+///
+/// After first start, ingest token, series retention, and scrape jobs are
+/// stored in the Settings UI (SQLite). TOML values seed that row once.
+/// `KEYSTONE_INGEST_TOKEN` always overrides the stored token. Listen
+/// addresses, `data_dir`, and auth username stay in this file.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ServerConfig {
     /// HTTP UI and API listen address.
@@ -16,16 +22,20 @@ pub struct ServerConfig {
     /// Data directory for SQLite, sessions, and the series store.
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
-    /// Shared ingest token. Agents must present this. It cannot mutate Docker.
+    /// Bootstrap ingest token. Copied into Settings on first start. After
+    /// that, change it in the UI. `KEYSTONE_INGEST_TOKEN` always wins.
     #[serde(default)]
     pub ingest_token: String,
-    /// Series retention in hours.
+    /// Bootstrap series retention in hours (default 24). Copied into
+    /// Settings on first start; change it in the UI afterwards.
     #[serde(default = "default_retention")]
     pub retention_hours: u32,
     #[serde(default)]
     pub auth: ServerAuth,
+    /// Bootstrap Prometheus scrape jobs. Copied into Settings on first start.
     #[serde(default)]
     pub prometheus_scrape: Vec<PrometheusScrape>,
+    /// Bootstrap SNMP scrape jobs. Copied into Settings on first start.
     #[serde(default)]
     pub snmp_scrape: Vec<SnmpScrape>,
 }
@@ -43,7 +53,7 @@ fn default_data_dir() -> String {
 }
 
 fn default_retention() -> u32 {
-    168
+    24
 }
 
 impl Default for ServerConfig {
@@ -84,7 +94,7 @@ impl Default for ServerAuth {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PrometheusScrape {
     /// Job name stored as the node_id if `node_id` is empty.
     pub name: String,
@@ -97,7 +107,7 @@ pub struct PrometheusScrape {
     pub node_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SnmpScrape {
     pub name: String,
     /// `host:port` (port defaults to 161 if omitted).

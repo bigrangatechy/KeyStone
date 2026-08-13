@@ -84,6 +84,11 @@ pub struct WidgetInstance {
     /// Label name used as the row title for [`WidgetKind::BarList`] (e.g. `mountpoint`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// When set, Stat/Gauge/Sparkline (and BarList rows) use only the series
+    /// whose [`Sample::labels_key`] equals this value. That is how one
+    /// temperature sensor becomes its own card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
     /// For [`WidgetKind::BarList`]: treat `metrics[0]` as remaining space (`total - value`).
     #[serde(default)]
     pub invert: bool,
@@ -103,6 +108,7 @@ impl WidgetInstance {
             span: 1,
             metrics: metrics.into_iter().map(Into::into).collect(),
             label: None,
+            series: None,
             invert: false,
         }
     }
@@ -119,6 +125,11 @@ impl WidgetInstance {
 
     pub fn with_invert(mut self) -> Self {
         self.invert = true;
+        self
+    }
+
+    pub fn with_series(mut self, series: impl Into<String>) -> Self {
+        self.series = Some(series.into());
         self
     }
 }
@@ -142,8 +153,8 @@ impl Dashboard {
     pub const VERSION: u32 = 1;
 
     const DEFAULT_IDS: &'static [&'static str] = &[
-        "cpu", "cpu_temp", "memory", "load", "uptime", "disks", "temps", "load15", "agent",
-        "net_rx", "net_tx", "gpu", "gpu_mem", "gpu_temp",
+        "cpu", "cpu_temp", "memory", "load", "uptime", "disks", "load15", "agent", "net_rx",
+        "net_tx", "gpu", "gpu_mem", "gpu_temp",
     ];
 
     /// Built-in overview until the node has a saved layout.
@@ -368,11 +379,11 @@ pub fn presets() -> Vec<WidgetPreset> {
         preset(
             "temps",
             "System",
-            "Every hardware monitor and thermal-zone sensor",
+            "Every hardware sensor on one card. Prefer the per-sensor cards under Temperature.",
             WidgetInstance::new(
                 "temps",
                 WidgetKind::BarList,
-                "Temperatures",
+                "All temperatures",
                 ["node_hwmon_temp_celsius", "node_hwmon_temp_max_celsius"],
             )
             .with_span(2)
@@ -527,6 +538,166 @@ fn preset(id: &str, group: &str, description: &str, widget: WidgetInstance) -> W
     }
 }
 
+/// Built-in picker cards plus one card per temperature sensor in `latest`.
+/// The living `/help` table is [`presets`] only; node-specific sensors are
+/// offered in Customize after the agent has pushed samples.
+pub fn presets_for_samples(latest: &[Sample]) -> Vec<WidgetPreset> {
+    let mut out = presets();
+    let mut used: HashSet<String> = out.iter().map(|p| p.id.clone()).collect();
+    out.extend(temperature_sensor_presets(latest, &mut used));
+    out
+}
+
+fn temperature_sensor_presets(latest: &[Sample], used: &mut HashSet<String>) -> Vec<WidgetPreset> {
+    struct Hit {
+        title: String,
+        group: String,
+        description: String,
+        base_id: String,
+        labels_key: String,
+        has_max: bool,
+        metric: &'static str,
+        max_metric: Option<&'static str>,
+    }
+
+    let mut max_keys: HashSet<String> = HashSet::new();
+    for s in latest {
+        if s.metric == "node_hwmon_temp_max_celsius" && !s.labels.is_empty() {
+            max_keys.insert(s.labels_key());
+        }
+    }
+
+    let mut hits: Vec<Hit> = Vec::new();
+    let mut seen_keys: HashSet<String> = HashSet::new();
+    for s in latest {
+        if s.labels.is_empty() {
+            continue;
+        }
+        if s.metric != "node_hwmon_temp_celsius" && s.metric != "node_gpu_temperature_celsius" {
+            continue;
+        }
+        if !seen_keys.insert(s.labels_key()) {
+            continue;
+        }
+        if s.metric == "node_hwmon_temp_celsius" {
+            let sensor = label(s, "sensor").unwrap_or("sensor");
+            let chip = label(s, "chip").unwrap_or("hwmon");
+            let kind = label(s, "kind").unwrap_or("other");
+            let key = s.labels_key();
+            hits.push(Hit {
+                title: sensor.to_string(),
+                group: temp_group(kind),
+                description: format!("{kind} · {chip}"),
+                base_id: format!("temp-{}", slug(&format!("{chip}-{sensor}"))),
+                has_max: max_keys.contains(&key),
+                labels_key: key,
+                metric: "node_hwmon_temp_celsius",
+                max_metric: Some("node_hwmon_temp_max_celsius"),
+            });
+        } else if s.metric == "node_gpu_temperature_celsius" {
+            let gpu = label(s, "gpu").unwrap_or("GPU");
+            let vendor = label(s, "vendor").unwrap_or("");
+            let key = s.labels_key();
+            let desc = if vendor.is_empty() {
+                format!("GPU {gpu}")
+            } else {
+                format!("{vendor} · {gpu}")
+            };
+            hits.push(Hit {
+                title: format!("{gpu} temp"),
+                group: "GPU".into(),
+                description: desc,
+                base_id: format!("gpu-temp-{}", slug(gpu)),
+                has_max: false,
+                labels_key: key,
+                metric: "node_gpu_temperature_celsius",
+                max_metric: None,
+            });
+        }
+    }
+    hits.sort_by(|a, b| {
+        a.group.cmp(&b.group).then_with(|| {
+            a.title
+                .to_ascii_lowercase()
+                .cmp(&b.title.to_ascii_lowercase())
+        })
+    });
+
+    hits.into_iter()
+        .map(|h| {
+            let id = unique_preset_id(used, &h.base_id);
+            let widget = if h.has_max {
+                if let Some(max_metric) = h.max_metric {
+                    WidgetInstance::new(
+                        id.clone(),
+                        WidgetKind::Gauge,
+                        h.title.clone(),
+                        [h.metric, max_metric],
+                    )
+                    .with_label("sensor")
+                    .with_series(h.labels_key)
+                } else {
+                    WidgetInstance::new(id.clone(), WidgetKind::Stat, h.title.clone(), [h.metric])
+                        .with_series(h.labels_key)
+                }
+            } else {
+                WidgetInstance::new(id.clone(), WidgetKind::Stat, h.title.clone(), [h.metric])
+                    .with_series(h.labels_key)
+            };
+            WidgetPreset {
+                id,
+                group: h.group,
+                description: h.description,
+                widget,
+            }
+        })
+        .collect()
+}
+
+fn temp_group(kind: &str) -> String {
+    let nice = match kind {
+        "cpu" => "CPU",
+        "gpu" => "GPU",
+        "disk" => "Disk",
+        "nic" => "Network",
+        "acpi" => "ACPI",
+        _ => "Other",
+    };
+    format!("Temperature ({nice})")
+}
+
+fn slug(raw: &str) -> String {
+    let mut out = String::new();
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let s = out.trim_matches('-').to_string();
+    if s.is_empty() {
+        "sensor".into()
+    } else {
+        s
+    }
+}
+
+fn unique_preset_id(used: &mut HashSet<String>, base: &str) -> String {
+    let base = if base.is_empty() { "temp-sensor" } else { base };
+    if used.insert(base.to_string()) {
+        return base.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SparkPoint {
     pub t: i64,
@@ -605,22 +776,22 @@ fn hydrate_one(
     };
     match w.kind {
         WidgetKind::Stat => {
-            if let Some(s) = find_unlabeled(latest, &w.metrics[0]) {
+            if let Some(s) = find_sample(latest, &w.metrics[0], w.series.as_deref()) {
                 out.value = Some(s.value);
                 out.display = format_value(s.value, unit);
             }
         }
         WidgetKind::Gauge => {
             if w.metrics.len() == 1 {
-                if let Some(s) = find_unlabeled(latest, &w.metrics[0]) {
+                if let Some(s) = find_sample(latest, &w.metrics[0], w.series.as_deref()) {
                     let ratio = s.value.clamp(0.0, 1.0);
                     out.value = Some(s.value);
                     out.ratio = Some(ratio);
                     out.display = format_value(ratio, "ratio");
                 }
             } else if let (Some(used), Some(total)) = (
-                find_unlabeled(latest, &w.metrics[0]),
-                find_unlabeled(latest, &w.metrics[1]),
+                find_sample(latest, &w.metrics[0], w.series.as_deref()),
+                find_sample(latest, &w.metrics[1], w.series.as_deref()),
             ) {
                 if total.value > 0.0 {
                     let ratio = (used.value / total.value).clamp(0.0, 1.0);
@@ -654,6 +825,22 @@ fn fill_sparkline(
     unit: &str,
 ) {
     let metric = &w.metrics[0];
+    if let Some(key) = w.series.as_deref().filter(|s| !s.is_empty()) {
+        if let Some(points) = history.get(&(metric.clone(), key.to_string())) {
+            out.spark = points
+                .iter()
+                .map(|(t, v)| SparkPoint { t: *t, v: *v })
+                .collect();
+        }
+        if let Some(s) = find_sample(latest, metric, Some(key)) {
+            out.value = Some(s.value);
+            out.display = format_value(s.value, unit);
+        } else if let Some(last) = out.spark.last() {
+            out.value = Some(last.v);
+            out.display = format_value(last.v, unit);
+        }
+        return;
+    }
     if let Some(lname) = spark_label(w, latest, metric) {
         let labeled: Vec<&Sample> = latest
             .iter()
@@ -791,6 +978,12 @@ fn bar_rows(w: &WidgetInstance, latest: &[Sample], unit: &str) -> Vec<HydratedRo
         .filter(|s| s.metric == *primary)
         .filter(|s| label(s, "fstype").is_none_or(|ft| !NOISY_FSTYPE.contains(&ft)))
         .filter(|s| !(w.label.is_some() && s.labels.is_empty()))
+        .filter(|s| {
+            w.series
+                .as_deref()
+                .filter(|k| !k.is_empty())
+                .is_none_or(|k| s.labels_key() == k)
+        })
         .filter_map(|s| {
             let mut value = s.value;
             let total = totals.get(&s.labels_key()).copied();
@@ -836,15 +1029,20 @@ fn spark_label<'a>(w: &'a WidgetInstance, latest: &[Sample], metric: &str) -> Op
     if let Some(name) = w.label.as_deref() {
         return Some(name);
     }
-    for name in ["device", "gpu", "sensor"] {
-        if latest
+    ["device", "gpu", "sensor"].into_iter().find(|name| {
+        latest
             .iter()
             .any(|s| s.metric == metric && label(s, name).is_some())
-        {
-            return Some(name);
-        }
+    })
+}
+
+fn find_sample<'a>(latest: &'a [Sample], name: &str, series: Option<&str>) -> Option<&'a Sample> {
+    if let Some(key) = series.filter(|s| !s.is_empty()) {
+        return latest
+            .iter()
+            .find(|s| s.metric == name && s.labels_key() == key);
     }
-    None
+    find_unlabeled(latest, name)
 }
 
 fn find_unlabeled<'a>(latest: &'a [Sample], name: &str) -> Option<&'a Sample> {
@@ -977,6 +1175,7 @@ mod tests {
                 "node_filesystem_size_bytes".into(),
             ],
             label: Some("mountpoint".into()),
+            series: None,
             invert: true,
         };
         let rows = bar_rows(&w, &samples, "bytes");
@@ -1009,6 +1208,7 @@ mod tests {
                 span: 2,
                 metrics: vec!["node_network_receive_bytes_per_second".into()],
                 label: None,
+                series: None,
                 invert: false,
             }],
         };
@@ -1064,6 +1264,64 @@ mod tests {
     #[test]
     fn formats_celsius() {
         assert_eq!(format_value(52.4, "celsius"), "52°C");
+    }
+
+    #[test]
+    fn default_dashboard_skips_all_temps_bar() {
+        assert!(!Dashboard::DEFAULT_IDS.contains(&"temps"));
+        assert!(Dashboard::default_node()
+            .widgets
+            .iter()
+            .any(|w| w.id == "cpu_temp"));
+        assert!(presets().iter().any(|p| p.id == "temps"));
+    }
+
+    #[test]
+    fn per_sensor_temp_presets_skip_hottest_aggregate() {
+        let samples = vec![
+            Sample::new("node_hwmon_temp_celsius", 45.0, 1)
+                .with_label("sensor", "Package id 0")
+                .with_label("chip", "coretemp")
+                .with_label("kind", "cpu"),
+            Sample::new("node_hwmon_temp_max_celsius", 90.0, 1)
+                .with_label("sensor", "Package id 0")
+                .with_label("chip", "coretemp")
+                .with_label("kind", "cpu"),
+            Sample::new("node_hwmon_temp_celsius", 38.0, 1)
+                .with_label("sensor", "Composite")
+                .with_label("chip", "nvme")
+                .with_label("kind", "disk"),
+            Sample::new("node_hwmon_temp_celsius", 45.0, 1),
+            Sample::new("node_gpu_temperature_celsius", 62.0, 1)
+                .with_label("gpu", "card0")
+                .with_label("vendor", "amd"),
+        ];
+        let catalog = presets_for_samples(&samples);
+        let pkg = catalog
+            .iter()
+            .find(|p| p.widget.title == "Package id 0")
+            .unwrap();
+        assert_eq!(pkg.group, "Temperature (CPU)");
+        assert_eq!(pkg.widget.kind, WidgetKind::Gauge);
+        assert_eq!(pkg.widget.metrics.len(), 2);
+        let nvme = catalog
+            .iter()
+            .find(|p| p.widget.title == "Composite")
+            .unwrap();
+        assert_eq!(nvme.group, "Temperature (Disk)");
+        assert_eq!(nvme.widget.kind, WidgetKind::Stat);
+        assert!(catalog.iter().any(|p| p.widget.title == "card0 temp"));
+        assert!(!catalog
+            .iter()
+            .any(|p| p.widget.series.as_deref() == Some("")));
+        let dash = Dashboard {
+            version: 1,
+            widgets: vec![pkg.widget.clone(), nvme.widget.clone()],
+        };
+        let cards = hydrate(&dash, &samples, &HashMap::new(), &NodeSettings::default());
+        assert_eq!(cards[0].display, "45°C / 90°C");
+        assert!((cards[0].ratio.unwrap() - 0.5).abs() < 1e-9);
+        assert_eq!(cards[1].display, "38°C");
     }
 
     #[test]

@@ -4,7 +4,9 @@
 
 Fields come from the Rust config structs (`schemars`).
 
-Server configuration. Source of truth for `docs/src/generated/server-config.md`.
+Process configuration (listen addresses, data directory, bootstrap). Source of truth for `docs/src/generated/server-config.md`.
+
+After first start, ingest token, series retention, and scrape jobs are stored in the Settings UI (SQLite). TOML values seed that row once. `KEYSTONE_INGEST_TOKEN` always overrides the stored token. Listen addresses, `data_dir`, and auth username stay in this file.
 
 | Field | Type | Description |
 |---|---|---|
@@ -12,10 +14,10 @@ Server configuration. Source of truth for `docs/src/generated/server-config.md`.
 | `data_dir` | string | Data directory for SQLite, sessions, and the series store. |
 | `grpc_listen` | string | gRPC ingest listen address. |
 | `http_listen` | string | HTTP UI and API listen address. |
-| `ingest_token` | string | Shared ingest token. Agents must present this. It cannot mutate Docker. |
-| `prometheus_scrape` | array of PrometheusScrape |  |
-| `retention_hours` | integer | Series retention in hours. |
-| `snmp_scrape` | array of SnmpScrape |  |
+| `ingest_token` | string | Bootstrap ingest token. Copied into Settings on first start. After that, change it in the UI. `KEYSTONE_INGEST_TOKEN` always wins. |
+| `prometheus_scrape` | array of PrometheusScrape | Bootstrap Prometheus scrape jobs. Copied into Settings on first start. |
+| `retention_hours` | integer | Bootstrap series retention in hours (default 24). Copied into Settings on first start; change it in the UI afterwards. |
+| `snmp_scrape` | array of SnmpScrape | Bootstrap SNMP scrape jobs. Copied into Settings on first start. |
 
 ## `PrometheusScrape`
 

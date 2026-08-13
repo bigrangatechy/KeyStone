@@ -11,9 +11,10 @@ The agent talks to Docker Engine through `docker.host` (default
 `/var/run/docker.sock`). Anyone who can use that socket can take over the
 host. KeyStone therefore:
 
-- Leaves Docker **off** until `docker.enabled = true`
-- Leaves mutations off until `docker.manage = true`
-- Leaves `exec` off until `docker.allow_exec = true`
+- Leaves Docker **off** until the node’s Settings enable it (toml
+  `docker.enabled` is only a fallback before the agent connects)
+- Leaves mutations off until Settings enable manage
+- Leaves `exec` off until Settings enable exec
 - Rejects mutating RPCs when those flags are false
 - Requires a logged-in UI session for Docker actions (the ingest token
   cannot call manage)

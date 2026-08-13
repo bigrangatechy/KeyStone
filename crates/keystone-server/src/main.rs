@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
-    let mut cfg: ServerConfig = if config_path.exists() {
+    let cfg: ServerConfig = if config_path.exists() {
         config::load_toml(&config_path)
             .with_context(|| format!("config {}", config_path.display()))?
     } else {
@@ -73,12 +73,6 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
             ..ServerConfig::default()
         }
     };
-    if let Ok(token) = std::env::var("KEYSTONE_INGEST_TOKEN") {
-        if !token.is_empty() {
-            cfg.ingest_token = token;
-        }
-    }
-
     std::fs::create_dir_all(&cfg.data_dir)?;
     let stores = Stores::open(std::path::Path::new(&cfg.data_dir), cfg.retention_hours)?;
     auth::ensure_admin(
@@ -89,6 +83,7 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
     let http_addr: SocketAddr = cfg.http_listen.parse().context("http_listen")?;
     let grpc_addr: SocketAddr = cfg.grpc_listen.parse().context("grpc_listen")?;
     let state = AppState::new(cfg, stores);
+    state.seed_server_settings()?;
     scrape::spawn(state.clone());
 
     let listener = tokio::net::TcpListener::bind(http_addr).await?;

@@ -62,9 +62,7 @@ impl Ingest for IngestSvc {
                                                     .flatten()
                                                     .as_deref(),
                                             );
-                                            state
-                                                .agents
-                                                .nudge_poll_interval(&id, settings.poll_interval_secs());
+                                            state.agents.nudge_runtime(&id, &settings);
                                             node_id = Some(id.clone());
                                             info!("agent session {id}");
                                         }
@@ -126,7 +124,8 @@ impl Ingest for IngestSvc {
 }
 
 fn handle_push(state: &AppState, frame: &PushFrame) -> anyhow::Result<String> {
-    if !state.config.ingest_token.is_empty() && frame.ingest_token != state.config.ingest_token {
+    let token = state.ingest_token();
+    if !token.is_empty() && frame.ingest_token != token {
         anyhow::bail!("invalid ingest token");
     }
     let hb = frame

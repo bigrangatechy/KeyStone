@@ -11,13 +11,29 @@ use tracing::{debug, warn};
 use crate::state::AppState;
 
 pub fn spawn(state: AppState) {
-    for job in state.config.prometheus_scrape.clone() {
-        let st = state.clone();
-        tokio::spawn(async move { prometheus_loop(st, job).await });
-    }
-    for job in state.config.snmp_scrape.clone() {
-        let st = state.clone();
-        tokio::spawn(async move { snmp_loop(st, job).await });
+    tokio::spawn(supervisor(state));
+}
+
+async fn supervisor(state: AppState) {
+    let mut epoch = u64::MAX;
+    let mut tasks = tokio::task::JoinSet::new();
+    loop {
+        let current = state.scrape_epoch();
+        if current != epoch {
+            tasks.abort_all();
+            while tasks.join_next().await.is_some() {}
+            epoch = current;
+            let settings = state.server_settings();
+            for job in settings.prometheus_scrape {
+                let st = state.clone();
+                tasks.spawn(async move { prometheus_loop(st, job).await });
+            }
+            for job in settings.snmp_scrape {
+                let st = state.clone();
+                tasks.spawn(async move { snmp_loop(st, job).await });
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 

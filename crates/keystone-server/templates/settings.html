@@ -1,0 +1,60 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Settings — KeyStone{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="muted">These apply to this server. Listen addresses, data directory, and the admin username stay in the config file (development / bootstrap). After first start this page is the source of truth for retention, the ingest token, and scrape jobs.</p>
+{% if saved %}<p>Saved.</p>{% endif %}
+{% if rotated %}<p>New ingest token generated. Update each agent’s <code>ingest_token</code> and restart it.</p>{% endif %}
+{% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+
+<form class="stack wide" method="post" action="/settings">
+  <fieldset>
+    <legend>Series</legend>
+    <label>Retention (hours)
+      <input type="number" name="retention_hours" min="1" max="8760" step="1" value="{{ retention_hours }}">
+      <span class="muted">How long metric history is kept. Default 24. Range 1–8760 (one year).</span>
+    </label>
+  </fieldset>
+  <fieldset>
+    <legend>Ingest token</legend>
+    <label>Shared token
+      <input name="ingest_token" value="{{ ingest_token }}" autocomplete="off" {% if ingest_token_env_override %}readonly{% endif %}>
+      <span class="muted">{% if ingest_token_env_override %}Overridden by <code>KEYSTONE_INGEST_TOKEN</code> until that environment variable is unset.{% else %}Agents must present this. Empty allows any token (only for local development).{% endif %}</span>
+    </label>
+  </fieldset>
+  <fieldset>
+    <legend>Prometheus scrape</legend>
+    <label>Jobs (one per line)
+      <textarea name="prometheus_scrape" rows="5" placeholder="name | url | interval_secs | node_id">{{ prometheus_scrape }}</textarea>
+      <span class="muted"><code>name | url | interval_secs | node_id</code>. Interval and node id are optional (default 30s). Blank lines and <code>#</code> comments are ignored.</span>
+    </label>
+  </fieldset>
+  <fieldset>
+    <legend>SNMP scrape</legend>
+    <label>Jobs (one per line)
+      <textarea name="snmp_scrape" rows="5" placeholder="name | target | community | interval_secs | node_id">{{ snmp_scrape }}</textarea>
+      <span class="muted"><code>name | target | community | interval_secs | node_id</code>. Community defaults to <code>public</code>.</span>
+    </label>
+  </fieldset>
+  <fieldset>
+    <legend>Admin password</legend>
+    <p class="muted">Signed in as <code>{{ username }}</code>. Username is set in the server config. Leave the password fields empty to keep the current password.</p>
+    <label>New password
+      <input type="password" name="new_password" autocomplete="new-password">
+    </label>
+    <label>Confirm new password
+      <input type="password" name="new_password_confirm" autocomplete="new-password">
+    </label>
+  </fieldset>
+  <button type="submit">Save settings</button>
+</form>
+
+{% if !ingest_token_env_override %}
+<form class="stack wide" method="post" action="/settings/rotate-token">
+  <p class="muted">Replace the ingest token with a new random value. Connected agents will fail until their config matches.</p>
+  <button type="submit">Generate new ingest token</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -4,12 +4,14 @@
 # Packaged default. Set KEYSTONE_ADMIN_PASSWORD once, or put a hash in
 # auth.password_hash (keystone hash-password). Then:
 #   systemctl enable --now keystone-server
+#
+# Listen addresses, data_dir, and username stay here. Retention, ingest
+# token, and scrape jobs are seeded on first start, then edited in Settings.
 
 http_listen = "0.0.0.0:8080"
 grpc_listen = "0.0.0.0:9100"
 data_dir = "/var/lib/keystone"
 ingest_token = "change-me"
-retention_hours = 168
 
 [auth]
 username = "admin"

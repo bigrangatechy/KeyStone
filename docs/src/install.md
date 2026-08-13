@@ -43,8 +43,8 @@ sudo apt install ./keystone-agent_0.1.0-1_arm64.deb   # optional on the UI host
 sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
 ```
 
-Then edit `/etc/keystone/agent.toml` or `/etc/keystone/server.toml` (same
-ingest token on every agent), set `KEYSTONE_ADMIN_PASSWORD` in
+Then edit `/etc/keystone/server.toml` only for listen addresses, data
+directory, and the admin username. Set `KEYSTONE_ADMIN_PASSWORD` in
 `/etc/default/keystone-server` for the first server start, and:
 
 ```
@@ -52,9 +52,15 @@ sudo systemctl enable --now keystone-server   # UI + ingest, one machine
 sudo systemctl enable --now keystone-agent    # every node
 ```
 
+Open the UI **Settings** page to confirm the ingest token (seeded from
+the server config, or generated if empty), series retention (default 24
+hours), and any Prometheus/SNMP scrape jobs. Add nodes from the UI; each
+setup page gives a short `agent.toml` with ingest URL, token, and node id.
+
 If Docker is installed, the `keystone` user is added to the `docker` group
-so the agent can use the engine socket. Set `[docker] enabled = true` (and
-`manage = true` if you want mutations) in the agent config.
+so the agent can use the engine socket. Enable Docker on that node in
+**Settings** (Observe Docker / Allow mutations). The socket path stays in
+`agent.toml` as `docker.host` only if it is not `/var/run/docker.sock`.
 
 ### Raspberry Pi 4 / 5
 
@@ -100,17 +106,12 @@ cargo build --release -p keystone-server -p keystone-agent
 
 Copy example configs from `examples/` and set:
 
-- `ingest_token` (same value on server and agents)
 - `KEYSTONE_ADMIN_PASSWORD` on first server start, or `keystone hash-password`
+- Matching `ingest_token` on the server seed / Settings page and each agent
 
-The agent defaults to hostname as `node_id`. Enable Docker on a node with:
-
-```
-[docker]
-enabled = true
-manage = true   # opt-in; socket access is root-equivalent
-allow_exec = false
-```
+The agent defaults to hostname as `node_id`. Enable Docker from that
+node’s **Settings** after it connects (`docker.host` in the agent config
+only if the engine socket is not the default).
 
 There is no license file or seat count to raise when you add nodes.
 
@@ -120,6 +121,8 @@ The dashboard runs on **one** machine. Other boxes only run `keystone-agent`.
 After the server is up, open the UI, click **Add node**, and enter the
 hostname. KeyStone registers it as “awaiting agent” and shows a generated
 `agent.toml` (ingest URL on the gRPC port, shared token, `node_id`).
+Poll interval, Docker, labels, and compose paths are node Settings after
+the agent connects.
 
 Install that config on the remote host and start the agent. The next
 heartbeat replaces “awaiting agent” with “connected”. You can also skip the

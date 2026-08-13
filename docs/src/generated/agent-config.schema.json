@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AgentConfig",
-  "description": "Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.",
+  "description": "Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.\n\nRequired to find the server: `ingest_url`, `ingest_token`, `node_id`, `buffer_dir`, and optional `docker.host`. Poll interval, Docker enable/manage/exec, labels, and compose paths are node Settings once connected; TOML is the fallback until then.",
   "type": "object",
   "required": [
     "ingest_url"
@@ -36,14 +36,14 @@
       "type": "string"
     },
     "interval_secs": {
-      "description": "Push interval in seconds. Default 1. A connected server can override this at runtime from the node's Settings poll interval.",
+      "description": "Push interval in seconds. Default 1. Fallback until the node's Settings poll interval is applied at runtime.",
       "default": 1,
       "type": "integer",
       "format": "uint64",
       "minimum": 0.0
     },
     "labels": {
-      "description": "Extra labels attached to every sample (`key=value` in TOML map).",
+      "description": "Extra labels attached to every heartbeat. Fallback until the node's Settings labels are applied at runtime.",
       "default": {},
       "type": "object",
       "additionalProperties": {
@@ -62,12 +62,12 @@
       "type": "object",
       "properties": {
         "allow_exec": {
-          "description": "Allow `docker exec`. Default false.",
+          "description": "Allow `docker exec`. Default false. Fallback until Settings.",
           "default": false,
           "type": "boolean"
         },
         "compose_paths": {
-          "description": "Extra Compose file paths to manage (in addition to project labels).",
+          "description": "Extra Compose file paths. Fallback until node Settings apply.",
           "default": [],
           "type": "array",
           "items": {
@@ -75,17 +75,17 @@
           }
         },
         "enabled": {
-          "description": "Observe Docker (list/inspect/stats/logs) via the engine socket.",
+          "description": "Observe Docker (list/inspect/stats/logs) via the engine socket. Fallback until node Settings `docker_enabled` is applied.",
           "default": false,
           "type": "boolean"
         },
         "host": {
-          "description": "Engine socket or TCP URL. Empty uses `/var/run/docker.sock`.",
+          "description": "Engine socket or TCP URL. Empty uses `/var/run/docker.sock`. Stays in this file (not a UI setting).",
           "default": "",
           "type": "string"
         },
         "manage": {
-          "description": "Allow mutating Docker operations. Opt-in.",
+          "description": "Allow mutating Docker operations. Opt-in. Fallback until Settings.",
           "default": false,
           "type": "boolean"
         }

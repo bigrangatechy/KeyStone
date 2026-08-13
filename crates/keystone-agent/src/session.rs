@@ -1,21 +1,24 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use keystone_core::config::AgentConfig;
+use keystone_core::config::{AgentConfig, DockerConfig};
 use keystone_core::docker::DockerOp;
 use keystone_core::node::NodeIdentity;
 use keystone_core::sample::{self, Label, Sample};
-use keystone_core::NodeSettings;
+use keystone_core::{AgentRuntime, NodeSettings};
 use keystone_proto::ingest_client::IngestClient;
 use keystone_proto::{
     agent_to_server, server_to_agent, Ack, AgentToServer, CommandResult, Heartbeat, PushFrame,
     ServerToAgent,
 };
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 use tracing::{info, warn};
@@ -23,6 +26,33 @@ use tracing::{info, warn};
 use crate::buffer::DiskBuffer;
 use crate::collect::collect_host;
 use crate::docker::DockerHandle;
+
+struct AgentRuntimeState {
+    docker: Mutex<Option<DockerHandle>>,
+    labels: Mutex<BTreeMap<String, String>>,
+    docker_host: String,
+}
+
+impl AgentRuntimeState {
+    fn from_config(cfg: &AgentConfig) -> Self {
+        let docker = if cfg.docker.enabled {
+            match DockerHandle::connect(&cfg.docker) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    warn!("docker disabled: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        Self {
+            docker: Mutex::new(docker),
+            labels: Mutex::new(cfg.labels.clone()),
+            docker_host: cfg.docker.host.clone(),
+        }
+    }
+}
 
 pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
     let node_id = if cfg.node_id.is_empty() {
@@ -34,25 +64,14 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         cfg.node_id.clone()
     };
 
-    let docker = if cfg.docker.enabled {
-        match DockerHandle::connect(&cfg.docker) {
-            Ok(d) => Some(d),
-            Err(e) => {
-                warn!("docker disabled: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-
+    let runtime = Arc::new(AgentRuntimeState::from_config(&cfg));
     let buffer = DiskBuffer::new(&cfg.buffer_dir)?;
     let endpoint = Endpoint::from_shared(cfg.ingest_url.clone())?
         .connect_timeout(Duration::from_secs(10))
         .keep_alive_timeout(Duration::from_secs(30));
 
     loop {
-        match connect_session(&cfg, &node_id, docker.as_ref(), &buffer, endpoint.clone()).await {
+        match connect_session(&cfg, &node_id, &runtime, &buffer, endpoint.clone()).await {
             Ok(()) => info!("ingest session ended, reconnecting"),
             Err(e) => warn!("ingest session error: {e}"),
         }
@@ -63,7 +82,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
 async fn connect_session(
     cfg: &AgentConfig,
     node_id: &str,
-    docker: Option<&DockerHandle>,
+    runtime: &AgentRuntimeState,
     buffer: &DiskBuffer,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
@@ -87,7 +106,6 @@ async fn connect_session(
 
     let push_tx = tx.clone();
     let node_id_owned = node_id.to_string();
-    let docker_push = docker.is_some();
 
     let mut interval = tokio::time::interval(Duration::from_secs(cfg.interval_secs.max(1)));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -95,16 +113,16 @@ async fn connect_session(
         tokio::select! {
             _ = interval.tick() => {
                 let mut samples = collect_host(cfg);
-                if docker_push {
-                    if let Some(d) = docker {
-                        samples.extend(d.collect_container_metrics().await);
-                    }
+                let docker = runtime.docker.lock().await.clone();
+                if let Some(d) = docker.as_ref() {
+                    samples.extend(d.collect_container_metrics().await);
                 }
                 let (kept, dropped) = sample::allowlist(samples);
                 if dropped > 0 {
                     warn!("dropped {dropped} unknown metrics");
                 }
-                let frame = build_push(cfg, &node_id_owned, docker, &kept).await;
+                let labels = runtime.labels.lock().await.clone();
+                let frame = build_push(cfg, &node_id_owned, docker.as_ref(), &labels, &kept).await;
                 if push_tx.send(AgentToServer {
                     body: Some(agent_to_server::Body::Push(frame.clone())),
                 }).await.is_err() {
@@ -121,17 +139,15 @@ async fn connect_session(
                         let result = if cmd.op == "set_interval" {
                             match parse_set_interval(&cmd.payload_json) {
                                 Ok(secs) => {
-                                    interval = tokio::time::interval(Duration::from_secs(secs));
-                                    interval.set_missed_tick_behavior(
-                                        tokio::time::MissedTickBehavior::Delay,
-                                    );
-                                    info!("push interval set to {secs}s");
+                                    apply_interval(&mut interval, secs);
                                     Ok(serde_json::json!({ "interval_secs": secs }))
                                 }
                                 Err(e) => Err(e),
                             }
+                        } else if cmd.op == "set_runtime" {
+                            apply_runtime(runtime, &mut interval, &cmd.payload_json).await
                         } else {
-                            handle_command(docker, &cmd.op, &cmd.payload_json).await
+                            handle_command(runtime, &cmd.op, &cmd.payload_json).await
                         };
                         let body = match result {
                             Ok(payload) => CommandResult {
@@ -171,6 +187,12 @@ fn handle_ack(ack: &Ack) {
     }
 }
 
+fn apply_interval(interval: &mut tokio::time::Interval, secs: u64) {
+    *interval = tokio::time::interval(Duration::from_secs(secs));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    info!("push interval set to {secs}s");
+}
+
 fn parse_set_interval(payload_json: &str) -> anyhow::Result<u64> {
     let v: serde_json::Value = if payload_json.trim().is_empty() {
         serde_json::json!({})
@@ -181,12 +203,71 @@ fn parse_set_interval(payload_json: &str) -> anyhow::Result<u64> {
     Ok(NodeSettings::clamp_poll_secs(secs as u32) as u64)
 }
 
+fn parse_set_runtime(payload_json: &str) -> anyhow::Result<AgentRuntime> {
+    let raw = if payload_json.trim().is_empty() {
+        "{}"
+    } else {
+        payload_json
+    };
+    let mut rt: AgentRuntime = serde_json::from_str(raw).context("set_runtime payload")?;
+    rt.interval_secs = NodeSettings::clamp_poll_secs(rt.interval_secs as u32) as u64;
+    Ok(rt)
+}
+
+async fn apply_runtime(
+    runtime: &AgentRuntimeState,
+    interval: &mut tokio::time::Interval,
+    payload_json: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let rt = parse_set_runtime(payload_json)?;
+    apply_interval(interval, rt.interval_secs);
+    {
+        let mut labels = runtime.labels.lock().await;
+        *labels = rt.labels.clone();
+    }
+    {
+        let mut docker = runtime.docker.lock().await;
+        if rt.docker_enabled {
+            if let Some(handle) = docker.as_ref() {
+                handle.set_policy(
+                    rt.docker_manage,
+                    rt.docker_allow_exec,
+                    rt.compose_paths.clone(),
+                );
+            } else {
+                let cfg = DockerConfig {
+                    enabled: true,
+                    manage: rt.docker_manage,
+                    allow_exec: rt.docker_allow_exec,
+                    host: runtime.docker_host.clone(),
+                    compose_paths: rt.compose_paths.clone(),
+                };
+                match DockerHandle::connect(&cfg) {
+                    Ok(handle) => {
+                        info!("docker enabled from Settings");
+                        *docker = Some(handle);
+                    }
+                    Err(e) => {
+                        warn!("docker enable failed: {e}");
+                        *docker = None;
+                    }
+                }
+            }
+        } else if docker.is_some() {
+            info!("docker disabled from Settings");
+            *docker = None;
+        }
+    }
+    Ok(serde_json::to_value(&rt)?)
+}
+
 async fn handle_command(
-    docker: Option<&DockerHandle>,
+    runtime: &AgentRuntimeState,
     op: &str,
     payload_json: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    let Some(docker) = docker else {
+    let docker = runtime.docker.lock().await;
+    let Some(docker) = docker.as_ref() else {
         anyhow::bail!("docker is not enabled on this agent");
     };
     let op = DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
@@ -202,6 +283,7 @@ async fn build_push(
     cfg: &AgentConfig,
     node_id: &str,
     docker: Option<&DockerHandle>,
+    labels: &BTreeMap<String, String>,
     samples: &[Sample],
 ) -> PushFrame {
     let hostname = hostname::get()
@@ -212,8 +294,7 @@ async fn build_push(
         Some(d) => d.engine_version().await.unwrap_or_default(),
         None => String::new(),
     };
-    let labels: Vec<keystone_proto::Label> = cfg
-        .labels
+    let labels: Vec<keystone_proto::Label> = labels
         .iter()
         .map(|(k, v)| keystone_proto::Label {
             name: k.clone(),
@@ -284,5 +365,19 @@ mod tests {
         assert_eq!(parse_set_interval(r#"{"interval_secs":99}"#).unwrap(), 60);
         assert_eq!(parse_set_interval("{}").unwrap(), 1);
         assert_eq!(parse_set_interval("").unwrap(), 1);
+    }
+
+    #[test]
+    fn set_runtime_parses() {
+        let rt = parse_set_runtime(
+            r#"{"interval_secs":2,"docker_enabled":true,"docker_manage":true,"labels":{"role":"lab"}}"#,
+        )
+        .unwrap();
+        assert_eq!(rt.interval_secs, 2);
+        assert!(rt.docker_enabled);
+        assert!(rt.docker_manage);
+        assert_eq!(rt.labels.get("role").map(String::as_str), Some("lab"));
+        let clamped = parse_set_runtime(r#"{"interval_secs":99}"#).unwrap();
+        assert_eq!(clamped.interval_secs, 60);
     }
 }

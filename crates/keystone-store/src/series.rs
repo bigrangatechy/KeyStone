@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,7 +17,7 @@ const SERIES: TableDefinition<&str, f64> = TableDefinition::new("series");
 #[derive(Clone)]
 pub struct RedbSeries {
     db: Arc<Database>,
-    retention_ms: i64,
+    retention_ms: Arc<AtomicI64>,
 }
 
 pub trait SeriesStore {
@@ -35,8 +36,17 @@ impl RedbSeries {
         }
         Ok(Self {
             db: Arc::new(db),
-            retention_ms: i64::from(retention_hours) * 3600 * 1000,
+            retention_ms: Arc::new(AtomicI64::new(retention_ms(retention_hours))),
         })
+    }
+
+    pub fn set_retention_hours(&self, hours: u32) {
+        self.retention_ms
+            .store(retention_ms(hours), Ordering::Relaxed);
+    }
+
+    pub fn retention_hours(&self) -> u32 {
+        (self.retention_ms.load(Ordering::Relaxed) / 3600 / 1000) as u32
     }
 
     pub fn write_samples(&self, node_id: &str, samples: &[Sample]) -> anyhow::Result<()> {
@@ -105,7 +115,7 @@ impl RedbSeries {
     }
 
     fn prune(&self, tx: &redb::WriteTransaction) -> anyhow::Result<()> {
-        let cutoff = now_ms().saturating_sub(self.retention_ms);
+        let cutoff = now_ms().saturating_sub(self.retention_ms.load(Ordering::Relaxed));
         let mut series = tx.open_table(SERIES)?;
         let keys: Vec<String> = series
             .iter()?
@@ -176,6 +186,11 @@ impl SeriesStore for RedbSeries {
     }
 }
 
+fn retention_ms(hours: u32) -> i64 {
+    let hours = hours.max(1);
+    i64::from(hours) * 3600 * 1000
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -213,6 +228,8 @@ mod tests {
         let hist = store.history("n1", "node_load1", "", ts - 1500).unwrap();
         assert!(hist.len() >= 2);
         assert!(hist.iter().all(|(t, _)| *t >= ts - 1500));
+        store.set_retention_hours(48);
+        assert_eq!(store.retention_hours(), 48);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

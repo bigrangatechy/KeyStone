@@ -85,9 +85,23 @@ a.btn, .btn {
 }
 a.btn:hover { border-color: var(--accent); text-decoration: none; }
 form.stack { max-width: 28rem; display: flex; flex-direction: column; gap: 0.85rem; }
-form.stack.wide { max-width: 36rem; }
+<form.stack.wide { max-width: 42rem; }
 form.stack label { display: flex; flex-direction: column; gap: 0.25rem; color: var(--muted); }
 form.stack label.check { flex-direction: row; align-items: center; gap: 0.5rem; color: var(--fg); }
+form.stack fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem 1rem 1rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+form.stack fieldset legend {
+  color: var(--fg);
+  font-weight: 600;
+  padding: 0 0.35rem;
+}
 form.stack textarea {
   font: inherit; font-family: var(--mono); background: var(--card); color: var(--fg);
   border: 1px solid var(--line); padding: 0.35rem 0.65rem; border-radius: 4px; resize: vertical;

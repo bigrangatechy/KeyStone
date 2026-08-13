@@ -51,3 +51,9 @@ pub fn new_session_id() -> String {
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
     hex::encode(bytes)
 }
+
+pub fn generate_ingest_token() -> String {
+    let mut bytes = [0u8; 24];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    hex::encode(bytes)
+}

@@ -63,7 +63,7 @@ pub fn docker_ops_markdown() -> String {
     out.push_str(
         "The agent talks to Docker Engine. The server never opens a remote `docker.sock`.\n",
     );
-    out.push_str("`docker.manage` is opt-in. Socket access is root-equivalent on that node.\n\n");
+    out.push_str("`docker.manage` is opt-in from the node's Settings (toml is a fallback until the agent connects). Socket access is root-equivalent on that node.\n\n");
     out.push_str("| Operation | Mutating | Permission | Description |\n|---|---|---|---|\n");
     for op in DockerOp::iter() {
         out.push_str(&format!(
@@ -81,7 +81,7 @@ pub fn widgets_markdown() -> String {
     let mut out = String::from(GENERATED_BANNER);
     out.push_str("# Dashboard widgets\n\n");
     out.push_str(
-        "The node overview is a customisable widget dashboard. Add a `WidgetKind` variant, hydrate it, draw it in `app.js`, and register a preset so the picker can place it. Layout JSON is stored per node when customised; otherwise the built-in default is used. The overview refreshes from `/api/v1/nodes/{id}/dashboard` at the node's poll interval (Settings, default 1s). A connected agent is told to push at the same interval; `agent.toml` `interval_secs` is the fallback until then.\n\n",
+        "The node overview is a customisable widget dashboard. Add a `WidgetKind` variant, hydrate it, draw it in `app.js`, and register a preset so the picker can place it. Layout JSON is stored per node when customised; otherwise the built-in default is used. The overview refreshes from `/api/v1/nodes/{id}/dashboard` at the node's poll interval (node Settings, default 1s). A connected agent is told to push at the same interval and to apply Docker flags and labels from Settings; `agent.toml` is the fallback until then. After the agent has pushed samples, Customize also lists each hardware temperature sensor so you can add only the chips you care about. The default layout includes CPU package and GPU temp, not every sensor.\n\n",
     );
     out.push_str("| Kind | Description |\n|---|---|\n");
     for k in WidgetKind::iter() {

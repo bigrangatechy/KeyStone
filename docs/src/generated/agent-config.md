@@ -6,14 +6,16 @@ Fields come from the Rust config structs (`schemars`).
 
 Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.
 
+Required to find the server: `ingest_url`, `ingest_token`, `node_id`, `buffer_dir`, and optional `docker.host`. Poll interval, Docker enable/manage/exec, labels, and compose paths are node Settings once connected; TOML is the fallback until then.
+
 | Field | Type | Description |
 |---|---|---|
 | `buffer_dir` | string | Directory for on-disk push buffer when the server is unreachable. |
 | `docker` | object |  |
 | `ingest_token` | string | Shared ingest token. This cannot call Docker manage APIs. |
 | `ingest_url` | string | gRPC ingest URL, for example `http://keystone.example:9100`. |
-| `interval_secs` | integer | Push interval in seconds. Default 1. A connected server can override this at runtime from the node's Settings poll interval. |
-| `labels` | object | Extra labels attached to every sample (`key=value` in TOML map). |
+| `interval_secs` | integer | Push interval in seconds. Default 1. Fallback until the node's Settings poll interval is applied at runtime. |
+| `labels` | object | Extra labels attached to every heartbeat. Fallback until the node's Settings labels are applied at runtime. |
 | `node_id` | string | Stable node id. Defaults to hostname when empty. |
 
 ## `DockerConfig`
@@ -24,8 +26,8 @@ Socket access is root-equivalent. `manage` is opt-in. `allow_exec` is a further 
 
 | Field | Type | Description |
 |---|---|---|
-| `allow_exec` | boolean | Allow `docker exec`. Default false. |
-| `compose_paths` | array of string | Extra Compose file paths to manage (in addition to project labels). |
-| `enabled` | boolean | Observe Docker (list/inspect/stats/logs) via the engine socket. |
-| `host` | string | Engine socket or TCP URL. Empty uses `/var/run/docker.sock`. |
-| `manage` | boolean | Allow mutating Docker operations. Opt-in. |
+| `allow_exec` | boolean | Allow `docker exec`. Default false. Fallback until Settings. |
+| `compose_paths` | array of string | Extra Compose file paths. Fallback until node Settings apply. |
+| `enabled` | boolean | Observe Docker (list/inspect/stats/logs) via the engine socket. Fallback until node Settings `docker_enabled` is applied. |
+| `host` | string | Engine socket or TCP URL. Empty uses `/var/run/docker.sock`. Stays in this file (not a UI setting). |
+| `manage` | boolean | Allow mutating Docker operations. Opt-in. Fallback until Settings. |

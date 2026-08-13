@@ -27,7 +27,9 @@ pub use metrics::{catalog, is_known_metric, MetricDef, MetricType, Stability};
 pub use node::NodeIdentity;
 pub use rbac::Permission;
 pub use sample::{Label, Sample};
-pub use settings::NodeSettings;
-pub use widgets::{presets, Dashboard, WidgetInstance, WidgetKind, WidgetPreset};
+pub use settings::{AgentRuntime, NodeSettings, ServerSettings};
+pub use widgets::{
+    presets, presets_for_samples, Dashboard, WidgetInstance, WidgetKind, WidgetPreset,
+};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -3,7 +3,7 @@
 # Docker operations
 
 The agent talks to Docker Engine. The server never opens a remote `docker.sock`.
-`docker.manage` is opt-in. Socket access is root-equivalent on that node.
+`docker.manage` is opt-in from the node's Settings (toml is a fallback until the agent connects). Socket access is root-equivalent on that node.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|

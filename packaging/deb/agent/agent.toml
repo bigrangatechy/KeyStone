@@ -1,20 +1,14 @@
 # SPDX-FileCopyrightText: 2026 The KeyStone Authors
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Packaged default. Edit ingest_url and ingest_token, then:
+# Packaged default. Prefer the agent.toml from Add node in the UI.
+# Edit ingest_url and ingest_token if you skip that, then:
 #   systemctl enable --now keystone-agent
+#
+# Docker, poll interval, labels, and compose paths are node Settings
+# after the agent connects. docker.host stays here if the socket is
+# not /var/run/docker.sock.
 
 ingest_url = "http://keystone.home.arpa:9100"
 ingest_token = "change-me"
-# Overridden while connected by node Settings (poll interval, default 1s).
-interval_secs = 1
 buffer_dir = "/var/lib/keystone/agent-buffer"
-
-[labels]
-role = "homelab"
-
-[docker]
-enabled = false
-manage = false
-allow_exec = false
-compose_paths = []

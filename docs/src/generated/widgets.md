@@ -2,7 +2,7 @@
 
 # Dashboard widgets
 
-The node overview is a customisable widget dashboard. Add a `WidgetKind` variant, hydrate it, draw it in `app.js`, and register a preset so the picker can place it. Layout JSON is stored per node when customised; otherwise the built-in default is used. The overview refreshes from `/api/v1/nodes/{id}/dashboard` at the node's poll interval (Settings, default 1s). A connected agent is told to push at the same interval; `agent.toml` `interval_secs` is the fallback until then.
+The node overview is a customisable widget dashboard. Add a `WidgetKind` variant, hydrate it, draw it in `app.js`, and register a preset so the picker can place it. Layout JSON is stored per node when customised; otherwise the built-in default is used. The overview refreshes from `/api/v1/nodes/{id}/dashboard` at the node's poll interval (node Settings, default 1s). A connected agent is told to push at the same interval and to apply Docker flags and labels from Settings; `agent.toml` is the fallback until then. After the agent has pushed samples, Customize also lists each hardware temperature sensor so you can add only the chips you care about. The default layout includes CPU package and GPU temp, not every sensor.
 
 | Kind | Description |
 |---|---|
@@ -33,7 +33,7 @@ These are the cards the overview **Customize** picker can add.
 | `load15_spark` | Load | `sparkline` | 15 minute load average sparkline |
 | `uptime` | System | `stat` | Time since last boot |
 | `agent` | System | `stat` | Whether the agent is pushing |
-| `temps` | System | `bar_list` | Every hardware monitor and thermal-zone sensor |
+| `temps` | System | `bar_list` | Every hardware sensor on one card. Prefer the per-sensor cards under Temperature. |
 | `hottest` | System | `stat` | Hottest sensor on the node |
 | `disks` | Disk | `bar_list` | Used space per filesystem |
 | `net_rx` | Network | `sparkline` | Receive rate sparkline |

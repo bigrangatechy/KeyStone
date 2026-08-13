@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::default::Default;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context};
 use bollard::container::{
@@ -21,9 +22,10 @@ use keystone_core::sample::Sample;
 use serde_json::{json, Value};
 use tokio::process::Command;
 
+#[derive(Clone)]
 pub struct DockerHandle {
     docker: Docker,
-    cfg: DockerConfig,
+    cfg: Arc<Mutex<DockerConfig>>,
 }
 
 impl DockerHandle {
@@ -42,8 +44,19 @@ impl DockerHandle {
         };
         Ok(Self {
             docker,
-            cfg: cfg.clone(),
+            cfg: Arc::new(Mutex::new(cfg.clone())),
         })
+    }
+
+    pub fn set_policy(&self, manage: bool, allow_exec: bool, compose_paths: Vec<String>) {
+        let mut cfg = self.cfg.lock().unwrap_or_else(|e| e.into_inner());
+        cfg.manage = manage;
+        cfg.allow_exec = allow_exec;
+        cfg.compose_paths = compose_paths;
+    }
+
+    fn policy(&self) -> DockerConfig {
+        self.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub async fn engine_version(&self) -> Option<String> {
@@ -118,10 +131,11 @@ impl DockerHandle {
     }
 
     pub async fn execute(&self, op: DockerOp, payload: Value) -> anyhow::Result<Value> {
-        if op.mutating() && !self.cfg.manage {
+        let policy = self.policy();
+        if op.mutating() && !policy.manage {
             anyhow::bail!("docker.manage is disabled on this agent");
         }
-        if op == DockerOp::ContainerExec && !self.cfg.allow_exec {
+        if op == DockerOp::ContainerExec && !policy.allow_exec {
             anyhow::bail!("docker.allow_exec is disabled on this agent");
         }
         match op {
@@ -356,6 +370,7 @@ impl DockerHandle {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let file = payload.get("file").and_then(|v| v.as_str());
+        let paths = self.policy().compose_paths;
         if matches!(op, DockerOp::ComposePs) && file.is_none() {
             return self.compose_ps_from_labels(project).await;
         }
@@ -363,6 +378,9 @@ impl DockerHandle {
         if let Some(f) = file {
             args.push("-f".into());
             args.push(f.into());
+        } else if let Some(f) = paths.first() {
+            args.push("-f".into());
+            args.push(f.clone());
         }
         if !project.is_empty() {
             args.push("-p".into());

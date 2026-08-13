@@ -2,15 +2,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use keystone_core::config::ServerConfig;
+use keystone_core::{NodeSettings, ServerSettings};
 use keystone_proto::Command;
 use keystone_store::Stores;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
+
+use crate::auth;
 
 pub type CommandTx = mpsc::Sender<Command>;
 
@@ -59,12 +63,8 @@ impl AgentRegistry {
         }
     }
 
-    pub fn nudge_poll_interval(&self, node_id: &str, secs: u64) {
-        self.nudge(
-            node_id,
-            "set_interval",
-            serde_json::json!({ "interval_secs": secs }).to_string(),
-        );
+    pub fn nudge_runtime(&self, node_id: &str, settings: &NodeSettings) {
+        self.nudge(node_id, "set_runtime", settings.agent_runtime_json());
     }
 
     pub fn complete(&self, node_id: &str, result: keystone_proto::CommandResult) {
@@ -113,14 +113,89 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub stores: Stores,
     pub agents: AgentRegistry,
+    scrape_epoch: Arc<AtomicU64>,
+    env_ingest_token: Option<String>,
 }
 
 impl AppState {
     pub fn new(config: ServerConfig, stores: Stores) -> Self {
+        let env_ingest_token = std::env::var("KEYSTONE_INGEST_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty());
         Self {
             config: Arc::new(config),
             stores,
             agents: AgentRegistry::default(),
+            scrape_epoch: Arc::new(AtomicU64::new(0)),
+            env_ingest_token,
         }
+    }
+
+    pub fn stored_server_settings(&self) -> ServerSettings {
+        ServerSettings::parse_or_default(
+            self.stores
+                .metadata
+                .kv_get(ServerSettings::KV_KEY)
+                .ok()
+                .flatten()
+                .as_deref(),
+        )
+    }
+
+    /// Settings used at runtime. `KEYSTONE_INGEST_TOKEN` overlays the stored token.
+    pub fn server_settings(&self) -> ServerSettings {
+        let mut s = self.stored_server_settings();
+        if let Some(t) = &self.env_ingest_token {
+            s.ingest_token = t.clone();
+        }
+        s
+    }
+
+    pub fn ingest_token(&self) -> String {
+        self.server_settings().ingest_token
+    }
+
+    pub fn ingest_token_env_override(&self) -> bool {
+        self.env_ingest_token.is_some()
+    }
+
+    pub fn seed_server_settings(&self) -> anyhow::Result<()> {
+        if self
+            .stores
+            .metadata
+            .kv_get(ServerSettings::KV_KEY)?
+            .is_none()
+        {
+            let mut s = ServerSettings::from_config(&self.config);
+            if let Some(t) = &self.env_ingest_token {
+                s.ingest_token = t.clone();
+            }
+            if s.ingest_token.is_empty() {
+                s.ingest_token = auth::generate_ingest_token();
+                tracing::info!("generated ingest token (shown in Settings)");
+            }
+            s.retention_hours = ServerSettings::clamp_retention_hours(s.retention_hours);
+            self.stores
+                .metadata
+                .kv_set(ServerSettings::KV_KEY, &serde_json::to_string(&s)?)?;
+        }
+        let s = self.stored_server_settings();
+        self.stores.series.set_retention_hours(s.retention_hours);
+        Ok(())
+    }
+
+    pub fn save_server_settings(&self, settings: &ServerSettings) -> anyhow::Result<()> {
+        let mut s = settings.clone();
+        s.retention_hours = ServerSettings::clamp_retention_hours(s.retention_hours);
+        self.stores
+            .metadata
+            .kv_set(ServerSettings::KV_KEY, &serde_json::to_string(&s)?)?;
+        self.stores.series.set_retention_hours(s.retention_hours);
+        self.scrape_epoch.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn scrape_epoch(&self) -> u64 {
+        self.scrape_epoch.load(Ordering::Relaxed)
     }
 }

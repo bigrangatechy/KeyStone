@@ -9,7 +9,7 @@
   · ingest <code>{{ ingest_url }}</code>
 </p>
 <p>There is still only this UI. Copy the config onto <strong>{{ hostname }}</strong> and start the agent there. When it connects, this node moves from “awaiting agent” to “connected”.
-{% if docker %} Docker manage is enabled in the snippet.{% endif %}
+Poll interval, Docker, labels, and compose paths are set on this node’s Settings after it connects{% if docker %} (Docker is already enabled there){% endif %}.
 </p>
 
 <h2>Agent config</h2>

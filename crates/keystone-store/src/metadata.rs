@@ -86,6 +86,10 @@ impl Metadata {
                 ok INTEGER NOT NULL,
                 detail TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS kv (
+                k TEXT PRIMARY KEY,
+                v TEXT NOT NULL
+            );
             ",
         )?;
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN dashboard_json TEXT", []);
@@ -352,6 +356,24 @@ impl Metadata {
         }
         Ok(())
     }
+
+    pub fn kv_get(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let conn = self.conn.lock();
+        let v = conn
+            .query_row("SELECT v FROM kv WHERE k = ?1", params![key], |r| r.get(0))
+            .optional()?;
+        Ok(v)
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO kv (k, v) VALUES (?1, ?2)
+             ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            params![key, value],
+        )?;
+        Ok(())
+    }
 }
 
 impl NodeRecord {
@@ -419,6 +441,8 @@ mod tests {
             .unwrap()
             .unwrap()
             .contains("widgets"));
+        db.kv_set("server", r#"{"retention_hours":24}"#).unwrap();
+        assert!(db.kv_get("server").unwrap().unwrap().contains("24"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

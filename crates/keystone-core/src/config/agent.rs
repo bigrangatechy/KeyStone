@@ -5,6 +5,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.
+///
+/// Required to find the server: `ingest_url`, `ingest_token`, `node_id`,
+/// `buffer_dir`, and optional `docker.host`. Poll interval, Docker
+/// enable/manage/exec, labels, and compose paths are node Settings once
+/// connected; TOML is the fallback until then.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentConfig {
     /// gRPC ingest URL, for example `http://keystone.example:9100`.
@@ -15,11 +20,12 @@ pub struct AgentConfig {
     /// Stable node id. Defaults to hostname when empty.
     #[serde(default)]
     pub node_id: String,
-    /// Extra labels attached to every sample (`key=value` in TOML map).
+    /// Extra labels attached to every heartbeat. Fallback until the node's
+    /// Settings labels are applied at runtime.
     #[serde(default)]
     pub labels: std::collections::BTreeMap<String, String>,
-    /// Push interval in seconds. Default 1. A connected server can override
-    /// this at runtime from the node's Settings poll interval.
+    /// Push interval in seconds. Default 1. Fallback until the node's
+    /// Settings poll interval is applied at runtime.
     #[serde(default = "default_interval")]
     pub interval_secs: u64,
     /// Directory for on-disk push buffer when the server is unreachable.
@@ -58,18 +64,20 @@ impl Default for AgentConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DockerConfig {
     /// Observe Docker (list/inspect/stats/logs) via the engine socket.
+    /// Fallback until node Settings `docker_enabled` is applied.
     #[serde(default)]
     pub enabled: bool,
-    /// Allow mutating Docker operations. Opt-in.
+    /// Allow mutating Docker operations. Opt-in. Fallback until Settings.
     #[serde(default)]
     pub manage: bool,
-    /// Allow `docker exec`. Default false.
+    /// Allow `docker exec`. Default false. Fallback until Settings.
     #[serde(default)]
     pub allow_exec: bool,
     /// Engine socket or TCP URL. Empty uses `/var/run/docker.sock`.
+    /// Stays in this file (not a UI setting).
     #[serde(default)]
     pub host: String,
-    /// Extra Compose file paths to manage (in addition to project labels).
+    /// Extra Compose file paths. Fallback until node Settings apply.
     #[serde(default)]
     pub compose_paths: Vec<String>,
 }
