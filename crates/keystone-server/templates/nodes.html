@@ -1,0 +1,37 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Nodes — KeyStone{% endblock %}
+{% block content %}
+<h1>Nodes</h1>
+<p class="muted">No seat limit. Click a node for metrics and Docker.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Host</th>
+      <th>ID</th>
+      <th>OS</th>
+      <th>Agent</th>
+      <th>Docker</th>
+      <th>Last seen</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for n in nodes %}
+    <tr>
+      <td><a href="/nodes/{{ n.node_id }}">{{ n.hostname }}</a></td>
+      <td><code>{{ n.node_id }}</code></td>
+      <td>{{ n.os }}</td>
+      <td>{{ n.agent_version }}</td>
+      <td>{{ n.docker_version }}</td>
+      <td>{{ n.last_seen }}</td>
+      <td>{% if n.connected %}connected{% else if n.online %}online{% else %}offline{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if nodes.is_empty() %}
+<p>No nodes yet. Start <code>keystone-agent</code> with a matching ingest token.</p>
+{% endif %}
+{% endblock %}

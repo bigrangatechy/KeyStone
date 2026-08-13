@@ -1,0 +1,86 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "KeyStone",
+    "description": "KeyStone server: ingest, scrape, per-node UI, living /help",
+    "contact": {
+      "name": "The KeyStone Authors"
+    },
+    "license": {
+      "name": "GPL-2.0-or-later",
+      "identifier": "GPL-2.0-or-later"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/catalog": {
+      "get": {
+        "tags": [
+          "crate::http"
+        ],
+        "summary": "Metric catalog allowlist compiled into this binary.",
+        "operationId": "catalog_api",
+        "responses": {
+          "200": {
+            "description": "Catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogApi"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CatalogApi": {
+        "type": "object",
+        "required": [
+          "metrics"
+        ],
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogMetric"
+            }
+          }
+        }
+      },
+      "CatalogMetric": {
+        "type": "object",
+        "required": [
+          "name",
+          "metric_type",
+          "unit",
+          "help",
+          "labels"
+        ],
+        "properties": {
+          "help": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "metric_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

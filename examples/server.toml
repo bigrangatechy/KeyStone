@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Example KeyStone server config. Parsed in tests — keep it valid.
+# Set KEYSTONE_ADMIN_PASSWORD on first start if password_hash is empty.
+
+http_listen = "0.0.0.0:8080"
+grpc_listen = "0.0.0.0:9100"
+data_dir = "/var/lib/keystone"
+ingest_token = "change-me"
+retention_hours = 168
+
+[auth]
+username = "admin"
+password_hash = ""
+
+# [[prometheus_scrape]]
+# name = "local-node-exporter"
+# url = "http://127.0.0.1:9100/metrics"
+# interval_secs = 15
+# node_id = "exporter-local"
+
+# [[snmp_scrape]]
+# name = "core-switch"
+# target = "192.0.2.1:161"
+# community = "public"
+# interval_secs = 60
+# node_id = "core-switch"

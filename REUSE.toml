@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+version = 1
+
+[[annotations]]
+path = [
+    "Cargo.lock",
+    "docs/src/generated/**",
+    "docs/book.toml",
+    "crates/keystone-agent/tests/cmd/**",
+    "crates/keystone-server/tests/cmd/**",
+]
+SPDX-FileCopyrightText = "2026 The KeyStone Authors"
+SPDX-License-Identifier = "GPL-2.0-or-later"
+
+[[annotations]]
+path = ["COPYING"]
+SPDX-FileCopyrightText = "1989, 1991 Free Software Foundation, Inc."
+SPDX-License-Identifier = "GPL-2.0-or-later"

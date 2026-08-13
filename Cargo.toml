@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/keystone-core",
+    "crates/keystone-proto",
+    "crates/keystone-store",
+    "crates/keystone-agent",
+    "crates/keystone-server",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-2.0-or-later"
+authors = ["The KeyStone Authors"]
+repository = "http://git.bigrangatech.com/Ranga/keystone"
+homepage = "http://git.bigrangatech.com/Ranga/keystone"
+description = "Unlimited-node server monitoring with per-node Docker management"
+
+[workspace.dependencies]
+keystone-core = { path = "crates/keystone-core", version = "0.1.0" }
+keystone-proto = { path = "crates/keystone-proto", version = "0.1.0" }
+keystone-store = { path = "crates/keystone-store", version = "0.1.0" }
+keystone-agent = { path = "crates/keystone-agent", version = "0.1.0" }
+keystone-server = { path = "crates/keystone-server", version = "0.1.0" }
+anyhow = "1"
+argon2 = "0.5"
+askama = "0.14"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+bollard = "0.18"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+clap-markdown = "0.1"
+futures-util = "0.3"
+hex = "0.4"
+hostname = "0.4"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"] }
+inventory = "0.3"
+parking_lot = "0.12"
+prost = "0.13"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+rand = "0.8"
+redb = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+schemars = { version = "0.8", features = ["chrono"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+strum = { version = "0.26", features = ["derive"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+toml = "0.8"
+tonic = { version = "0.12", default-features = false, features = ["prost", "codegen", "transport"] }
+tonic-build = "0.12"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = { version = "5", features = ["chrono"] }
+uuid = { version = "1", features = ["v4"] }
+
+[workspace.metadata.cargo-deny]
+license = "GPL-2.0-or-later"

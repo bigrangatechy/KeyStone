@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentConfig",
+  "description": "Agent configuration. Source of truth for `docs/src/generated/agent-config.md`.",
+  "type": "object",
+  "required": [
+    "ingest_url"
+  ],
+  "properties": {
+    "buffer_dir": {
+      "description": "Directory for on-disk push buffer when the server is unreachable.",
+      "default": "/var/lib/keystone/agent-buffer",
+      "type": "string"
+    },
+    "docker": {
+      "default": {
+        "allow_exec": false,
+        "compose_paths": [],
+        "enabled": false,
+        "host": "",
+        "manage": false
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/DockerConfig"
+        }
+      ]
+    },
+    "ingest_token": {
+      "description": "Shared ingest token. This cannot call Docker manage APIs.",
+      "default": "",
+      "type": "string"
+    },
+    "ingest_url": {
+      "description": "gRPC ingest URL, for example `http://keystone.example:9100`.",
+      "type": "string"
+    },
+    "interval_secs": {
+      "description": "Push interval in seconds.",
+      "default": 15,
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "labels": {
+      "description": "Extra labels attached to every sample (`key=value` in TOML map).",
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "node_id": {
+      "description": "Stable node id. Defaults to hostname when empty.",
+      "default": "",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "DockerConfig": {
+      "description": "Docker Engine access on this node.\n\nSocket access is root-equivalent. `manage` is opt-in. `allow_exec` is a further gate because exec is a root shell on the host namespaces.",
+      "type": "object",
+      "properties": {
+        "allow_exec": {
+          "description": "Allow `docker exec`. Default false.",
+          "default": false,
+          "type": "boolean"
+        },
+        "compose_paths": {
+          "description": "Extra Compose file paths to manage (in addition to project labels).",
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "description": "Observe Docker (list/inspect/stats/logs) via the engine socket.",
+          "default": false,
+          "type": "boolean"
+        },
+        "host": {
+          "description": "Engine socket or TCP URL. Empty uses `/var/run/docker.sock`.",
+          "default": "",
+          "type": "string"
+        },
+        "manage": {
+          "description": "Allow mutating Docker operations. Opt-in.",
+          "default": false,
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

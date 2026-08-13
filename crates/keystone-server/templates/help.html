@@ -1,0 +1,20 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}{{ title }} — Help{% endblock %}
+{% block content %}
+<div class="help">
+  <nav class="help-nav">
+    <h2>This version</h2>
+    <p class="muted">Generated from the types in this binary.</p>
+    <ul>
+      {% for s in sections %}
+      <li><a href="/help/{{ s.0 }}">{{ s.1 }}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  <article class="help-body">
+    {{ body_html|safe }}
+  </article>
+</div>
+{% endblock %}

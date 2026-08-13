@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+edition = "2021"
+use_field_init_shorthand = true
+use_try_shorthand = true

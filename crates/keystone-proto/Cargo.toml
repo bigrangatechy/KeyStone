@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[package]
+name = "keystone-proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "gRPC ingest and control protocol for KeyStone"
+
+[dependencies]
+prost.workspace = true
+tonic.workspace = true
+tokio.workspace = true
+
+[build-dependencies]
+protoc-bin-vendored = "3"
+tonic-build.workspace = true

@@ -1,0 +1,64 @@
+/* SPDX-FileCopyrightText: 2026 The KeyStone Authors
+ * SPDX-License-Identifier: GPL-2.0-or-later */
+
+:root {
+  --bg: #0f1214;
+  --fg: #e6e8ea;
+  --muted: #8b949e;
+  --line: #2b3136;
+  --accent: #3d8bfd;
+  --danger: #e5534b;
+  --card: #171b1f;
+  --font: ui-sans-serif, system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 var(--font); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: var(--mono); font-size: 0.92em; }
+.muted { color: var(--muted); }
+.error { color: var(--danger); }
+
+.bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--line); background: var(--card);
+}
+.brand { font-weight: 650; color: var(--fg); letter-spacing: 0.02em; }
+.bar nav { display: flex; gap: 1rem; align-items: center; }
+main { padding: 1.25rem 1.5rem 3rem; max-width: 1200px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 550; font-size: 0.85rem; }
+
+button, input {
+  font: inherit; background: var(--card); color: var(--fg);
+  border: 1px solid var(--line); padding: 0.35rem 0.65rem; border-radius: 4px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+form.inline { display: inline-flex; gap: 0.4rem; align-items: center; }
+
+.login-body { min-height: 100vh; display: grid; place-items: center; }
+form.login {
+  width: 22rem; padding: 1.5rem; background: var(--card);
+  border: 1px solid var(--line); display: flex; flex-direction: column; gap: 0.75rem;
+}
+form.login h1 { margin: 0; }
+form.login label { display: flex; flex-direction: column; gap: 0.25rem; color: var(--muted); }
+
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); margin: 1rem 0; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; border-radius: 0; }
+.tabs button.active { border-bottom-color: var(--accent); color: var(--fg); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.help { display: grid; grid-template-columns: 14rem 1fr; gap: 2rem; }
+.help-nav ul { list-style: none; padding: 0; }
+.help-nav li { margin: 0.35rem 0; }
+.help-body table { font-size: 0.92rem; }
+.help-body pre { background: var(--card); padding: 0.75rem; overflow: auto; }
+
+.node-head h1 { margin-bottom: 0.2rem; }

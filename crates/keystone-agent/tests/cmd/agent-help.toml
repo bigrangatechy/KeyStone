@@ -1,0 +1,2 @@
+bin.name = "keystone-agent"
+args = ["--help"]

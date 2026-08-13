@@ -1,0 +1,21 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KeyStone login</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+  <form class="login" method="post" action="/login">
+    <h1>KeyStone</h1>
+    <p class="muted">Unlimited-node monitoring</p>
+    {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+    <label>Username <input name="username" required autofocus></label>
+    <label>Password <input name="password" type="password" required></label>
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>

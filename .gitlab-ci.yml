@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+stages:
+  - check
+  - docs
+  - pages
+
+variables:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+default:
+  image: rust:bookworm
+  cache:
+    key: cargo-${CI_COMMIT_REF_SLUG}
+    paths:
+      - /usr/local/cargo/registry
+      - target
+
+fmt:
+  stage: check
+  script:
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check
+
+clippy:
+  stage: check
+  script:
+    - rustup component add clippy
+    - cargo clippy --workspace --all-targets -- -D warnings
+
+test:
+  stage: check
+  script:
+    - cargo test --workspace
+
+deny:
+  stage: check
+  script:
+    - cargo install cargo-deny --locked
+    - cargo deny check
+
+reuse:
+  stage: check
+  image: fsfe/reuse:latest
+  script:
+    - reuse lint
+  cache: []
+
+docs:
+  stage: docs
+  script:
+    - cargo run -p xtask -- docs
+    - git diff --exit-code -- docs/src/generated
+    - cargo install mdbook --locked
+    - mdbook build docs
+  artifacts:
+    paths:
+      - docs/book
+    expire_in: 1 week
+
+pages:
+  stage: pages
+  needs: ["docs"]
+  script:
+    - mkdir -p public
+    - cp -r docs/book/html public/ || cp -r docs/book public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
