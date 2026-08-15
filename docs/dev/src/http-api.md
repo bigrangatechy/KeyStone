@@ -15,15 +15,16 @@ Axum router in `crates/keystone-server/src/http.rs`. Cookie
 |---|---|---|
 | GET | `/health` | Plain `ok`. |
 | GET | `/login` | Form. |
-| POST | `/login` | Sets session cookie. |
+| POST | `/login` | Sets session cookie. Redirects to `/password` if the account must change the bootstrap password. |
 | GET | `/static/app.css` | |
-| GET | `/static/app.js` | Overview, Docker tabs, fleet home, alerts badge. |
+| GET | `/static/app.js` | Overview, Docker tabs, fleet home, alerts badge, welcome tour, widget drag-and-drop. |
 
 ## HTML (session required)
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/` | Node list. |
+| GET | `/` | Node list. Welcome tour runs once in the browser (`localStorage`). `?welcome=1` forces it (used after first-login password change). |
+| GET/POST | `/password` | First-login password change when `must_change_password` is set. Blocks other authed routes. |
 | GET/POST | `/nodes` | List / add node. |
 | GET | `/nodes/new` | Add-node form. |
 | GET | `/nodes/{id}` | Node page (Overview + Docker tabs + Settings). |

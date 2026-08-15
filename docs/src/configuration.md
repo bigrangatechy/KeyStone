@@ -27,7 +27,7 @@ Environment:
 | Variable | Meaning |
 |---|---|
 | `KEYSTONE_SERVER_CONFIG` | Config path if you do not pass `--config`. Default `/etc/keystone/server.toml`. |
-| `KEYSTONE_ADMIN_PASSWORD` | First-start password when `password_hash` is empty. Also used by `keystone hash-password`. |
+| `KEYSTONE_ADMIN_PASSWORD` | First-start password when `password_hash` is empty. Also used by `keystone hash-password`. The UI then requires a new password on first login. |
 | `KEYSTONE_INGEST_TOKEN` | If set, **always** overrides the ingest token stored in Settings. The Settings field is read-only until you unset it. |
 
 ### Agent — `/etc/keystone/agent.toml`
@@ -111,7 +111,8 @@ firing, changes severity, or clears. See [Alerts](alerts.md). Only
 ### Admin password
 
 Username stays in `server.toml`. Leave the password fields empty to keep
-the current hash. New password must be entered twice.
+the current hash. New password must be entered twice and be at least 8
+characters.
 
 ## Node Settings (UI)
 

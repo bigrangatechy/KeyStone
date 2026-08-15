@@ -69,7 +69,8 @@ impl Metadata {
             );
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
-                password_hash TEXT NOT NULL
+                password_hash TEXT NOT NULL,
+                must_change_password INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -94,19 +95,43 @@ impl Metadata {
         )?;
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN dashboard_json TEXT", []);
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN settings_json TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
 
-    pub fn upsert_user(&self, username: &str, password_hash: &str) -> anyhow::Result<()> {
+    pub fn set_user_password(
+        &self,
+        username: &str,
+        password_hash: &str,
+        must_change: bool,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?1, ?2)
-             ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash",
-            params![username, password_hash],
+            "INSERT INTO users (username, password_hash, must_change_password)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(username) DO UPDATE SET
+                password_hash = excluded.password_hash,
+                must_change_password = excluded.must_change_password",
+            params![username, password_hash, must_change as i64],
         )?;
         Ok(())
+    }
+
+    pub fn user_must_change_password(&self, username: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock();
+        let flag: Option<i64> = conn
+            .query_row(
+                "SELECT must_change_password FROM users WHERE username = ?1",
+                params![username],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(flag.unwrap_or(0) != 0)
     }
 
     pub fn user_hash(&self, username: &str) -> anyhow::Result<Option<String>> {
@@ -443,6 +468,10 @@ mod tests {
             .contains("widgets"));
         db.kv_set("server", r#"{"retention_hours":24}"#).unwrap();
         assert!(db.kv_get("server").unwrap().unwrap().contains("24"));
+        db.set_user_password("admin", "hash", true).unwrap();
+        assert!(db.user_must_change_password("admin").unwrap());
+        db.set_user_password("admin", "hash2", false).unwrap();
+        assert!(!db.user_must_change_password("admin").unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

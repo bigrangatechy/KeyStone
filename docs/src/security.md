@@ -24,6 +24,10 @@ node to the extent that node’s Settings allow. Put the UI behind TLS (a
 reverse proxy) if it is reachable from a network you do not trust. Do not
 expose port 8080 to the internet.
 
+When the admin row is first created from `KEYSTONE_ADMIN_PASSWORD`, the
+next login must choose a different password (8+ characters) before the UI
+unlocks. Putting a hash in `server.toml` yourself skips that prompt.
+
 ## Ingest
 
 Do not expose `grpc_listen` without a non-empty ingest token. Empty token

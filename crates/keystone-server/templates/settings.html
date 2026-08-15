@@ -47,16 +47,18 @@
   </fieldset>
   <fieldset>
     <legend>Admin password</legend>
-    <p class="muted">Signed in as <code>{{ username }}</code>. Username is set in the server config. Leave the password fields empty to keep the current password.</p>
+      <span class="muted">Signed in as <code>{{ username }}</code>. Username is set in the server config. Leave the password fields empty to keep the current password. New password must be at least 8 characters.</span>
     <label>New password
-      <input type="password" name="new_password" autocomplete="new-password">
+      <input type="password" name="new_password" autocomplete="new-password" minlength="8">
     </label>
     <label>Confirm new password
-      <input type="password" name="new_password_confirm" autocomplete="new-password">
+      <input type="password" name="new_password_confirm" autocomplete="new-password" minlength="8">
     </label>
   </fieldset>
   <button type="submit">Save settings</button>
 </form>
+
+<p class="muted">Welcome tour: shown once on the node list. <button type="button" id="replay-tour">Replay welcome tour</button></p>
 
 {% if !ingest_token_env_override %}
 <form class="stack wide" method="post" action="/settings/rotate-token">

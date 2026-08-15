@@ -16,7 +16,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 - `nodes` — heartbeat identity, `online`, `last_seen_unix`. Extra columns
   added with `ALTER TABLE` if missing: `dashboard_json`, `settings_json`.
-- `users` — username + Argon2id `password_hash`.
+- `users` — username + Argon2id `password_hash`. Extra column
+  `must_change_password` (0/1): set when the admin is created from
+  `KEYSTONE_ADMIN_PASSWORD`, cleared after a successful UI password change.
 - `sessions` — cookie id, username, expiry (purged on read).
 - `audit` — mutating Docker (and similar) with username, node, op, target,
   ok, detail.

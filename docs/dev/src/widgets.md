@@ -7,7 +7,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 The node Overview is a customisable grid. Layout JSON is stored on the node
 row (`dashboard_json`) when the operator saves Customize; otherwise
-`Dashboard::default_node()` is used.
+`Dashboard::default_node()` is used. Customize uses HTML5 drag-and-drop to
+reorder cards (drop on another card = insert before it). Span is still
+`+/−` (1–4). Live dashboard polls do not rebuild the grid while editing.
 
 ## Kinds (`WidgetKind`)
 

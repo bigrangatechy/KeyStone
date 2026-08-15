@@ -35,6 +35,8 @@ GPU sensor so you can add only the chips you care about.
 
 Use **Customize** on the Overview toolbar.
 
+- Drag a card onto another card to place it there. ↑ / ↓ still move one
+  step if you prefer buttons. **+/−** change width (1–4 columns).
 - The picker is grouped (CPU, Memory, Load, Disk, Network, GPU, System,
   Temperature).
 - Built-in cards cover overall CPU, RAM, load, disks, NICs, GPU, uptime, and

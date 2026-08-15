@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}/setup", get(node_setup_page))
         .route("/nodes/{id}/settings", post(node_settings_post))
         .route("/alerts", get(alerts_page))
+        .route("/password", get(password_page).post(password_post))
         .route("/settings", get(settings_page).post(settings_post))
         .route("/settings/rotate-token", post(settings_rotate_token))
         .route("/nodes/{id}/docker/{op}", post(docker_action))
@@ -118,7 +119,20 @@ async fn require_session(
         return Redirect::to("/login").into_response();
     };
     match state.stores.metadata.get_session(cookie.value()) {
-        Ok(Some(_)) => next.run(request).await,
+        Ok(Some(sess)) => {
+            let path = request.uri().path();
+            if state
+                .stores
+                .metadata
+                .user_must_change_password(&sess.username)
+                .unwrap_or(false)
+                && path != "/password"
+                && path != "/logout"
+            {
+                return Redirect::to("/password").into_response();
+            }
+            next.run(request).await
+        }
         _ => Redirect::to("/login").into_response(),
     }
 }
@@ -189,7 +203,17 @@ async fn login_post(
     cookie.set_http_only(true);
     cookie.set_path("/");
     cookie.set_same_site(SameSite::Lax);
-    (jar.add(cookie), Redirect::to("/")).into_response()
+    let next = if state
+        .stores
+        .metadata
+        .user_must_change_password(&form.username)
+        .unwrap_or(false)
+    {
+        "/password"
+    } else {
+        "/"
+    };
+    (jar.add(cookie), Redirect::to(next)).into_response()
 }
 
 async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
@@ -199,6 +223,104 @@ async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
     let mut cookie = Cookie::from(SESSION_COOKIE);
     cookie.set_path("/");
     (jar.remove(cookie), Redirect::to("/login")).into_response()
+}
+
+#[derive(Template)]
+#[template(path = "password.html")]
+struct PasswordTemplate {
+    error: String,
+}
+
+async fn password_page(State(state): State<AppState>, jar: CookieJar) -> Response {
+    let Some(username) = session_username(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    if !state
+        .stores
+        .metadata
+        .user_must_change_password(&username)
+        .unwrap_or(false)
+    {
+        return Redirect::to("/").into_response();
+    }
+    Html(
+        PasswordTemplate {
+            error: String::new(),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct PasswordForm {
+    #[serde(default)]
+    new_password: String,
+    #[serde(default)]
+    new_password_confirm: String,
+}
+
+async fn password_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(form): Form<PasswordForm>,
+) -> Response {
+    let fail = |error: String| {
+        Html(
+            PasswordTemplate { error }
+                .render()
+                .unwrap_or_else(|e| e.to_string()),
+        )
+        .into_response()
+    };
+    let Some(username) = session_username(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    if !state
+        .stores
+        .metadata
+        .user_must_change_password(&username)
+        .unwrap_or(false)
+    {
+        return Redirect::to("/").into_response();
+    }
+    if let Err(error) = auth::validate_new_password(&form.new_password, &form.new_password_confirm)
+    {
+        return fail(error);
+    }
+    let current = state.stores.metadata.user_hash(&username).ok().flatten();
+    if current
+        .as_deref()
+        .map(|h| auth::verify_password(&form.new_password, h))
+        .unwrap_or(false)
+    {
+        return fail("choose a different password from the bootstrap one".into());
+    }
+    match auth::hash_password(&form.new_password) {
+        Ok(hash) => {
+            if let Err(e) = state
+                .stores
+                .metadata
+                .set_user_password(&username, &hash, false)
+            {
+                return fail(format!("could not update password: {e}"));
+            }
+        }
+        Err(e) => return fail(format!("could not hash password: {e}")),
+    }
+    Redirect::to("/?welcome=1").into_response()
+}
+
+fn session_username(state: &AppState, jar: &CookieJar) -> Option<String> {
+    let cookie = jar.get(SESSION_COOKIE)?;
+    state
+        .stores
+        .metadata
+        .get_session(cookie.value())
+        .ok()
+        .flatten()
+        .map(|s| s.username)
 }
 
 #[derive(Template)]
@@ -325,23 +447,32 @@ async fn settings_post(
         Ok(u) => u,
         Err(error) => return fail(&state, error, &form),
     };
-    let new_password = form.new_password.trim();
-    let confirm = form.new_password_confirm.trim();
-    if new_password != confirm {
-        return fail(
-            &state,
-            "new password and confirmation do not match".into(),
-            &form,
-        );
-    }
-    if !new_password.is_empty() {
-        match auth::hash_password(new_password) {
+    if !form.new_password.is_empty() || !form.new_password_confirm.is_empty() {
+        if let Err(error) =
+            auth::validate_new_password(&form.new_password, &form.new_password_confirm)
+        {
+            return fail(&state, error, &form);
+        }
+        let current = state
+            .stores
+            .metadata
+            .user_hash(&state.config.auth.username)
+            .ok()
+            .flatten();
+        if current
+            .as_deref()
+            .map(|h| auth::verify_password(&form.new_password, h))
+            .unwrap_or(false)
+        {
+            return fail(&state, "choose a different password".into(), &form);
+        }
+        match auth::hash_password(&form.new_password) {
             Ok(hash) => {
-                if let Err(e) = state
-                    .stores
-                    .metadata
-                    .upsert_user(&state.config.auth.username, &hash)
-                {
+                if let Err(e) = state.stores.metadata.set_user_password(
+                    &state.config.auth.username,
+                    &hash,
+                    false,
+                ) {
                     return fail(&state, format!("could not update password: {e}"), &form);
                 }
             }

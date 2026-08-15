@@ -17,6 +17,13 @@ This version is a **single local admin** account: username from
 `server.toml` (`admin` unless you changed it), password from the first-start
 hash.
 
+If the account was created from `KEYSTONE_ADMIN_PASSWORD` (empty
+`password_hash` in the file), the first sign-in asks you to **choose a new
+password** (at least 8 characters, not the bootstrap one). You cannot use
+the rest of the UI until that is saved. After that, a short **welcome tour**
+points at Nodes, Alerts, Settings, and Add node. Skip it anytime; replay it
+from Settings.
+
 Sessions are cookie-based. Use **Log out** in the header when you are done.
 Put TLS in front of the UI if the network is not yours — KeyStone does not
 terminate HTTPS itself.
@@ -80,6 +87,7 @@ debugging, not the usual way to watch a host.
 ## Global Settings
 
 The header **Settings** link is the server, not a node: retention, ingest
-token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password.
-Listen addresses and the admin username stay in `server.toml`. Header
-**Alerts** is the live firing list; see [Alerts](alerts.md).
+token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password
+(and **Replay welcome tour**). Listen addresses and the admin username stay
+in `server.toml`. Header **Alerts** is the live firing list; see
+[Alerts](alerts.md).

@@ -674,16 +674,60 @@
         if (editing) {
           card.classList.add("editing");
           card.insertBefore(editChrome(idx), card.firstChild);
+          bindDrag(card, idx);
         }
         grid.appendChild(card);
       });
       widgetsHost.replaceChildren(grid);
     }
 
+    function bindDrag(card, idx) {
+      card.draggable = true;
+      card.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", String(idx));
+        e.dataTransfer.effectAllowed = "move";
+        card.classList.add("dragging");
+      });
+      card.addEventListener("dragend", () => card.classList.remove("dragging"));
+      card.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        card.classList.add("drop-target");
+      });
+      card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
+      card.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        card.classList.remove("drop-target");
+        const from = Number(e.dataTransfer.getData("text/plain"));
+        if (!Number.isFinite(from)) return;
+        moveWidgetTo(from, idx);
+      });
+      card.querySelectorAll("button").forEach((b) => {
+        b.addEventListener("mousedown", (ev) => ev.stopPropagation());
+        b.addEventListener("dragstart", (ev) => ev.preventDefault());
+      });
+    }
+
+    function moveWidgetTo(from, to) {
+      if (from === to || from < 0 || to < 0) return;
+      const n = layout.widgets.length;
+      if (from >= n || to >= n) return;
+      const item = layout.widgets.splice(from, 1)[0];
+      let insert = to;
+      if (from < to) insert = to - 1;
+      layout.widgets.splice(insert, 0, item);
+      paintAll();
+    }
+
     function editChrome(idx) {
       const row = el("div", "widget-edit");
       const n = layout.widgets.length;
       const span = Number(layout.widgets[idx].span) || 1;
+      const grip = el("span", "widget-grip", "⋮⋮");
+      grip.title = "Drag to move";
+      grip.setAttribute("aria-hidden", "true");
+      row.appendChild(grip);
       function addBtn(label, fn, disabled) {
         const b = el("button", null, label);
         b.type = "button";
@@ -768,6 +812,7 @@
         select.value = "";
       });
       toolbar.appendChild(select);
+      toolbar.appendChild(el("span", "muted", "Drag cards to place them. +/− changes width."));
       const save = el("button", null, "Save");
       save.type = "button";
       save.addEventListener("click", saveLayout);
@@ -848,8 +893,6 @@
           if (j.layout) layout = j.layout;
           if (j.source) source = j.source;
           paintAll();
-        } else {
-          paintWidgets();
         }
       } catch (e) {}
     }
@@ -868,5 +911,145 @@
         }
       }, pollSecs * 1000);
     }
+  }
+
+  const TOUR_KEY = "keystone.tour.v1";
+  const replayTour = document.getElementById("replay-tour");
+  if (replayTour) {
+    replayTour.addEventListener("click", () => {
+      try { localStorage.removeItem(TOUR_KEY); } catch (e) {}
+      location.href = "/?welcome=1";
+    });
+  }
+
+  function tourDone() {
+    try { localStorage.setItem(TOUR_KEY, "done"); } catch (e) {}
+    const u = new URL(location.href);
+    if (u.searchParams.has("welcome")) {
+      u.searchParams.delete("welcome");
+      const next = u.pathname + u.search + u.hash;
+      history.replaceState({}, "", next || "/");
+    }
+  }
+
+  function tourSeen() {
+    try { return localStorage.getItem(TOUR_KEY) === "done"; } catch (e) { return false; }
+  }
+
+  function wantTour() {
+    try {
+      if (new URLSearchParams(location.search).get("welcome") === "1") return true;
+    } catch (e) {}
+    return !tourSeen();
+  }
+
+  function startTour() {
+    const steps = [
+      {
+        sel: "a.brand",
+        title: "Welcome to KeyStone",
+        body: "One console for the lab: live host metrics and per-node Docker. This short tour points at the header."
+      },
+      {
+        sel: "nav a[href='/']",
+        title: "Nodes",
+        body: "The home page is the fleet: CPU, RAM, disk, and temperature for every host, about once a second."
+      },
+      {
+        sel: "#nav-alerts",
+        title: "Alerts",
+        body: "Warn and crit chips (75% / 90%, 75°C / 90°C) land here. Optional webhook is on Settings."
+      },
+      {
+        sel: "nav a[href='/settings']",
+        title: "Settings",
+        body: "Retention, ingest token, scrape jobs, alert webhook, and your password. Listen addresses stay in the config file."
+      },
+      {
+        sel: "a.btn[href='/nodes/new']",
+        title: "Add a node",
+        body: "Enroll a hostname, then install the agent on that machine. Open a host for Overview — Customize, then drag cards to place them."
+      }
+    ].filter((s) => document.querySelector(s.sel));
+    if (!steps.length) {
+      return;
+    }
+    let i = 0;
+    const backdrop = el("div", "tour-backdrop");
+    const spot = el("div", "tour-spot");
+    const card = el("div", "tour-card");
+    backdrop.setAttribute("role", "dialog");
+    backdrop.setAttribute("aria-label", "Welcome tour");
+    function place() {
+      const step = steps[i];
+      const target = document.querySelector(step.sel);
+      card.replaceChildren();
+      card.appendChild(el("h2", null, step.title));
+      card.appendChild(el("p", null, step.body));
+      const nav = el("div", "tour-actions");
+      const skip = el("button", null, "Skip");
+      skip.type = "button";
+      skip.addEventListener("click", close);
+      const next = el("button", null, i === steps.length - 1 ? "Done" : "Next");
+      next.type = "button";
+      next.addEventListener("click", () => {
+        if (i >= steps.length - 1) close();
+        else {
+          i += 1;
+          place();
+        }
+      });
+      nav.appendChild(skip);
+      nav.appendChild(next);
+      card.appendChild(nav);
+      if (!target) {
+        spot.style.display = "none";
+        card.style.top = "20%";
+        card.style.left = "50%";
+        card.style.transform = "translateX(-50%)";
+        return;
+      }
+      const r = target.getBoundingClientRect();
+      const pad = 6;
+      spot.style.display = "block";
+      spot.style.top = Math.max(0, r.top - pad) + "px";
+      spot.style.left = Math.max(0, r.left - pad) + "px";
+      spot.style.width = r.width + pad * 2 + "px";
+      spot.style.height = r.height + pad * 2 + "px";
+      const below = r.bottom + 12;
+      const above = r.top - 12;
+      card.style.transform = "none";
+      if (below + 180 < window.innerHeight) {
+        card.style.top = below + "px";
+      } else {
+        card.style.top = Math.max(12, above - 160) + "px";
+      }
+      const left = Math.min(Math.max(12, r.left), window.innerWidth - 340);
+      card.style.left = left + "px";
+    }
+    function close() {
+      tourDone();
+      backdrop.remove();
+      window.removeEventListener("resize", place);
+      document.removeEventListener("keydown", onKey);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") close();
+    }
+    backdrop.appendChild(spot);
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+    window.addEventListener("resize", place);
+    document.addEventListener("keydown", onKey);
+    place();
+    setTimeout(() => {
+      backdrop.addEventListener("click", (e) => {
+        if (e.target === backdrop) close();
+      });
+    }, 400);
+  }
+
+  if (document.querySelector("header.bar") && wantTour()) {
+    setTimeout(startTour, 80);
   }
 })();

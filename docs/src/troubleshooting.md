@@ -14,6 +14,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - After you set a password, remove the env var so a stale value is not
   surprising on the next restart.
 
+## Stuck on “Choose a password”
+
+The account was created from `KEYSTONE_ADMIN_PASSWORD`. Pick a new password
+of at least 8 characters that is not the bootstrap one. **Log out** is on
+that page if you need to leave. After you save, the node list and welcome
+tour appear.
+
 ## Agent stays “awaiting” or never “control connected”
 
 1. `ingest_url` must be the **gRPC** listen address (`grpc_listen`), not
