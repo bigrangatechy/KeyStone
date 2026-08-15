@@ -2470,6 +2470,14 @@ mod tests {
             js.contains("compose_update"),
             "Compose Update (pull then up) missing from the Docker toolbar"
         );
+        assert!(
+            js.contains("Observe host updates"),
+            "System observe-off must point at Settings, not only the socket unit"
+        );
+        assert!(
+            js.contains("restart keystone-agent"),
+            "helper-down copy must cover ProtectSystem until the agent is restarted"
+        );
         let css = include_str!("static/app.css");
         assert!(
             css.contains("select"),

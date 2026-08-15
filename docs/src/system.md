@@ -11,20 +11,27 @@ on **Compose** (use **Update** = pull then up).
 
 This is **off until you enable it**, twice:
 
-1. On the node, start the root helper socket (the metrics agent is **not**
+1. On the node **Settings** tab: **Observe host updates and addressing**,
+   and **Allow apt upgrade and IPv4 changes** if you want Apply.
+2. On the node, start the root helper socket (the metrics agent is **not**
    root):
 
    ```
    sudo systemctl enable --now keystone-sys.socket
    ```
 
-2. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade and IPv4 changes** if you want Apply.
+   If the tab still says the helper is not running, restart the agent so it
+   can use the new socket:
 
-Missing socket → the tab shows that `systemctl` line. The helper listens
-on `/run/keystone/sys.sock` (`root:keystone` mode `0660`). It only runs
-allowlisted ops (`apt-get update` / `upgrade`, netplan or `nmcli`). There
-is no shell string.
+   ```
+   sudo systemctl restart keystone-agent
+   ```
+
+Missing socket → the tab shows that `systemctl` line. Observe off → it
+points at Settings (the socket unit alone does not turn the tab on). The
+helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
+It only runs allowlisted ops (`apt-get update` / `upgrade`, netplan or
+`nmcli`). There is no shell string.
 
 ## Updates
 

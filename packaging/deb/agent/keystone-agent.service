@@ -22,7 +22,12 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/keystone -/run/docker.sock -/var/run/docker.sock -/run/keystone/sys.sock
+# /run/keystone must be the directory (not -/run/keystone/sys.sock).
+# Ignore-if-missing on the sock file leaves /run read-only when the
+# helper is enabled after the agent has already started.
+RuntimeDirectory=keystone
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/var/lib/keystone -/run/docker.sock -/var/run/docker.sock /run/keystone
 
 [Install]
 WantedBy=multi-user.target

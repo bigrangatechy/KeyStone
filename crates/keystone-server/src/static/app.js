@@ -707,7 +707,7 @@
       return;
     }
     if (reason === "disabled") {
-      host.replaceChildren(el("p", "muted", "System observe is off. Enable it on the Settings tab, then start keystone-sys.socket on the node."));
+      host.replaceChildren(el("p", "muted", "System observe is off. On this node's Settings tab, enable Observe host updates and addressing. Enabling keystone-sys.socket alone is not enough."));
       return;
     }
     const data = parse(host) || {};
@@ -722,7 +722,7 @@
       pre.className = "snippet";
       pre.textContent = "sudo systemctl enable --now keystone-sys.socket";
       wrap.appendChild(pre);
-      wrap.appendChild(el("p", "muted", "Then reload this tab. The metrics agent stays unprivileged."));
+      wrap.appendChild(el("p", "muted", "If that unit is already enabled, restart keystone-agent so it can use /run/keystone/sys.sock, then reload this tab. The metrics agent stays unprivileged."));
     }
     const meta = el("p", "muted");
     const bits = [];

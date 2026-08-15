@@ -13,7 +13,10 @@ SocketUser=root
 SocketGroup=keystone
 SocketMode=0660
 DirectoryMode=0750
+# Group= so /run/keystone is root:keystone and the agent can traverse it.
+Group=keystone
 RuntimeDirectory=keystone
+RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 Accept=false
 

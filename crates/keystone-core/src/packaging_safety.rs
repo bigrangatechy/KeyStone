@@ -133,7 +133,14 @@ fn agent_stays_unprivileged() {
         "metrics agent must stay sandboxed"
     );
     assert!(active.contains("ProtectSystem=strict"));
-    assert!(active.contains("-/run/keystone/sys.sock"));
+    assert!(
+        active.contains("RuntimeDirectory=keystone"),
+        "agent needs a writable /run/keystone before the helper socket exists"
+    );
+    assert!(
+        active.contains("/run/keystone") && !active.contains("-/run/keystone/sys.sock"),
+        "ReadWritePaths must allow the directory; ignore-if-missing on the sock file hides a later enable"
+    );
     assert!(active.contains("User=keystone"));
 }
 
@@ -156,6 +163,10 @@ fn sys_helper_is_opt_in_root_socket() {
     assert!(socket.contains("ListenStream=/run/keystone/sys.sock"));
     assert!(socket.contains("SocketMode=0660"));
     assert!(socket.contains("SocketGroup=keystone"));
+    assert!(
+        socket.lines().any(|l| l.trim() == "Group=keystone"),
+        "RuntimeDirectory must be group-traversable by the agent"
+    );
     assert!(socket.contains("Accept=false"));
     assert!(
         !active_shell(AGENT_POSTINST).contains("keystone-sys"),
@@ -187,19 +198,34 @@ fn cargo_run_defaults_to_metrics_agent() {
     assert!(AGENT_CARGO.contains("name = \"keystone-agent\""));
 }
 
-#[test]
-fn setup_snippet_matches_agent_deb_revision() {
-    let setup = include_str!("../../keystone-server/templates/node_setup.html");
-    let rev = AGENT_CARGO
+fn deb_revision(cargo: &str) -> &str {
+    cargo
         .lines()
         .find(|l| l.trim().starts_with("revision"))
         .and_then(|l| l.split('"').nth(1))
-        .expect("agent revision");
-    let needle = format!("keystone-agent_0.1.0-{rev}_");
+        .expect("deb revision")
+}
+
+#[test]
+fn setup_snippet_matches_agent_deb_revision() {
+    let setup = include_str!("../../keystone-server/templates/node_setup.html");
+    let needle = format!("keystone-agent_0.1.0-{}_", deb_revision(AGENT_CARGO));
     assert!(
         setup.contains(&needle),
         "node setup snippet must install {needle}"
     );
+}
+
+#[test]
+fn install_docs_match_deb_revisions() {
+    let readme = include_str!("../../../README.md");
+    let install = include_str!("../../../docs/src/install.md");
+    let server = format!("keystone-server_0.1.0-{}_", deb_revision(SERVER_CARGO));
+    let agent = format!("keystone-agent_0.1.0-{}_", deb_revision(AGENT_CARGO));
+    for (name, text) in [("README.md", readme), ("docs/src/install.md", install)] {
+        assert!(text.contains(&server), "{name} must mention {server}");
+        assert!(text.contains(&agent), "{name} must mention {agent}");
+    }
 }
 
 #[test]

@@ -128,9 +128,11 @@ token does not.
 
 ## System tab errors
 
-- Observe host is off (Settings).
+- Observe host is off (Settings). Enabling the socket unit is not enough.
 - Helper not running: `sudo systemctl enable --now keystone-sys.socket` on
-  **that** node, then reload the tab. The metrics agent is not root.
+  **that** node. If the unit is already enabled, `sudo systemctl restart
+  keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
+  then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
 - Manage refused: turn **Allow apt upgrade and IPv4 changes** on and save.
 - `apt-get` failed: read the apply stream; the helper only runs `upgrade`,

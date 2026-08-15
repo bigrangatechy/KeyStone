@@ -64,10 +64,14 @@ async fn connect() -> anyhow::Result<UnixStream> {
 }
 
 async fn connect_path(path: &str) -> anyhow::Result<UnixStream> {
-    let hint = "system helper is not running; enable keystone-sys.socket";
     match timeout(Duration::from_secs(2), UnixStream::connect(path)).await {
         Ok(Ok(stream)) => Ok(stream),
-        Ok(Err(_)) | Err(_) => anyhow::bail!("{hint}"),
+        Ok(Err(e)) if std::path::Path::new(path).exists() => anyhow::bail!(
+            "system helper socket is present but the agent cannot connect ({e}); restart keystone-agent after enabling keystone-sys.socket"
+        ),
+        Ok(Err(_)) | Err(_) => {
+            anyhow::bail!("system helper is not running; enable keystone-sys.socket")
+        }
     }
 }
 
@@ -141,6 +145,23 @@ mod tests {
             err.contains("keystone-sys.socket"),
             "operator needs the systemctl unit name, got {err}"
         );
+        assert!(!err.contains("docker.sock"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn present_unusable_socket_asks_to_restart_agent() {
+        let path = std::env::temp_dir().join(format!("ks-sys-not-a-sock-{}", std::process::id()));
+        std::fs::write(&path, b"").expect("temp sock stand-in");
+        let err = connect_path(path.to_str().expect("utf8"))
+            .await
+            .unwrap_err()
+            .to_string();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            err.contains("restart keystone-agent"),
+            "existing sock with EACCES must not look like the unit is off, got {err}"
+        );
+        assert!(err.contains("keystone-sys.socket"), "{err}");
         assert!(!err.contains("docker.sock"), "{err}");
     }
 }

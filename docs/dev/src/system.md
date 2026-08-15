@@ -12,8 +12,12 @@ gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
-operator enabled `keystone-sys.socket`. The helper binary is
-`/usr/lib/keystone/keystone-sys` (root, no `sh -c`, no setuid).
+operator enabled `keystone-sys.socket`. The agent unit keeps
+`RuntimeDirectory=keystone` and `ReadWritePaths=/run/keystone` (the
+directory). `-/run/keystone/sys.sock` is wrong: ignore-if-missing leaves
+`/run` read-only when the helper is enabled after the agent started. The
+helper binary is `/usr/lib/keystone/keystone-sys` (root, no `sh -c`, no
+setuid).
 
 `NodeSettings.sys_enabled` / `sys_manage` are pushed in `set_runtime`.
 The agent refuses mutating `SysOp` unless manage is on. Tests must not
