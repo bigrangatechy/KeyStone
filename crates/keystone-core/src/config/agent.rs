@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 /// connected; TOML is the fallback until then.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// gRPC ingest URL, for example `http://keystone.example:9100`.
+    /// gRPC ingest URL, for example `http://keystone.example:9100` or
+    /// `https://keystone.example:9100` when the server has ingest TLS.
     pub ingest_url: String,
     /// Shared ingest token. This cannot call Docker manage APIs.
     #[serde(default)]
@@ -30,6 +31,10 @@ pub struct AgentConfig {
     /// Directory for on-disk push buffer when the server is unreachable.
     #[serde(default = "default_buffer")]
     pub buffer_dir: String,
+    /// PEM of a private CA (self-signed). Empty = web PKI (Let's Encrypt).
+    /// Used only when `ingest_url` is `https://`.
+    #[serde(default)]
+    pub tls_ca_file: String,
     #[serde(default)]
     pub docker: DockerConfig,
 }
@@ -51,6 +56,7 @@ impl Default for AgentConfig {
             labels: Default::default(),
             interval_secs: default_interval(),
             buffer_dir: default_buffer(),
+            tls_ca_file: String::new(),
             docker: DockerConfig::default(),
         }
     }

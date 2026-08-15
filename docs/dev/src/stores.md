@@ -16,10 +16,15 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 - `nodes` — heartbeat identity, `online`, `last_seen_unix`. Extra columns
   added with `ALTER TABLE` if missing: `dashboard_json`, `settings_json`.
-- `users` — username + Argon2id `password_hash`. Extra column
+- `users` — username + Argon2id `password_hash`. Extra columns (all
+  `ALTER TABLE` with defaults so existing DBs open):
   `must_change_password` (0/1): set when the admin is created from
   `KEYSTONE_ADMIN_PASSWORD`, cleared after a successful UI password change.
-- `sessions` — cookie id, username, expiry (purged on read).
+  TOTP: `totp_secret`, `totp_pending`, `totp_enabled`, `totp_backup_json`
+  (JSON array of Argon2 hashes), `totp_last_step` (replay).
+  `set_user_password` updates only hash + `must_change_password`.
+- `sessions` — cookie id, username, expiry (purged on read), `pending_2fa`
+  (0/1). `put_session(..., pending_2fa)`.
 - `audit` — mutating Docker (and similar) with username, node, op, target,
   ok, detail.
 - `kv` — `k` / `v` text. Server operator settings are key `server`

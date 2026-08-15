@@ -963,7 +963,7 @@
       {
         sel: "nav a[href='/settings']",
         title: "Settings",
-        body: "Retention, ingest token, scrape jobs, alert webhook, and your password. Listen addresses stay in the config file."
+        body: "Retention, ingest token, scrape jobs, alert webhook, password, and authenticator 2FA. Turn on 2FA before exposing this UI through a tunnel."
       },
       {
         sel: "a.btn[href='/nodes/new']",

@@ -10,7 +10,7 @@ use keystone_core::config::{self, ServerConfig};
 use keystone_server::auth;
 use keystone_server::cli::{Command, ServerCli};
 use keystone_server::state::AppState;
-use keystone_server::{help, http, ingest, scrape};
+use keystone_server::{help, http, ingest, scrape, tls};
 use keystone_store::Stores;
 use tracing_subscriber::EnvFilter;
 
@@ -80,22 +80,44 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
     )?;
     let http_addr: SocketAddr = cfg.http_listen.parse().context("http_listen")?;
     let grpc_addr: SocketAddr = cfg.grpc_listen.parse().context("grpc_listen")?;
+    tls::install_provider();
+    let ingest_tls = cfg.tls.ingest;
+    let pem = tls::TlsPem::from_config(&cfg.tls)?;
+    let http_tls = pem.is_some();
+    let grpc_pem = if ingest_tls { pem.clone() } else { None };
+    if http_tls {
+        tracing::info!("TLS cert {} key {}", cfg.tls.cert_file, cfg.tls.key_file);
+    }
     let state = AppState::new(cfg, stores);
     state.seed_server_settings()?;
     scrape::spawn(state.clone());
 
-    let listener = tokio::net::TcpListener::bind(http_addr).await?;
-    tracing::info!("HTTP UI on http://{http_addr}");
-    tracing::info!("gRPC ingest on {grpc_addr}");
+    let http_scheme = if http_tls { "https" } else { "http" };
+    tracing::info!("HTTP UI on {http_scheme}://{http_addr}");
+    if grpc_pem.is_some() {
+        tracing::info!("gRPC ingest TLS on {grpc_addr}");
+    } else {
+        tracing::info!("gRPC ingest on {grpc_addr} (plaintext)");
+    }
 
-    let http = axum::serve(listener, http::router(state.clone()));
-    let grpc = tonic::transport::Server::builder()
-        .add_service(ingest::service(state))
-        .serve(grpc_addr);
+    let app = http::router(state.clone());
+    let http = tls::serve_http(http_addr, app, pem.as_ref());
+    let grpc = async move {
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(t) = grpc_pem.as_ref() {
+            builder = builder
+                .tls_config(tls::grpc_tls_config(t)?)
+                .context("gRPC TLS")?;
+        }
+        builder
+            .add_service(ingest::service(state))
+            .serve(grpc_addr)
+            .await
+            .context("gRPC ingest")
+    };
 
     tokio::select! {
-        r = http => r.context("http server")?,
-        r = grpc => r.context("grpc server")?,
+        r = http => r,
+        r = grpc => r,
     }
-    Ok(())
 }

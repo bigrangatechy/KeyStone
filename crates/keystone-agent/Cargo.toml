@@ -26,6 +26,7 @@ hostname.workspace = true
 keystone-core.workspace = true
 keystone-proto.workspace = true
 prost.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sysinfo.workspace = true

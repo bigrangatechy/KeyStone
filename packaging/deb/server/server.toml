@@ -16,3 +16,12 @@ ingest_token = "change-me"
 [auth]
 username = "admin"
 password_hash = ""
+
+# Optional TLS. Copy Let's Encrypt fullchain+privkey (or a self-signed
+# cert) here, chown keystone, mode 640 on the key. Restart the server.
+# Agents must then use https:// on ingest_url (and tls_ca_file for a
+# private CA). Set ingest = false to encrypt the UI only.
+# [tls]
+# cert_file = "/etc/keystone/tls/fullchain.pem"
+# key_file = "/etc/keystone/tls/privkey.pem"
+# ingest = true

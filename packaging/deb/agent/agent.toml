@@ -12,3 +12,4 @@
 ingest_url = "http://keystone.home.arpa:9100"
 ingest_token = "change-me"
 buffer_dir = "/var/lib/keystone/agent-buffer"
+# tls_ca_file = "/etc/keystone/ca.pem"  # private CA / self-signed; omit for Let's Encrypt

@@ -3,6 +3,9 @@
 {% extends "layout.html" %}
 {% block title %}Nodes — KeyStone{% endblock %}
 {% block content %}
+{% if !totp_enabled %}
+<p class="banner">If this UI is reachable from the internet (reverse proxy or Cloudflare Tunnel), enable an <a href="/settings">authenticator</a> first. Password-only login is not enough once the port is public.</p>
+{% endif %}
 <div class="page-head">
   <div>
     <h1>Nodes</h1>

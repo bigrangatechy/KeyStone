@@ -13,6 +13,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
   Check the server journal: it logs if it hashed the env password.
 - After you set a password, remove the env var so a stale value is not
   surprising on the next restart.
+- Authenticator enabled: the second page wants a current 6-digit code or a
+  backup code (`XXXX-XXXX`).
+- “too many attempts”: eight failed password or TOTP tries in 15 minutes
+  for that username. Wait for the window to pass.
 
 ## Stuck on “Choose a password”
 
@@ -20,6 +24,27 @@ The account was created from `KEYSTONE_ADMIN_PASSWORD`. Pick a new password
 of at least 8 characters that is not the bootstrap one. **Log out** is on
 that page if you need to leave. After you save, the node list and welcome
 tour appear.
+
+## Lost authenticator
+
+Use a backup code at sign-in, then disable and enroll again from Settings
+(password plus a remaining backup code, or a code from a new app after you
+still have one working factor).
+
+If you lost the app **and** the backup codes, you need root (or the
+`keystone` data user) on the **server** host. 2FA lives in
+`data_dir/keystone.sqlite`. Restoring a backup of `data_dir` restores the
+account. There is no email reset.
+
+On a packaged install, as root:
+
+```
+sqlite3 /var/lib/keystone/keystone.sqlite \
+  "UPDATE users SET totp_enabled=0, totp_secret='', totp_pending='', totp_backup_json='[]', totp_last_step=0 WHERE username='admin';"
+```
+
+Use the username from `server.toml` if it is not `admin`. Sign in with the
+password only, then turn 2FA back on.
 
 ## Agent stays “awaiting” or never “control connected”
 
@@ -33,6 +58,12 @@ tour appear.
 5. `journalctl -u keystone-agent` — TLS/HTTP mix-ups, connection refused,
    ingest nack.
 6. `journalctl -u keystone-server` — `push rejected` if the token is wrong.
+
+If the server has ingest TLS: `ingest_url` must be `https://`, and the host
+must match the certificate. Let's Encrypt: no `tls_ca_file`. Self-signed:
+set `tls_ca_file` to the CA PEM. `http://` against a TLS ingest port fails
+(and the other way around). The UI scheme follows `[tls]` independently
+(`ingest = false` leaves agents on HTTP).
 
 An unknown agent with a good token still enrolls; a known id with a bad
 token does not.

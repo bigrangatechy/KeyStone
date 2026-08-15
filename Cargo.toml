@@ -33,6 +33,7 @@ askama = "0.14"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 bollard = "0.18"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
@@ -60,12 +61,15 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.8"
-tonic = { version = "0.12", default-features = false, features = ["prost", "codegen", "transport"] }
+tonic = { version = "0.12", default-features = false, features = ["prost", "codegen", "transport", "tls", "tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tonic-build = "0.12"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+totp-rs = { version = "5.6", default-features = false, features = ["otpauth", "gen_secret"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 uuid = { version = "1", features = ["v4"] }
 
 [workspace.metadata.cargo-deny]

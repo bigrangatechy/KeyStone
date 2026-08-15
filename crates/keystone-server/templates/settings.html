@@ -58,6 +58,28 @@
   <button type="submit">Save settings</button>
 </form>
 
+<form class="stack wide" method="post" action="{% if totp_enabled %}/settings/totp/disable{% else %}/settings/totp/start{% endif %}">
+  <fieldset>
+    <legend>Authenticator (2FA)</legend>
+    {% if totp_enabled %}
+    <p>An authenticator app is required after the password at sign-in. Disable only if you still have the app or a backup code.</p>
+    <label>Current password
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    <label>Authenticator or backup code
+      <input name="code" required autocomplete="one-time-code">
+    </label>
+    <button type="submit" class="danger">Disable authenticator</button>
+    {% else %}
+    <p>Optional, strongly recommended if you put KeyStone behind a tunnel or reverse proxy. Uses a standard authenticator app (TOTP), not SMS.</p>
+    <label>Current password
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    <button type="submit">Set up authenticator</button>
+    {% endif %}
+  </fieldset>
+</form>
+
 <p class="muted">Welcome tour: shown once on the node list. <button type="button" id="replay-tour">Replay welcome tour</button></p>
 
 {% if !ingest_token_env_override %}

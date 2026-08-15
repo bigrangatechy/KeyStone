@@ -9,5 +9,7 @@ pub mod http;
 pub mod ingest;
 pub mod scrape;
 pub mod state;
+pub mod tls;
+pub mod totp;
 
 pub use cli::ServerCli;

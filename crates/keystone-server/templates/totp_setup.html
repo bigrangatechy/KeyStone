@@ -1,0 +1,18 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Authenticator — KeyStone{% endblock %}
+{% block content %}
+<h1>Set up authenticator</h1>
+<p class="muted">Scan the QR code with Aegis, Google Authenticator, or another TOTP app. Or type the secret by hand. Then enter a code from the app to turn it on.</p>
+{% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
+<div class="totp-qr">{{ qr_svg|safe }}</div>
+<p>Secret: <code>{{ secret }}</code></p>
+<form class="stack" method="post" action="/settings/totp/confirm">
+  <label>6-digit code
+    <input name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+  </label>
+  <button type="submit">Enable authenticator</button>
+</form>
+<p class="muted"><a href="/settings">Cancel</a> — the secret is not active until you confirm a code.</p>
+{% endblock %}

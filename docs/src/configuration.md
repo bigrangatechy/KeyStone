@@ -14,13 +14,16 @@ exists) from **operator settings** (the UI after first start).
 
 | Field | Meaning |
 |---|---|
-| `http_listen` | UI and HTTP API. Default `0.0.0.0:8080`. |
-| `grpc_listen` | Agent ingest. Default `0.0.0.0:9100`. |
+| `http_listen` | UI and HTTP API. Default `0.0.0.0:8080`. HTTPS when `[tls]` is set. |
+| `grpc_listen` | Agent ingest. Default `0.0.0.0:9100`. TLS when `[tls]` is set and `ingest` is true (the default once certs exist). |
 | `data_dir` | SQLite, session cookies’ store, series database. Packaged: `/var/lib/keystone`. |
 | `[auth] username` | Local admin name. Default `admin`. |
 | `[auth] password_hash` | Argon2id hash. Empty means hash `KEYSTONE_ADMIN_PASSWORD` on first start. |
+| `[tls] cert_file` / `key_file` | PEM paths. Both set = UI HTTPS. Both empty = plaintext. |
+| `[tls] ingest` | Also wrap gRPC. Default **true**. Set `false` to leave agents on `http://`. |
 
-Restart `keystone-server` after changing listen addresses or `data_dir`.
+Restart `keystone-server` after changing listen addresses, `data_dir`, or
+`[tls]`.
 
 Environment:
 
@@ -34,10 +37,11 @@ Environment:
 
 | Field | Meaning |
 |---|---|
-| `ingest_url` | gRPC URL of the server, e.g. `http://keystone.home.arpa:9100`. |
+| `ingest_url` | gRPC URL of the server, e.g. `http://keystone.home.arpa:9100` or `https://…:9100` when ingest TLS is on. Host must match the cert. |
 | `ingest_token` | Must match Settings (or `KEYSTONE_INGEST_TOKEN`). |
 | `node_id` | Stable id. Empty = hostname. |
 | `buffer_dir` | On-disk push buffer while the server is unreachable. Packaged: `/var/lib/keystone/agent-buffer`. |
+| `tls_ca_file` | PEM of a private CA. Empty = web PKI. Ignored unless `ingest_url` is `https://`. |
 | `docker.host` | Engine socket or TCP URL. Empty = `/var/run/docker.sock`. Not a UI field. |
 
 `interval_secs`, `[docker] enabled/manage/allow_exec`, `compose_paths`, and
@@ -113,6 +117,12 @@ firing, changes severity, or clears. See [Alerts](alerts.md). Only
 Username stays in `server.toml`. Leave the password fields empty to keep
 the current hash. New password must be entered twice and be at least 8
 characters.
+
+### Authenticator (2FA)
+
+On the same Settings page, below the password fields. Optional until you
+enroll; stored on the admin row in SQLite, not in `server.toml`. A
+password change does not turn 2FA off. See [Security](security.md).
 
 ## Node Settings (UI)
 

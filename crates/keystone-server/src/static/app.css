@@ -100,7 +100,25 @@ form.login label { display: flex; flex-direction: column; gap: 0.25rem; color: v
 
 .node-head h1 { margin-bottom: 0.2rem; }
 
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; }
+.banner {
+  border: 1px solid #d29922;
+  background: #2a2214;
+  color: var(--fg);
+  padding: 0.65rem 0.85rem;
+  border-radius: 6px;
+  margin: 0 0 1rem;
+}
+.totp-qr {
+  width: 12.5rem;
+  height: 12.5rem;
+  margin: 0.75rem 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+.totp-qr svg { width: 100%; height: 100%; display: block; }
+.backup-codes { font-family: var(--mono); columns: 2; max-width: 28rem; }
 .page-head h1 { margin: 0.2rem 0; }
 .overview-toolbar {
   display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;

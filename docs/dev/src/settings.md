@@ -35,9 +35,11 @@ Saving bumps `scrape_epoch` so scrape tasks restart.
 setup snippet. The Settings input is read-only in that case. Rotate is
 disabled while the env is set.
 
-Listen addresses, `data_dir`, and `auth.username` stay on `ServerConfig`
-(`server.toml`). Password hash lives in the `users` table after
-`ensure_admin`.
+Listen addresses, `data_dir`, `auth.username`, and `[tls]` stay on
+`ServerConfig` (`server.toml`). Password hash and TOTP live in the `users`
+table after `ensure_admin`. TOTP is not a `ServerSettings` field. Helpers in
+`crates/keystone-server/src/totp.rs`. TLS helpers in
+`crates/keystone-server/src/tls.rs`. Empty cert/key is plaintext.
 
 ## `NodeSettings`
 
@@ -59,7 +61,8 @@ sets `docker_enabled` on the new row.
 ## `AgentConfig` / `ServerConfig`
 
 Serde TOML. Agent required at runtime: `ingest_url`, token, `node_id` or
-hostname, `buffer_dir`. Docker enable/manage/exec in TOML apply only until
+hostname, `buffer_dir`. `tls_ca_file` when `ingest_url` is `https://` and
+the CA is not in web PKI. Docker enable/manage/exec in TOML apply only until
 the first `set_runtime`. Comments on the structs should describe that
 split; do not point at generated markdown.
 

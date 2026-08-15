@@ -56,6 +56,8 @@ Edit `/etc/keystone/server.toml` only for:
 - `grpc_listen` — agent ingest (default `0.0.0.0:9100`)
 - `data_dir` — SQLite, sessions, series store (packaged default `/var/lib/keystone`)
 - `[auth] username` — local admin name (default `admin`)
+- optional `[tls]` — see [Security](security.md#tls) before the UI or ingest
+  is reachable from a network you do not trust
 
 Do **not** keep changing retention, scrape jobs, or the ingest token in this
 file after the first successful start. Those are seeded once, then edited on
@@ -76,7 +78,8 @@ Then:
 sudo systemctl enable --now keystone-server
 ```
 
-Open `http://<that-host>:8080`, log in, and go to **Settings**. Confirm:
+Open `http://<that-host>:8080` (or `https://` if you enabled `[tls]`), log
+in, and go to **Settings**. Confirm:
 
 - Ingest token (seeded from `ingest_token` in the file, or generated if empty)
 - Series retention (default **24 hours**)
@@ -84,6 +87,12 @@ Open `http://<that-host>:8080`, log in, and go to **Settings**. Confirm:
 
 Clear `KEYSTONE_ADMIN_PASSWORD` from `/etc/default/keystone-server` after the
 hash exists so the password is not sitting in an env file.
+
+If this UI will sit behind a reverse proxy or Cloudflare Tunnel, enable an
+**authenticator** on Settings before the hostname is public. See
+[Security](security.md). Do not publish port 8080 to the internet in
+plaintext. In-tree TLS (`[tls]` in `server.toml`) encrypts the UI and,
+by default, agent ingest as well.
 
 ## First start (agent)
 
@@ -102,10 +111,11 @@ ingest_url = "http://keystone.home.arpa:9100"
 ingest_token = "the-token-from-Settings"
 # node_id defaults to hostname when omitted
 buffer_dir = "/var/lib/keystone/agent-buffer"
+# tls_ca_file = "/etc/keystone/ca.pem"  # https:// ingest with a private CA
 ```
 
 `ingest_url` is the **gRPC** address (`grpc_listen` on the server), not the
-HTTP UI port.
+HTTP UI port. Use `https://` when the server has ingest TLS.
 
 Poll interval, Docker, labels, and Compose paths are **node Settings** after
 the agent connects. The only Docker field that stays in `agent.toml` is

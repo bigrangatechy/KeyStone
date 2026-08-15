@@ -1,0 +1,14 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Backup codes — KeyStone{% endblock %}
+{% block content %}
+<h1>Authenticator is on</h1>
+<p>Store these backup codes somewhere offline. Each works once if you lose the app. They will not be shown again.</p>
+<ul class="backup-codes">
+  {% for c in codes %}
+  <li><code>{{ c }}</code></li>
+  {% endfor %}
+</ul>
+<p><a class="btn" href="/">Continue</a></p>
+{% endblock %}

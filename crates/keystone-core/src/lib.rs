@@ -25,7 +25,7 @@ pub use alerts::{
     apply_node_alerts, firing_alerts, AlertSnapshot, AlertTransition, ALERTS_STATE_KV_KEY,
 };
 pub use config::{
-    AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape,
+    AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape, TlsConfig,
 };
 pub use docker::DockerOp;
 pub use fleet::{fleet_chips, FleetChip};

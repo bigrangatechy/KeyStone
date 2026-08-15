@@ -29,8 +29,37 @@ use tokio::sync::mpsc;
 use crate::auth;
 use crate::help;
 use crate::state::AppState;
+use crate::totp;
 
 const SESSION_COOKIE: &str = "keystone_session";
+const SESSION_SECS: i64 = 86400 * 7;
+const PENDING_2FA_SECS: i64 = 5 * 60;
+
+fn forwarded_https(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.eq_ignore_ascii_case("https"))
+}
+
+fn session_cookie(id: String, headers: &HeaderMap, ui_https: bool) -> Cookie<'static> {
+    let mut cookie = Cookie::new(SESSION_COOKIE, id);
+    cookie.set_http_only(true);
+    cookie.set_path("/");
+    cookie.set_same_site(SameSite::Lax);
+    if ui_https || forwarded_https(headers) {
+        cookie.set_secure(true);
+    }
+    cookie
+}
+
+fn expiry_unix(secs: i64) -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+        + secs
+}
 
 pub fn router(state: AppState) -> Router {
     let authed = Router::new()
@@ -42,8 +71,13 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}/settings", post(node_settings_post))
         .route("/alerts", get(alerts_page))
         .route("/password", get(password_page).post(password_post))
+        .route("/login/totp", get(totp_login_page).post(totp_login_post))
         .route("/settings", get(settings_page).post(settings_post))
         .route("/settings/rotate-token", post(settings_rotate_token))
+        .route("/settings/totp", get(totp_setup_page))
+        .route("/settings/totp/start", post(totp_start_post))
+        .route("/settings/totp/confirm", post(totp_confirm_post))
+        .route("/settings/totp/disable", post(totp_disable_post))
         .route("/nodes/{id}/docker/{op}", post(docker_action))
         .route(
             "/nodes/{id}/containers/{cid}/logs",
@@ -121,7 +155,11 @@ async fn require_session(
     match state.stores.metadata.get_session(cookie.value()) {
         Ok(Some(sess)) => {
             let path = request.uri().path();
-            if state
+            if sess.pending_2fa {
+                if path != "/login/totp" && path != "/logout" {
+                    return Redirect::to("/login/totp").into_response();
+                }
+            } else if state
                 .stores
                 .metadata
                 .user_must_change_password(&sess.username)
@@ -162,8 +200,19 @@ struct LoginForm {
 async fn login_post(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> Response {
+    let login_fail = |error: String| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Html(LoginTemplate { error }.render().unwrap_or_default()),
+        )
+            .into_response()
+    };
+    if state.login_gate.lock().locked(&form.username) {
+        return login_fail("too many attempts; try again in a few minutes".into());
+    }
     let expected_user = &state.config.auth.username;
     let ok_user = form.username == *expected_user;
     let hash = state
@@ -177,43 +226,39 @@ async fn login_post(
         .map(|h| auth::verify_password(&form.password, h))
         .unwrap_or(false);
     if !ok_user || !ok_pass {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Html(
-                LoginTemplate {
-                    error: "Invalid username or password".into(),
-                }
-                .render()
-                .unwrap_or_default(),
-            ),
-        )
-            .into_response();
+        state.login_gate.lock().record_fail(&form.username);
+        return login_fail("Invalid username or password".into());
     }
-    let sid = auth::new_session_id();
-    let expires = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-        + 86400 * 7;
-    let _ = state
+    let totp_on = state
         .stores
         .metadata
-        .put_session(&sid, &form.username, expires);
-    let mut cookie = Cookie::new(SESSION_COOKIE, sid);
-    cookie.set_http_only(true);
-    cookie.set_path("/");
-    cookie.set_same_site(SameSite::Lax);
-    let next = if state
+        .user_totp_enabled(&form.username)
+        .unwrap_or(false);
+    let sid = auth::new_session_id();
+    let (expires, pending, next) = if totp_on {
+        (expiry_unix(PENDING_2FA_SECS), true, "/login/totp")
+    } else if state
         .stores
         .metadata
         .user_must_change_password(&form.username)
         .unwrap_or(false)
     {
-        "/password"
+        (expiry_unix(SESSION_SECS), false, "/password")
     } else {
-        "/"
+        (expiry_unix(SESSION_SECS), false, "/")
     };
-    (jar.add(cookie), Redirect::to(next)).into_response()
+    let _ = state
+        .stores
+        .metadata
+        .put_session(&sid, &form.username, expires, pending);
+    if !pending {
+        state.login_gate.lock().clear(&form.username);
+    }
+    (
+        jar.add(session_cookie(sid, &headers, state.config.tls.ui_https())),
+        Redirect::to(next),
+    )
+        .into_response()
 }
 
 async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
@@ -223,6 +268,127 @@ async fn logout(State(state): State<AppState>, jar: CookieJar) -> Response {
     let mut cookie = Cookie::from(SESSION_COOKIE);
     cookie.set_path("/");
     (jar.remove(cookie), Redirect::to("/login")).into_response()
+}
+
+#[derive(Template)]
+#[template(path = "totp.html")]
+struct TotpLoginTemplate {
+    error: String,
+}
+
+async fn totp_login_page(State(state): State<AppState>, jar: CookieJar) -> Response {
+    let Some(sess) = session_record(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    if !sess.pending_2fa {
+        return Redirect::to("/").into_response();
+    }
+    Html(
+        TotpLoginTemplate {
+            error: String::new(),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct TotpLoginForm {
+    #[serde(default)]
+    code: String,
+}
+
+async fn totp_login_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Form(form): Form<TotpLoginForm>,
+) -> Response {
+    let fail = |error: String| {
+        Html(
+            TotpLoginTemplate { error }
+                .render()
+                .unwrap_or_else(|e| e.to_string()),
+        )
+        .into_response()
+    };
+    let Some(sess) = session_record(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    if !sess.pending_2fa {
+        return Redirect::to("/").into_response();
+    }
+    if state.login_gate.lock().locked(&sess.username) {
+        return fail("too many attempts; try again in a few minutes".into());
+    }
+    let Some(mut rec) = state
+        .stores
+        .metadata
+        .user_totp(&sess.username)
+        .ok()
+        .flatten()
+    else {
+        return Redirect::to("/login").into_response();
+    };
+    let mut ok = false;
+    if rec.enabled {
+        if let Some(step) =
+            totp::verify_code_step(&rec.secret, &sess.username, &form.code, Some(rec.last_step))
+        {
+            rec.last_step = step;
+            let _ = state.stores.metadata.set_user_totp(&sess.username, &rec);
+            ok = true;
+        }
+    }
+    if !ok {
+        let hashes = totp::parse_backup_hashes(&rec.backup_json);
+        if let Some(rest) = totp::take_backup_code(&hashes, &form.code) {
+            rec.backup_json = totp::backup_hashes_json(&rest);
+            let _ = state.stores.metadata.set_user_totp(&sess.username, &rec);
+            ok = true;
+        }
+    }
+    if !ok {
+        state.login_gate.lock().record_fail(&sess.username);
+        return fail("invalid authenticator or backup code".into());
+    }
+    state.login_gate.lock().clear(&sess.username);
+    let _ = state.stores.metadata.delete_session(&sess.id);
+    let sid = auth::new_session_id();
+    let next = if state
+        .stores
+        .metadata
+        .user_must_change_password(&sess.username)
+        .unwrap_or(false)
+    {
+        "/password"
+    } else {
+        "/"
+    };
+    let _ =
+        state
+            .stores
+            .metadata
+            .put_session(&sid, &sess.username, expiry_unix(SESSION_SECS), false);
+    let mut old = Cookie::from(SESSION_COOKIE);
+    old.set_path("/");
+    (
+        jar.remove(old)
+            .add(session_cookie(sid, &headers, state.config.tls.ui_https())),
+        Redirect::to(next),
+    )
+        .into_response()
+}
+
+fn session_record(state: &AppState, jar: &CookieJar) -> Option<keystone_store::SessionRecord> {
+    let cookie = jar.get(SESSION_COOKIE)?;
+    state
+        .stores
+        .metadata
+        .get_session(cookie.value())
+        .ok()
+        .flatten()
 }
 
 #[derive(Template)]
@@ -333,6 +499,7 @@ struct SettingsTemplate {
     snmp_scrape: String,
     alert_webhook_url: String,
     username: String,
+    totp_enabled: bool,
     saved: bool,
     rotated: bool,
     error: String,
@@ -342,6 +509,15 @@ struct SettingsTemplate {
 struct SettingsQuery {
     saved: Option<String>,
     rotated: Option<String>,
+    err: Option<String>,
+}
+
+fn settings_err_message(err: Option<&str>) -> String {
+    match err {
+        Some("totp") => "password or code did not match; authenticator was not changed".into(),
+        Some("totp-on") => "authenticator is already enabled".into(),
+        _ => String::new(),
+    }
 }
 
 fn settings_view(
@@ -367,6 +543,11 @@ fn settings_view(
             .unwrap_or_else(|| ServerSettings::format_snmp_lines(&stored.snmp_scrape)),
         alert_webhook_url: stored.alert_webhook_url.clone(),
         username: state.config.auth.username.clone(),
+        totp_enabled: state
+            .stores
+            .metadata
+            .user_totp_enabled(&state.config.auth.username)
+            .unwrap_or(false),
         saved,
         rotated,
         error,
@@ -384,7 +565,7 @@ async fn settings_page(
             &stored,
             q.saved.as_deref() == Some("1"),
             q.rotated.as_deref() == Some("1"),
-            String::new(),
+            settings_err_message(q.err.as_deref()),
             None,
             None,
         )
@@ -505,9 +686,221 @@ async fn settings_rotate_token(State(state): State<AppState>) -> Response {
 }
 
 #[derive(Template)]
+#[template(path = "totp_setup.html")]
+struct TotpSetupTemplate {
+    error: String,
+    secret: String,
+    qr_svg: String,
+}
+
+#[derive(Template)]
+#[template(path = "totp_backup.html")]
+struct TotpBackupTemplate {
+    codes: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct TotpPasswordForm {
+    #[serde(default)]
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct TotpConfirmForm {
+    #[serde(default)]
+    code: String,
+}
+
+#[derive(Deserialize)]
+struct TotpDisableForm {
+    #[serde(default)]
+    password: String,
+    #[serde(default)]
+    code: String,
+}
+
+async fn totp_setup_page(State(state): State<AppState>, jar: CookieJar) -> Response {
+    let Some(username) = session_username(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    let Some(rec) = state.stores.metadata.user_totp(&username).ok().flatten() else {
+        return Redirect::to("/settings").into_response();
+    };
+    if rec.pending.is_empty() {
+        return Redirect::to("/settings").into_response();
+    }
+    let url = match totp::otpauth_url(&rec.pending, &username) {
+        Ok(u) => u,
+        Err(e) => {
+            return Html(
+                TotpSetupTemplate {
+                    error: e,
+                    secret: rec.pending,
+                    qr_svg: String::new(),
+                }
+                .render()
+                .unwrap_or_default(),
+            )
+            .into_response();
+        }
+    };
+    let qr_svg = totp::qr_svg(&url).unwrap_or_default();
+    Html(
+        TotpSetupTemplate {
+            error: String::new(),
+            secret: rec.pending,
+            qr_svg,
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+    .into_response()
+}
+
+async fn totp_start_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(form): Form<TotpPasswordForm>,
+) -> Response {
+    let Some(username) = session_username(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    let hash = state.stores.metadata.user_hash(&username).ok().flatten();
+    let ok = hash
+        .as_deref()
+        .map(|h| auth::verify_password(&form.password, h))
+        .unwrap_or(false);
+    if !ok {
+        return Redirect::to("/settings?err=totp").into_response();
+    }
+    let mut rec = state
+        .stores
+        .metadata
+        .user_totp(&username)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if rec.enabled {
+        return Redirect::to("/settings?err=totp-on").into_response();
+    }
+    rec.pending = totp::new_secret();
+    let _ = state.stores.metadata.set_user_totp(&username, &rec);
+    Redirect::to("/settings/totp").into_response()
+}
+
+async fn totp_confirm_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(form): Form<TotpConfirmForm>,
+) -> Response {
+    let fail = |state: &AppState, username: &str, error: String| {
+        let rec = state
+            .stores
+            .metadata
+            .user_totp(username)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let url = totp::otpauth_url(&rec.pending, username).unwrap_or_default();
+        let qr_svg = if rec.pending.is_empty() {
+            String::new()
+        } else {
+            totp::qr_svg(&url).unwrap_or_default()
+        };
+        Html(
+            TotpSetupTemplate {
+                error,
+                secret: rec.pending,
+                qr_svg,
+            }
+            .render()
+            .unwrap_or_default(),
+        )
+        .into_response()
+    };
+    let Some(username) = session_username(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    let Some(mut rec) = state.stores.metadata.user_totp(&username).ok().flatten() else {
+        return Redirect::to("/settings").into_response();
+    };
+    if rec.pending.is_empty() {
+        return Redirect::to("/settings").into_response();
+    }
+    let Some(step) = totp::verify_code_step(&rec.pending, &username, &form.code, None) else {
+        return fail(
+            &state,
+            &username,
+            "that code did not match; try the next one".into(),
+        );
+    };
+    let codes = totp::generate_backup_codes();
+    let hashes = match totp::hash_backup_codes(&codes) {
+        Ok(h) => h,
+        Err(e) => {
+            return fail(
+                &state,
+                &username,
+                format!("could not store backup codes: {e}"),
+            )
+        }
+    };
+    rec.secret = rec.pending.clone();
+    rec.pending = String::new();
+    rec.enabled = true;
+    rec.backup_json = totp::backup_hashes_json(&hashes);
+    rec.last_step = step;
+    if let Err(e) = state.stores.metadata.set_user_totp(&username, &rec) {
+        return fail(
+            &state,
+            &username,
+            format!("could not enable authenticator: {e}"),
+        );
+    }
+    Html(
+        TotpBackupTemplate { codes }
+            .render()
+            .unwrap_or_else(|e| e.to_string()),
+    )
+    .into_response()
+}
+
+async fn totp_disable_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(form): Form<TotpDisableForm>,
+) -> Response {
+    let Some(username) = session_username(&state, &jar) else {
+        return Redirect::to("/login").into_response();
+    };
+    let hash = state.stores.metadata.user_hash(&username).ok().flatten();
+    let ok_pass = hash
+        .as_deref()
+        .map(|h| auth::verify_password(&form.password, h))
+        .unwrap_or(false);
+    let Some(mut rec) = state.stores.metadata.user_totp(&username).ok().flatten() else {
+        return Redirect::to("/settings").into_response();
+    };
+    let ok_code = rec.enabled && totp::verify_code(&rec.secret, &username, &form.code);
+    let ok_backup =
+        totp::take_backup_code(&totp::parse_backup_hashes(&rec.backup_json), &form.code).is_some();
+    if !ok_pass || !(ok_code || ok_backup) {
+        return Redirect::to("/settings?err=totp").into_response();
+    }
+    rec.secret.clear();
+    rec.pending.clear();
+    rec.enabled = false;
+    rec.backup_json = "[]".into();
+    rec.last_step = 0;
+    let _ = state.stores.metadata.set_user_totp(&username, &rec);
+    Redirect::to("/settings?saved=1").into_response()
+}
+
+#[derive(Template)]
 #[template(path = "nodes.html")]
 struct NodesTemplate {
     nodes: Vec<NodeRow>,
+    totp_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -655,10 +1048,18 @@ async fn nodes_page(State(state): State<AppState>) -> impl IntoResponse {
         .into_iter()
         .map(|n| fleet_row(&state, n))
         .collect();
+    let totp_enabled = state
+        .stores
+        .metadata
+        .user_totp_enabled(&state.config.auth.username)
+        .unwrap_or(false);
     Html(
-        NodesTemplate { nodes }
-            .render()
-            .unwrap_or_else(|e| e.to_string()),
+        NodesTemplate {
+            nodes,
+            totp_enabled,
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
     )
 }
 
@@ -699,13 +1100,18 @@ fn host_without_port(host: &str) -> &str {
     }
 }
 
-fn suggested_ingest_url(headers: &HeaderMap, grpc_listen: &str) -> String {
-    let grpc_port = grpc_listen.rsplit(':').next().unwrap_or("9100");
+fn suggested_ingest_url(headers: &HeaderMap, cfg: &keystone_core::config::ServerConfig) -> String {
+    let grpc_port = cfg.grpc_listen.rsplit(':').next().unwrap_or("9100");
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("127.0.0.1");
-    format!("http://{}:{grpc_port}", host_without_port(host))
+    let scheme = if cfg.tls.ingest_https() {
+        "https"
+    } else {
+        "http"
+    };
+    format!("{scheme}://{}:{grpc_port}", host_without_port(host))
 }
 
 fn slug_node_id(hostname: &str, node_id: &str) -> Result<String, String> {
@@ -736,7 +1142,7 @@ fn slug_node_id(hostname: &str, node_id: &str) -> Result<String, String> {
 async fn add_node_page(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     Html(
         NodeNewTemplate {
-            ingest_url: suggested_ingest_url(&headers, &state.config.grpc_listen),
+            ingest_url: suggested_ingest_url(&headers, &state.config),
             error: String::new(),
         }
         .render()
@@ -769,7 +1175,7 @@ async fn add_node_post(
             {
                 return Html(
                     NodeNewTemplate {
-                        ingest_url: suggested_ingest_url(&headers, &state.config.grpc_listen),
+                        ingest_url: suggested_ingest_url(&headers, &state.config),
                         error: format!("could not register node: {e}"),
                     }
                     .render()
@@ -796,7 +1202,7 @@ async fn add_node_post(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
-                .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config.grpc_listen));
+                .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config));
             let qs = format!(
                 "/nodes/{node_id}/setup?ingest_url={}&docker={}",
                 urlencoding_lite(&ingest),
@@ -806,7 +1212,7 @@ async fn add_node_post(
         }
         Err(error) => Html(
             NodeNewTemplate {
-                ingest_url: suggested_ingest_url(&headers, &state.config.grpc_listen),
+                ingest_url: suggested_ingest_url(&headers, &state.config),
                 error,
             }
             .render()
@@ -858,15 +1264,20 @@ async fn node_setup_page(
     let ingest_url = q
         .ingest_url
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config.grpc_listen));
+        .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config));
     let settings = node_settings(&state, &id);
     let docker = q.docker.as_deref() == Some("true") || settings.docker_enabled;
     let token = state.ingest_token();
     let awaiting = node.awaiting_agent();
-    let agent_toml = format!(
+    let mut agent_toml = format!(
         "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{}\"\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n",
         node.node_id,
     );
+    if ingest_url.starts_with("https://") {
+        agent_toml.push_str(
+            "# tls_ca_file = \"/etc/keystone/ca.pem\"  # private CA or self-signed only\n",
+        );
+    }
     Html(
         NodeSetupTemplate {
             node_id: node.node_id,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use keystone_core::config::{AgentConfig, DockerConfig};
+use keystone_core::config::{ingest_tls_domain, AgentConfig, DockerConfig};
 use keystone_core::docker::DockerOp;
 use keystone_core::node::NodeIdentity;
 use keystone_core::sample::{self, Label, Sample};
@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tracing::{info, warn};
 
 use crate::buffer::DiskBuffer;
@@ -67,9 +67,8 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
 
     let runtime = Arc::new(AgentRuntimeState::from_config(&cfg));
     let buffer = DiskBuffer::new(&cfg.buffer_dir)?;
-    let endpoint = Endpoint::from_shared(cfg.ingest_url.clone())?
-        .connect_timeout(Duration::from_secs(10))
-        .keep_alive_timeout(Duration::from_secs(30));
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let endpoint = ingest_endpoint(&cfg)?;
 
     loop {
         match connect_session(&cfg, &node_id, runtime.clone(), &buffer, endpoint.clone()).await {
@@ -78,6 +77,27 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
+}
+
+fn ingest_endpoint(cfg: &AgentConfig) -> anyhow::Result<Endpoint> {
+    let mut endpoint = Endpoint::from_shared(cfg.ingest_url.clone())?
+        .connect_timeout(Duration::from_secs(10))
+        .keep_alive_timeout(Duration::from_secs(30));
+    if cfg.ingest_url.starts_with("https://") {
+        let domain = ingest_tls_domain(&cfg.ingest_url).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut tls = ClientTlsConfig::new().domain_name(domain);
+        if cfg.tls_ca_file.trim().is_empty() {
+            tls = tls.with_webpki_roots();
+        } else {
+            let pem = std::fs::read(cfg.tls_ca_file.trim())
+                .with_context(|| format!("tls_ca_file {}", cfg.tls_ca_file))?;
+            tls = tls.ca_certificate(Certificate::from_pem(pem));
+        }
+        endpoint = endpoint.tls_config(tls).context("ingest TLS")?;
+    } else if !cfg.tls_ca_file.trim().is_empty() {
+        warn!("tls_ca_file is set but ingest_url is not https://; ignoring CA file");
+    }
+    Ok(endpoint)
 }
 
 async fn connect_session(

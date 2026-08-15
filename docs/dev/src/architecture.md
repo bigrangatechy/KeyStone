@@ -18,8 +18,9 @@ stream; the server never dials an agent and never opens a remote
        │  gRPC Session: PushFrame / Command / StreamChunk
        ▼
   keystone-server
-       ├── HTTP UI + cookie session (axum)
-       ├── ingest (tonic)
+       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`)
+       │     optional rustls on `http_listen` (`tls.rs`)
+       ├── ingest (tonic), optional rustls on `grpc_listen`
        ├── scrape (Prometheus HTTP, SNMP GET)
        ├── keystone-store (SQLite metadata + Redb series)
        └── widgets hydrate → JSON for app.js
@@ -64,6 +65,6 @@ send `set_runtime`.
 
 ## What is not in this slice
 
-SSO, multi-user RBAC enforcement beyond the permission enum, HTTPS
-termination, remote Docker, 32-bit ARM packages, a node cap, per-node
-alert thresholds, PagerDuty.
+SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
+WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
+thresholds, PagerDuty.

@@ -30,8 +30,9 @@ expose `docker.sock` over the network, and you do not run a metrics UI on
 every Pi.
 
 This version is the homelab slice: Linux agents (`amd64` / `arm64`), a
-local admin account, catalog metrics, and per-node Docker. It is not
-Kubernetes, not a SaaS cloud, and not every collector Netdata ships.
+local admin account with optional authenticator 2FA, catalog metrics, and
+per-node Docker. It is not Kubernetes, not a SaaS cloud, and not every
+collector Netdata ships.
 
 ## Two packages
 

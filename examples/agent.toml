@@ -7,6 +7,7 @@
 #
 # Required: ingest_url, ingest_token, node_id (or hostname), buffer_dir.
 # Optional docker.host if the engine socket is not /var/run/docker.sock.
+# Optional tls_ca_file when ingest_url is https:// and the CA is private.
 # Poll interval, Docker enable/manage/exec, labels, and compose paths are
 # node Settings once connected.
 
@@ -14,5 +15,6 @@ ingest_url = "http://127.0.0.1:9100"
 ingest_token = "change-me"
 # node_id defaults to hostname when omitted
 buffer_dir = ".smoke/agent-buffer"
+# tls_ca_file = "tls/ca.pem"  # only when ingest_url is https:// (private CA)
 
 # docker.host = "unix:///var/run/docker.sock"

@@ -36,6 +36,62 @@ pub struct ServerConfig {
     /// Bootstrap SNMP scrape jobs. Copied into Settings on first start.
     #[serde(default)]
     pub snmp_scrape: Vec<SnmpScrape>,
+    /// Optional TLS for the UI (and ingest when `tls.ingest` is true).
+    /// Empty `cert_file` / `key_file` is plaintext — existing installs
+    /// and local smoke stay HTTP.
+    #[serde(default)]
+    pub tls: TlsConfig,
+}
+
+/// PEM certificate + key on disk. Homelab: Let's Encrypt fullchain, or a
+/// self-signed cert. Same files can wrap the UI and gRPC ingest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// Server certificate PEM (leaf + intermediates).
+    #[serde(default)]
+    pub cert_file: String,
+    /// Private key PEM (PKCS#8 or RSA).
+    #[serde(default)]
+    pub key_file: String,
+    /// Also terminate TLS on `grpc_listen`. Default true once certs are
+    /// set. Set false to keep agents on `http://` while the UI is HTTPS.
+    #[serde(default = "default_tls_ingest")]
+    pub ingest: bool,
+}
+
+fn default_tls_ingest() -> bool {
+    true
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_file: String::new(),
+            key_file: String::new(),
+            ingest: default_tls_ingest(),
+        }
+    }
+}
+
+impl TlsConfig {
+    /// Both PEM paths, or `None` for plaintext. Error if only one is set.
+    pub fn pem_paths(&self) -> Result<Option<(&str, &str)>, String> {
+        let cert = self.cert_file.trim();
+        let key = self.key_file.trim();
+        match (cert.is_empty(), key.is_empty()) {
+            (true, true) => Ok(None),
+            (false, false) => Ok(Some((cert, key))),
+            _ => Err("tls.cert_file and tls.key_file must both be set, or both left empty".into()),
+        }
+    }
+
+    pub fn ui_https(&self) -> bool {
+        matches!(self.pem_paths(), Ok(Some(_)))
+    }
+
+    pub fn ingest_https(&self) -> bool {
+        self.ingest && self.ui_https()
+    }
 }
 
 fn default_http() -> String {
@@ -65,6 +121,7 @@ impl Default for ServerConfig {
             auth: ServerAuth::default(),
             prometheus_scrape: Vec::new(),
             snmp_scrape: Vec::new(),
+            tls: TlsConfig::default(),
         }
     }
 }

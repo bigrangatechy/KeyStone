@@ -24,9 +24,12 @@ the rest of the UI until that is saved. After that, a short **welcome tour**
 points at Nodes, Alerts, Settings, and Add node. Skip it anytime; replay it
 from Settings.
 
+If you enabled an **authenticator** on Settings, sign-in asks for a 6-digit
+code (or a backup code) after the password. See [Security](security.md).
+
 Sessions are cookie-based. Use **Log out** in the header when you are done.
-Put TLS in front of the UI if the network is not yours — KeyStone does not
-terminate HTTPS itself.
+If `[tls]` is set in `server.toml`, open `https://` on `http_listen`. You
+can still put a reverse proxy in front instead; see [Security](security.md).
 
 `GET /health` returns `ok` without a session, for a reverse-proxy check.
 
@@ -87,7 +90,8 @@ debugging, not the usual way to watch a host.
 ## Global Settings
 
 The header **Settings** link is the server, not a node: retention, ingest
-token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password
-(and **Replay welcome tour**). Listen addresses and the admin username stay
-in `server.toml`. Header **Alerts** is the live firing list; see
-[Alerts](alerts.md).
+token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password,
+authenticator 2FA (and **Replay welcome tour**). Listen addresses and the
+admin username stay in `server.toml`. Header **Alerts** is the live firing
+list; see [Alerts](alerts.md). The home page reminds you to enable 2FA if
+it is still off.

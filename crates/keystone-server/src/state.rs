@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keystone_core::config::ServerConfig;
 use keystone_core::{AlertSnapshot, NodeSettings, ServerSettings};
@@ -172,8 +172,59 @@ pub struct AppState {
     pub agents: AgentRegistry,
     pub http: reqwest::Client,
     pub alert_state: Arc<Mutex<BTreeMap<String, AlertSnapshot>>>,
+    pub login_gate: Arc<Mutex<LoginGate>>,
     scrape_epoch: Arc<AtomicU64>,
     env_ingest_token: Option<String>,
+}
+
+/// Failed password / TOTP attempts per username. Existing installs keep
+/// working; this only slows guessing if the UI is on the internet.
+#[derive(Default)]
+pub struct LoginGate {
+    fails: HashMap<String, Vec<i64>>,
+}
+
+impl LoginGate {
+    const WINDOW_SECS: i64 = 15 * 60;
+    const MAX_FAILS: usize = 8;
+
+    fn now() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+
+    fn prune(&mut self, user: &str, now: i64) {
+        if let Some(v) = self.fails.get_mut(user) {
+            v.retain(|t| now - *t < Self::WINDOW_SECS);
+            if v.is_empty() {
+                self.fails.remove(user);
+            }
+        }
+    }
+
+    pub fn locked(&mut self, username: &str) -> bool {
+        let now = Self::now();
+        self.prune(username, now);
+        self.fails
+            .get(username)
+            .map(|v| v.len() >= Self::MAX_FAILS)
+            .unwrap_or(false)
+    }
+
+    pub fn record_fail(&mut self, username: &str) {
+        let now = Self::now();
+        self.prune(username, now);
+        self.fails
+            .entry(username.to_string())
+            .or_default()
+            .push(now);
+    }
+
+    pub fn clear(&mut self, username: &str) {
+        self.fails.remove(username);
+    }
 }
 
 impl AppState {
@@ -192,6 +243,7 @@ impl AppState {
             agents: AgentRegistry::default(),
             http,
             alert_state,
+            login_gate: Arc::new(Mutex::new(LoginGate::default())),
             scrape_epoch: Arc::new(AtomicU64::new(0)),
             env_ingest_token,
         }
@@ -263,5 +315,23 @@ impl AppState {
 
     pub fn scrape_epoch(&self) -> u64 {
         self.scrape_epoch.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_gate_locks_then_clears() {
+        let mut g = LoginGate::default();
+        assert!(!g.locked("admin"));
+        for _ in 0..LoginGate::MAX_FAILS {
+            assert!(!g.locked("admin"));
+            g.record_fail("admin");
+        }
+        assert!(g.locked("admin"));
+        g.clear("admin");
+        assert!(!g.locked("admin"));
     }
 }

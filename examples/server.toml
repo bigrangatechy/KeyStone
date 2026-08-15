@@ -19,6 +19,14 @@ ingest_token = "change-me"
 username = "admin"
 password_hash = ""
 
+# Optional TLS (rustls). Empty / omitted = plaintext (this smoke file).
+# Same cert can wrap the UI and gRPC ingest. Agents then use https:// and,
+# for a private CA, tls_ca_file.
+# [tls]
+# cert_file = "tls/fullchain.pem"
+# key_file = "tls/privkey.pem"
+# ingest = true
+
 # Seed scrape jobs (copied into Settings on first start):
 # [[prometheus_scrape]]
 # name = "local-node-exporter"

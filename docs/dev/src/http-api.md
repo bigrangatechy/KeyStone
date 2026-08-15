@@ -5,9 +5,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # HTTP API
 
-Axum router in `crates/keystone-server/src/http.rs`. Cookie
-`keystone_session` on almost everything. Static CSS/JS are
-`include_str!`’d into the binary.
+Axum router in `crates/keystone-server/src/http.rs`. Cookie `keystone_session` on almost everything. `HttpOnly`, `SameSite=Lax`.
+`Secure` when in-tree UI TLS is on, or when `X-Forwarded-Proto: https`.
+Static CSS/JS are `include_str!`’d into the binary. A `pending_2fa` session
+may only hit `/login/totp` and `/logout`. After a good code the pending row
+is deleted and a new session id is issued.
 
 ## Unauthenticated
 
@@ -15,7 +17,7 @@ Axum router in `crates/keystone-server/src/http.rs`. Cookie
 |---|---|---|
 | GET | `/health` | Plain `ok`. |
 | GET | `/login` | Form. |
-| POST | `/login` | Sets session cookie. Redirects to `/password` if the account must change the bootstrap password. |
+| POST | `/login` | Cookie session. If TOTP is on, `pending_2fa` session (5 min) and redirect `/login/totp`. Else `/password` when `must_change_password`, else `/`. Eight fails / 15 min per username (`LoginGate`). |
 | GET | `/static/app.css` | |
 | GET | `/static/app.js` | Overview, Docker tabs, fleet home, alerts badge, welcome tour, widget drag-and-drop. |
 
@@ -23,16 +25,21 @@ Axum router in `crates/keystone-server/src/http.rs`. Cookie
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/` | Node list. Welcome tour runs once in the browser (`localStorage`). `?welcome=1` forces it (used after first-login password change). |
-| GET/POST | `/password` | First-login password change when `must_change_password` is set. Blocks other authed routes. |
+| GET | `/` | Node list. Banner if TOTP is off. Welcome tour runs once in the browser (`localStorage`). `?welcome=1` forces it (used after first-login password change). |
+| GET/POST | `/password` | First-login password change when `must_change_password` is set. Blocks other authed routes (after 2FA if enrolled). |
+| GET/POST | `/login/totp` | Second factor. Session required (`pending_2fa`). Authenticator or one-shot backup code. |
 | GET/POST | `/nodes` | List / add node. |
 | GET | `/nodes/new` | Add-node form. |
 | GET | `/nodes/{id}` | Node page (Overview + Docker tabs + Settings). |
 | GET | `/nodes/{id}/setup` | Agent TOML snippet. |
 | POST | `/nodes/{id}/settings` | Save `NodeSettings`; `nudge_runtime` if connected. |
 | GET | `/alerts` | Firing fleet chips (HTML). |
-| GET/POST | `/settings` | `ServerSettings` + password change. |
+| GET/POST | `/settings` | `ServerSettings` + password change. `?err=totp` / `totp-on` for authenticator form failures. |
 | POST | `/settings/rotate-token` | Random ingest token (no-op if env override). |
+| POST | `/settings/totp/start` | Password; writes `totp_pending`. Redirect `/settings/totp`. |
+| GET | `/settings/totp` | QR + secret from `totp_pending`. |
+| POST | `/settings/totp/confirm` | 6-digit code; enables TOTP, shows backup codes once. |
+| POST | `/settings/totp/disable` | Password + TOTP or backup; clears TOTP columns. |
 | POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`. Redirect keeps `?panel=`. Audit log. Streaming ops are 400. |
 | GET | `/nodes/{id}/containers/{cid}/logs` | HTML follow page. |
 | GET | `/nodes/{id}/containers/{cid}/logs/stream` | SSE: `{"t":"..."}` then `event: done`. Cancel on drop. |

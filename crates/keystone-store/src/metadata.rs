@@ -38,10 +38,32 @@ pub struct AuditEvent {
 }
 
 #[derive(Debug, Clone)]
+pub struct TotpRecord {
+    pub secret: String,
+    pub pending: String,
+    pub enabled: bool,
+    pub backup_json: String,
+    pub last_step: i64,
+}
+
+impl Default for TotpRecord {
+    fn default() -> Self {
+        Self {
+            secret: String::new(),
+            pending: String::new(),
+            enabled: false,
+            backup_json: "[]".into(),
+            last_step: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionRecord {
     pub id: String,
     pub username: String,
     pub expires_unix: i64,
+    pub pending_2fa: bool,
 }
 
 #[derive(Clone)]
@@ -70,12 +92,18 @@ impl Metadata {
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
                 password_hash TEXT NOT NULL,
-                must_change_password INTEGER NOT NULL DEFAULT 0
+                must_change_password INTEGER NOT NULL DEFAULT 0,
+                totp_secret TEXT NOT NULL DEFAULT '',
+                totp_pending TEXT NOT NULL DEFAULT '',
+                totp_enabled INTEGER NOT NULL DEFAULT 0,
+                totp_backup_json TEXT NOT NULL DEFAULT '[]',
+                totp_last_step INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL,
-                expires_unix INTEGER NOT NULL
+                expires_unix INTEGER NOT NULL,
+                pending_2fa INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +125,30 @@ impl Metadata {
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN settings_json TEXT", []);
         let _ = conn.execute(
             "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN totp_pending TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN totp_backup_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE sessions ADD COLUMN pending_2fa INTEGER NOT NULL DEFAULT 0",
             [],
         );
         Ok(Self {
@@ -146,11 +198,67 @@ impl Metadata {
         Ok(hash)
     }
 
-    pub fn put_session(&self, id: &str, username: &str, expires_unix: i64) -> anyhow::Result<()> {
+    pub fn user_totp_enabled(&self, username: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .user_totp(username)?
+            .map(|t| t.enabled)
+            .unwrap_or(false))
+    }
+
+    pub fn user_totp(&self, username: &str) -> anyhow::Result<Option<TotpRecord>> {
+        let conn = self.conn.lock();
+        let rec = conn
+            .query_row(
+                "SELECT totp_secret, totp_pending, totp_enabled, totp_backup_json, totp_last_step
+                 FROM users WHERE username = ?1",
+                params![username],
+                |r| {
+                    Ok(TotpRecord {
+                        secret: r.get(0)?,
+                        pending: r.get(1)?,
+                        enabled: r.get::<_, i64>(2)? != 0,
+                        backup_json: r.get(3)?,
+                        last_step: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(rec)
+    }
+
+    pub fn set_user_totp(&self, username: &str, totp: &TotpRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let n = conn.execute(
+            "UPDATE users SET totp_secret = ?1, totp_pending = ?2, totp_enabled = ?3,
+                    totp_backup_json = ?4, totp_last_step = ?5
+             WHERE username = ?6",
+            params![
+                totp.secret,
+                totp.pending,
+                totp.enabled as i64,
+                totp.backup_json,
+                totp.last_step,
+                username
+            ],
+        )?;
+        if n == 0 {
+            anyhow::bail!("unknown user {username}");
+        }
+        Ok(())
+    }
+
+    pub fn put_session(
+        &self,
+        id: &str,
+        username: &str,
+        expires_unix: i64,
+        pending_2fa: bool,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO sessions (id, username, expires_unix) VALUES (?1, ?2, ?3)",
-            params![id, username, expires_unix],
+            "INSERT INTO sessions (id, username, expires_unix, pending_2fa)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, username, expires_unix, pending_2fa as i64],
         )?;
         Ok(())
     }
@@ -161,13 +269,14 @@ impl Metadata {
         conn.execute("DELETE FROM sessions WHERE expires_unix < ?1", params![now])?;
         let rec = conn
             .query_row(
-                "SELECT id, username, expires_unix FROM sessions WHERE id = ?1",
+                "SELECT id, username, expires_unix, pending_2fa FROM sessions WHERE id = ?1",
                 params![id],
                 |r| {
                     Ok(SessionRecord {
                         id: r.get(0)?,
                         username: r.get(1)?,
                         expires_unix: r.get(2)?,
+                        pending_2fa: r.get::<_, i64>(3)? != 0,
                     })
                 },
             )
@@ -472,6 +581,18 @@ mod tests {
         assert!(db.user_must_change_password("admin").unwrap());
         db.set_user_password("admin", "hash2", false).unwrap();
         assert!(!db.user_must_change_password("admin").unwrap());
+        assert!(!db.user_totp_enabled("admin").unwrap());
+        let mut totp = db.user_totp("admin").unwrap().unwrap();
+        totp.enabled = true;
+        totp.secret = "MFRGGZDFMZTWQ2LK".into();
+        db.set_user_totp("admin", &totp).unwrap();
+        assert!(db.user_totp_enabled("admin").unwrap());
+        db.set_user_password("admin", "hash3", false).unwrap();
+        assert!(db.user_totp_enabled("admin").unwrap());
+        db.put_session("sid", "admin", now_unix() + 60, true)
+            .unwrap();
+        let sess = db.get_session("sid").unwrap().unwrap();
+        assert!(sess.pending_2fa);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

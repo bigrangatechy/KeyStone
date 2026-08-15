@@ -4,7 +4,7 @@
 mod metadata;
 mod series;
 
-pub use metadata::{AuditEvent, Metadata, NodeRecord, SessionRecord};
+pub use metadata::{AuditEvent, Metadata, NodeRecord, SessionRecord, TotpRecord};
 pub use series::{RedbSeries, SeriesStore};
 
 use std::path::Path;

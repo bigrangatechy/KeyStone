@@ -13,9 +13,11 @@ service Ingest {
 }
 ```
 
-NAT-friendly: the agent dials `ingest_url` (HTTP/2 h2c in the current
-binaries — `http://host:9100`). There is no TLS on this port in-tree; put
-a proxy in front if you need it.
+NAT-friendly: the agent dials `ingest_url`. Plaintext is HTTP/2 h2c
+(`http://host:9100`). With `[tls]` on the server and `ingest` true
+(default once certs are set), the same port is TLS (`https://host:9100`).
+The agent sets tonic `ClientTlsConfig` (webpki roots, or `tls_ca_file` for
+a private CA). Helpers: `crates/keystone-server/src/tls.rs`.
 
 ## Agent → server
 
