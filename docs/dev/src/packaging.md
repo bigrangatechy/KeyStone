@@ -16,6 +16,28 @@ They do not conflict. `cargo-deb` metadata is in each crate’s
 `Cargo.toml`. Assets and maintainer scripts: `packaging/deb/server/` and
 `packaging/deb/agent/`.
 
+## Upgrade safety
+
+Worst case for a homelab is an upgrade that `chown -R`s or `rm -rf`s into
+Docker’s data root or `/`. Invariants (enforced by
+`crates/keystone-core/src/packaging_safety.rs`):
+
+- Never `Depends`/`Recommends` `docker.io`, `docker-ce`, `containerd`, or
+  `podman`. Socket access is optional (`keystone` in group `docker`).
+- Never `Requires=` / `BindsTo=` / `PartOf=` Docker in the units. The agent
+  may `After=docker.socket` so the socket exists when Engine is installed.
+- `postinst` creates `/var/lib/keystone` (and `agent-buffer`) and `chown`s
+  **that directory only**. No `chown -R`. Abort if the path is a symlink
+  or is `/`, `/var/lib/docker`, etc.
+- `prerm` / `#DEBHELPER#` stop `keystone-*` only.
+- `postrm purge` deletes named KeyStone files (`keystone.sqlite`,
+  `series.redb`) or `/var/lib/keystone/agent-buffer`. Never
+  `rm -rf /var/lib/keystone` (the other package may still own files there)
+  and never `/var/lib/docker`.
+
+An upgrade restarts the KeyStone unit. Containers keep running. Mutating
+Docker is only a logged-in UI action while Manage is on.
+
 ## Local `.deb`
 
 ```

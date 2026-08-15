@@ -54,6 +54,9 @@ trycmd = "0.15"
 name = "keystone-server"
 section = "net"
 priority = "optional"
+# Never depend on docker.io / docker-ce / containerd. The server has no
+# engine socket; agents talk to Docker locally. An Engine package upgrade
+# would bounce containers — KeyStone must not pull that in.
 depends = "$auto, adduser"
 license-file = ["../../COPYING", "0"]
 extended-description = """KeyStone server (the UI) for Debian and Raspberry Pi OS (64-bit).

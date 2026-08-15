@@ -23,6 +23,10 @@ in `keystone-core`:
 - every `DockerOp::as_str()` in `docs/dev/src/docker.md`
 - every `Permission::as_str()` in `docs/dev/src/permissions.md`
 
+Maintainer scripts are also tested (`packaging_safety.rs`): no recursive
+`chown`, no Engine package dependency, no `rm -rf` of Docker or the whole
+of `/var/lib/keystone`.
+
 If you add a metric and forget the developer table, `cargo test` fails.
 You still write the prose yourself.
 

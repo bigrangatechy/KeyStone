@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# #DEBHELPER# stops keystone-server only. Do not stop Docker or containers.
+
+set -e
+
+#DEBHELPER#
+
+exit 0

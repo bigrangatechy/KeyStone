@@ -24,7 +24,8 @@ Update the **operator** chapter if an admin would notice (a new Settings
 field, a new Docker checkbox, a new default card). Update **this** book if
 the types, protocol, or extension steps changed. Tests in `keystone-core`
 fail if the catalog, `DockerOp`, or `Permission` lists in these pages miss a
-variant.
+variant. Packaging scripts are similarly tested so they cannot `chown -R`
+or depend on Docker Engine.
 
 Commits need `git commit -s` (DCO). There is no CLA. See CONTRIBUTING.md
 at the repository root.

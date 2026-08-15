@@ -4,9 +4,11 @@
 [Unit]
 Description=KeyStone agent (unlimited-node monitoring)
 Documentation=https://git.bigrangatech.com/Ranga/keystone
-After=network-online.target
+After=network-online.target docker.socket
 Wants=network-online.target
-# docker.service is optional; the agent runs without Engine.
+# docker is optional. After=docker.socket waits for the socket when Engine
+# is installed. Never Requires=/BindsTo=/PartOf= docker: a KeyStone upgrade
+# must not stop the engine or containers.
 
 [Service]
 Type=simple

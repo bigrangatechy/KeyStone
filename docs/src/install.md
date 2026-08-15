@@ -164,3 +164,26 @@ automatically.
 
 If you ticked “this node runs Docker” on the add-node form, Observe Docker
 is already enabled on that node’s Settings when the agent appears.
+
+## Upgrades
+
+Installing a newer `.deb` over an older one restarts **only**
+`keystone-server` and/or `keystone-agent`. It does not stop Docker Engine,
+does not prune images or volumes, and does not run Compose down. Containers
+keep running. KeyStone never `Depends:` on `docker.io` / `docker-ce`, so
+`apt upgrade` of KeyStone will not pull an Engine upgrade that would bounce
+every container.
+
+`/etc/keystone/*.toml` and `/etc/default/keystone-*` are conffiles: dpkg
+keeps your edits (it may prompt if a packaged default changed).
+
+`apt remove` stops the KeyStone unit and leaves data on disk. `apt purge`
+deletes only KeyStone’s own state: `keystone.sqlite` / `series.redb` for
+the server, `agent-buffer` for the agent. It never touches `/var/lib/docker`.
+Purging one package will not delete the other’s files under
+`/var/lib/keystone`.
+
+Do not turn `/var/lib/keystone` into a symlink (or bind-mount) of `/`,
+`/var/lib/docker`, or another tree. Maintainer scripts refuse to `chown`
+through a symlink there so an upgrade cannot take the OS or Engine with it.
+

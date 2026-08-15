@@ -1,8 +1,38 @@
 #!/bin/sh
 # SPDX-FileCopyrightText: 2026 The KeyStone Authors
 # SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Upgrade/install must never touch Docker Engine, /var/lib/docker, or the
+# rest of the OS. No prune, compose down, recursive chown, or symlink follow.
 
 set -e
+
+# Own one directory inode we created. Never chown -R (a symlink or bind
+# mount under /var/lib/keystone must not take the OS or Engine with it).
+ks_prepare_state_dir() {
+	dir=$1
+	case "$dir" in
+	/ | /var | /usr | /etc | /boot | /home | /var/lib | /var/lib/docker | /var/lib/docker/*)
+		echo "keystone-agent: refusing to take ownership of $dir" >&2
+		exit 1
+		;;
+	esac
+	if [ -L "$dir" ]; then
+		echo "keystone-agent: $dir is a symlink; refusing to chown through it" >&2
+		exit 1
+	fi
+	if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+		echo "keystone-agent: $dir exists and is not a directory" >&2
+		exit 1
+	fi
+	mkdir -p "$dir"
+	if [ -L "$dir" ]; then
+		echo "keystone-agent: $dir is a symlink; refusing to chown through it" >&2
+		exit 1
+	fi
+	chown keystone:keystone "$dir"
+	chmod 0750 "$dir"
+}
 
 case "$1" in
 configure)
@@ -13,13 +43,13 @@ configure)
 		adduser --system --ingroup keystone --home /var/lib/keystone \
 			--no-create-home --gecos "KeyStone" keystone
 	fi
-	mkdir -p /var/lib/keystone/agent-buffer
-	chown -R keystone:keystone /var/lib/keystone
-	chmod 0750 /var/lib/keystone
+	ks_prepare_state_dir /var/lib/keystone
+	ks_prepare_state_dir /var/lib/keystone/agent-buffer
 	if [ -f /etc/keystone/agent.toml ]; then
 		chown root:keystone /etc/keystone/agent.toml
 		chmod 0640 /etc/keystone/agent.toml
 	fi
+	# Group membership only. Does not start, stop, or prune containers.
 	if getent group docker >/dev/null; then
 		adduser keystone docker >/dev/null || true
 	fi

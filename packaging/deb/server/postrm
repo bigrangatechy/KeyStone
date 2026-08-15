@@ -1,0 +1,29 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# remove: leave data (reinstall). purge: named server files only — never
+# /var/lib/docker, never agent-buffer, never rm -rf /var/lib/keystone.
+
+set -e
+
+case "$1" in
+purge)
+	dir=/var/lib/keystone
+	if [ -L "$dir" ]; then
+		echo "keystone-server: refusing to delete through symlink $dir" >&2
+		exit 0
+	fi
+	if [ -d "$dir" ]; then
+		rm -f -- \
+			"$dir/keystone.sqlite" \
+			"$dir/keystone.sqlite-wal" \
+			"$dir/keystone.sqlite-shm" \
+			"$dir/series.redb"
+	fi
+	;;
+esac
+
+#DEBHELPER#
+
+exit 0

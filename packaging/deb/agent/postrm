@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# remove: leave data (reinstall). purge: agent buffer only — never
+# /var/lib/docker, never the whole of /var/lib/keystone (the server owns
+# sqlite/redb there when both packages are installed).
+
+set -e
+
+ks_rm_agent_buffer() {
+	dir=/var/lib/keystone/agent-buffer
+	case "$dir" in
+	/var/lib/keystone/agent-buffer) ;;
+	*)
+		echo "keystone-agent: refusing to delete $dir" >&2
+		exit 1
+		;;
+	esac
+	if [ -L "$dir" ]; then
+		echo "keystone-agent: refusing to delete symlink $dir" >&2
+		return 0
+	fi
+	if [ -d "$dir" ]; then
+		rm -rf -- "$dir"
+	fi
+}
+
+case "$1" in
+purge)
+	ks_rm_agent_buffer
+	;;
+esac
+
+#DEBHELPER#
+
+exit 0

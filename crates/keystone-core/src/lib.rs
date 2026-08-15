@@ -36,3 +36,5 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]
 mod docs_coverage;
+#[cfg(test)]
+mod packaging_safety;

@@ -61,3 +61,12 @@ from a Prometheus job cannot inject arbitrary series names into the catalog.
 Series live in `data_dir` (Redb). Metadata, users, sessions, node settings,
 and audit live in SQLite beside it. Retention (Settings) bounds how long
 points are kept, not how long audit rows are kept.
+
+## Package upgrades
+
+A KeyStone `.deb` upgrade restarts the KeyStone systemd unit only. It does
+not stop Docker, prune, or Compose-down. Maintainer scripts own
+`/var/lib/keystone` (directory inode, not recursive) and refuse to follow a
+symlink. Purge deletes KeyStone’s sqlite/redb or agent-buffer, never
+`/var/lib/docker`. See [Install](install.md#upgrades).
+

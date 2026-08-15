@@ -43,6 +43,9 @@ trycmd = "0.15"
 name = "keystone-agent"
 section = "net"
 priority = "optional"
+# Never depend on docker.io / docker-ce / containerd. Upgrading Engine
+# restarts containers; KeyStone must not pull that in. Socket access is
+# optional at runtime via the docker group.
 depends = "$auto, adduser"
 license-file = ["../../COPYING", "0"]
 extended-description = """KeyStone agent for Debian and Raspberry Pi OS (64-bit).
