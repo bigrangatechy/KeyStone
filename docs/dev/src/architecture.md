@@ -39,7 +39,9 @@ stream; the server never dials an agent and never opens a remote
 | `keystone-server` | `keystone`: UI, ingest, scrape, `/help`, mDNS advertise. |
 
 Do not `sudo cargo`. Prefer `TMPDIR=.smoke/tmp` if `/tmp` is full. Smoke
-data dir in examples is `.smoke`.
+data dir in examples is `.smoke`. `examples/server.toml` binds loopback
+**18080/19100** so it does not collide with packaged **8080/9100** and does
+not advertise mDNS.
 
 ## Control flow
 

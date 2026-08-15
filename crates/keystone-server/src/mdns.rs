@@ -4,6 +4,7 @@
 //! Advertise gRPC ingest on `_keystone._tcp.local.`. Never puts the ingest
 //! token in TXT. Failure is non-fatal: agents can still use a fixed URL.
 
+use std::net::SocketAddr;
 use std::sync::OnceLock;
 
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -12,7 +13,13 @@ use tracing::{info, warn};
 static DAEMON: OnceLock<ServiceDaemon> = OnceLock::new();
 
 /// Publish ingest on the LAN. Keeps the daemon alive for the process.
+/// Loopback `grpc_listen` is skipped so `cargo run` smoke does not steal
+/// packaged agents browsing `_keystone._tcp.local.`.
 pub fn advertise_ingest(grpc_listen: &str, ingest_tls: bool) {
+    if !should_advertise(grpc_listen) {
+        info!("mDNS skipped (loopback ingest {grpc_listen})");
+        return;
+    }
     match try_advertise(grpc_listen, ingest_tls) {
         Ok(port) => info!(
             "mDNS advertised {} on UDP 5353 (ingest :{port})",
@@ -34,6 +41,13 @@ fn try_advertise(grpc_listen: &str, ingest_tls: bool) -> anyhow::Result<u16> {
     mdns.register(service)?;
     let _ = DAEMON.set(mdns);
     Ok(port)
+}
+
+pub fn should_advertise(grpc_listen: &str) -> bool {
+    grpc_listen
+        .parse::<SocketAddr>()
+        .map(|a| !a.ip().is_loopback())
+        .unwrap_or(true)
 }
 
 fn grpc_port(listen: &str) -> u16 {
@@ -109,6 +123,20 @@ mod tests {
         assert_eq!(grpc_port("127.0.0.1:9100"), 9100);
         assert_eq!(grpc_port("[::]:9100"), 9100);
         assert_eq!(grpc_port("not-a-port"), 9100);
+    }
+
+    #[test]
+    fn loopback_ingest_does_not_advertise() {
+        assert!(
+            !should_advertise("127.0.0.1:19100"),
+            "smoke on loopback must not publish _keystone._tcp for packaged agents"
+        );
+        assert!(!should_advertise("[::1]:19100"));
+        assert!(
+            should_advertise("0.0.0.0:9100"),
+            "packaged all-interfaces ingest must still advertise"
+        );
+        assert!(should_advertise("192.168.0.188:9100"));
     }
 
     #[test]

@@ -433,4 +433,108 @@ mod tests {
     fn unknown_op_is_rejected_before_apt() {
         assert!("not_an_op".parse::<SysOp>().is_err());
     }
+
+    #[tokio::test]
+    async fn helper_status_over_socket_without_apt() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind sys test sock");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"status","payload":{}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(true), "{line}");
+        assert!(
+            v.get("payload").and_then(|p| p.get("backend")).is_some(),
+            "status payload must include backend, got {line}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_unknown_op_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"not_an_op","payload":{}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(err.contains("unknown sys op"), "{err}");
+        assert!(
+            !err.contains("apt-get"),
+            "unknown op must not run apt: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_iface_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"net_set","payload":{"iface":"eth0;rm","method":"dhcp"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("interface") || err.contains("invalid"),
+            "shell iface must fail validation, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    struct SockGuard(std::path::PathBuf);
+    impl Drop for SockGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            if let Some(dir) = self.0.parent() {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    }
+
+    fn scratch_sock() -> (std::path::PathBuf, SockGuard) {
+        let dir = std::env::temp_dir().join(format!(
+            "ks-sys-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sys.sock");
+        (path.clone(), SockGuard(path))
+    }
 }

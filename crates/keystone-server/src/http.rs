@@ -2451,6 +2451,33 @@ mod tests {
     }
 
     #[test]
+    fn system_ui_confirms_host_mutations() {
+        let js = include_str!("static/app.js");
+        assert!(js.contains("paintSystem"), "System tab painter missing");
+        assert!(
+            js.contains("Apply pending apt upgrades"),
+            "Apply updates must ask before apt-get upgrade"
+        );
+        assert!(
+            js.contains("Change IPv4 on this node"),
+            "net_set must ask before changing addressing"
+        );
+        assert!(
+            js.contains("ethernetIface"),
+            "IPv4 form must skip Wi-Fi/docker NICs"
+        );
+        assert!(
+            js.contains("compose_update"),
+            "Compose Update (pull then up) missing from the Docker toolbar"
+        );
+        let css = include_str!("static/app.css");
+        assert!(
+            css.contains("select"),
+            "System IPv4 <select> must share the dark input style"
+        );
+    }
+
+    #[test]
     fn ingest_tls_snippet_is_https_not_mdns() {
         let cfg = keystone_core::config::ServerConfig {
             tls: keystone_core::config::TlsConfig {

@@ -65,12 +65,13 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 550; font-size: 0.85rem; }
 
-button, input {
+button, input, select {
   font: inherit; background: var(--card); color: var(--fg);
   border: 1px solid var(--line); padding: 0.35rem 0.65rem; border-radius: 4px;
 }
-button { cursor: pointer; }
+select:hover { border-color: var(--accent); }
 button:hover { border-color: var(--accent); }
+select:hover { border-color: var(--accent); }
 button.danger { border-color: var(--danger); color: var(--danger); }
 button.danger:hover { background: #3a1a18; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -272,7 +273,24 @@ details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }
   justify-content: space-between; margin: 1rem 0 0.5rem;
 }
 .compose-head h3 { margin: 0; }
-#system h3 { margin: 1.25rem 0 0.5rem; font-size: 1rem; }
+#system .compose-head { margin-top: 1.25rem; }
+#system .compose-head:first-child { margin-top: 0.35rem; }
+#system .compose-head h3 { font-size: 1rem; }
+.sys-net {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1rem;
+  max-width: 42rem;
+  margin: 0.35rem 0 0;
+}
+.sys-net label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--muted);
+}
+.sys-net .span-2 { grid-column: span 2; }
+.sys-net button { justify-self: start; }
 .chip {
   display: inline-block; min-width: 2.6rem; font-variant-numeric: tabular-nums;
   font-weight: 600; font-size: 0.92rem;

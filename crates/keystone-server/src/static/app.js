@@ -701,6 +701,7 @@
   function paintSystem(host) {
     const reason = host.getAttribute("data-reason") || "";
     const node = host.getAttribute("data-node") || "";
+    const manage = host.getAttribute("data-manage") === "1";
     if (reason === "offline") {
       host.replaceChildren(el("p", "muted", "Agent is not connected. System commands need a live session."));
       return;
@@ -716,7 +717,7 @@
       wrap.appendChild(el("p", "error", String(data.helper_error)));
     }
     if (!helperOn) {
-      wrap.appendChild(el("p", "error", "System helper is not running. On this node:"));
+      wrap.appendChild(el("p", "muted", "System helper is not running. On this node:"));
       const pre = document.createElement("pre");
       pre.className = "snippet";
       pre.textContent = "sudo systemctl enable --now keystone-sys.socket";
@@ -728,13 +729,15 @@
     if (data.hostname) bits.push(data.hostname);
     if (data.kernel) bits.push("kernel " + data.kernel);
     if (data.backend) bits.push(data.backend);
-    if (data.reboot_required) bits.push("reboot required");
     meta.textContent = bits.join(" · ") || "No host snapshot yet.";
     wrap.appendChild(meta);
+    if (data.reboot_required) {
+      wrap.appendChild(el("p", "error", "Reboot required after package updates. This version does not reboot for you."));
+    }
 
     const ifaces = Array.isArray(data.interfaces) ? data.interfaces : [];
     const table = document.createElement("table");
-    table.appendChild(thead(["Interface", "IPv4", ""]));
+    table.appendChild(thead(["Interface", "IPv4", "State"]));
     const body = document.createElement("tbody");
     if (!ifaces.length) {
       body.appendChild(emptyRow(3, "No IPv4 addresses (or ip is missing)."));
@@ -743,8 +746,10 @@
         const tr = document.createElement("tr");
         tr.appendChild(tdCode(iface.name || ""));
         const addrs = Array.isArray(iface.ipv4) ? iface.ipv4.join(", ") : "";
-        tr.appendChild(tdText(addrs || (iface.up ? "up" : "down")));
-        tr.appendChild(tdText(iface.up ? "up" : "down"));
+        tr.appendChild(tdText(addrs || "—"));
+        const td = document.createElement("td");
+        td.appendChild(el("span", iface.up ? "chip tone-ok" : "chip", iface.up ? "up" : "down"));
+        tr.appendChild(td);
         body.appendChild(tr);
       });
     }
@@ -753,26 +758,10 @@
 
     const listed = Array.isArray(data.packages);
     const pkgs = listed ? data.packages : [];
-    wrap.appendChild(el("h3", null, "Pending apt upgrades"));
-    if (!pkgs.length) {
-      wrap.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates (runs apt-get update on the node)."));
-    } else {
-      const pt = document.createElement("table");
-      pt.appendChild(thead(["Package", "From", "To"]));
-      const pb = document.createElement("tbody");
-      pkgs.forEach((p) => {
-        const tr = document.createElement("tr");
-        tr.appendChild(tdCode(p.name || ""));
-        tr.appendChild(tdText(p.from || ""));
-        tr.appendChild(tdText(p.to || ""));
-        pb.appendChild(tr);
-      });
-      pt.appendChild(pb);
-      wrap.appendChild(pt);
-    }
-
-    const tools = el("div", "docker-toolbar");
+    const pkgHead = el("div", "compose-head");
+    pkgHead.appendChild(el("h3", null, "Pending apt upgrades"));
     if (helperOn) {
+      const tools = el("div", "actions");
       const check = document.createElement("button");
       check.type = "button";
       check.textContent = "Check for updates";
@@ -797,90 +786,131 @@
         }
       });
       tools.appendChild(check);
-      if (host.getAttribute("data-manage") === "1") {
-        const apply = document.createElement("a");
-        apply.href = "/nodes/" + encodeURIComponent(node) + "/sys/updates";
+      if (manage) {
+        const apply = document.createElement("button");
+        apply.type = "button";
+        apply.className = "danger";
         apply.textContent = "Apply updates";
-        apply.addEventListener("click", (ev) => {
+        apply.addEventListener("click", () => {
           if (!window.confirm("Apply pending apt upgrades on this node? This can restart services.")) {
-            ev.preventDefault();
+            return;
           }
+          window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/updates";
         });
         tools.appendChild(apply);
       }
+      pkgHead.appendChild(tools);
     }
-    wrap.appendChild(tools);
+    wrap.appendChild(pkgHead);
+    if (!pkgs.length) {
+      wrap.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates runs apt-get update on the node."));
+    } else {
+      const pt = document.createElement("table");
+      pt.appendChild(thead(["Package", "From", "To"]));
+      const pb = document.createElement("tbody");
+      pkgs.forEach((p) => {
+        const tr = document.createElement("tr");
+        tr.appendChild(tdCode(p.name || ""));
+        tr.appendChild(tdText(p.from || ""));
+        tr.appendChild(tdText(p.to || ""));
+        pb.appendChild(tr);
+      });
+      pt.appendChild(pb);
+      wrap.appendChild(pt);
+    }
 
-    if (host.getAttribute("data-manage") === "1" && helperOn) {
-      wrap.appendChild(el("h3", null, "IPv4"));
+    if (manage && helperOn) {
+      const netHead = el("div", "compose-head");
+      netHead.appendChild(el("h3", null, "IPv4"));
+      wrap.appendChild(netHead);
       wrap.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version."));
       const net = data.net || {};
-      const form = document.createElement("form");
-      form.method = "post";
-      form.action = "/nodes/" + encodeURIComponent(node) + "/sys/net_set";
-      form.className = "stack";
-      form.addEventListener("submit", (ev) => {
-        if (!window.confirm("Change IPv4 on this node? You may lose the agent until you reconnect.")) {
-          ev.preventDefault();
-        }
-      });
-      const iface = document.createElement("select");
-      iface.name = "iface";
       const ether = ifaces.filter((i) => ethernetIface(i.name || ""));
       if (!ether.length) {
         wrap.appendChild(el("p", "muted", "No Ethernet interface to edit (Wi-Fi, docker, and virtual NICs are skipped)."));
       } else {
-      ether.forEach((i) => {
-        const o = document.createElement("option");
-        o.value = i.name || "";
-        o.textContent = i.name || "";
-        if ((net.iface || "") === i.name) o.selected = true;
-        iface.appendChild(o);
-      });
-      const method = document.createElement("select");
-      method.name = "method";
-      ["dhcp", "static"].forEach((m) => {
-        const o = document.createElement("option");
-        o.value = m;
-        o.textContent = m === "dhcp" ? "DHCP" : "Static";
-        if ((net.method || "dhcp") === m) o.selected = true;
-        method.appendChild(o);
-      });
-      function labeled(name, input) {
-        const lab = document.createElement("label");
-        lab.appendChild(document.createTextNode(name));
-        lab.appendChild(input);
-        return lab;
-      }
-      form.appendChild(labeled("Interface", iface));
-      form.appendChild(labeled("Method", method));
-      const address = document.createElement("input");
-      address.name = "address";
-      address.placeholder = "192.168.0.50";
-      address.value = net.address || "";
-      const prefix = document.createElement("input");
-      prefix.name = "prefix";
-      prefix.type = "number";
-      prefix.min = "1";
-      prefix.max = "32";
-      prefix.value = net.prefix ? String(net.prefix) : "24";
-      const gateway = document.createElement("input");
-      gateway.name = "gateway";
-      gateway.placeholder = "192.168.0.1";
-      gateway.value = net.gateway || "";
-      const dns = document.createElement("input");
-      dns.name = "dns";
-      dns.placeholder = "1.1.1.1";
-      dns.value = Array.isArray(net.dns) ? net.dns.join(" ") : "";
-      form.appendChild(labeled("Address", address));
-      form.appendChild(labeled("Prefix", prefix));
-      form.appendChild(labeled("Gateway", gateway));
-      form.appendChild(labeled("DNS", dns));
-      const save = document.createElement("button");
-      save.type = "submit";
-      save.textContent = "Apply IPv4";
-      form.appendChild(save);
-      wrap.appendChild(form);
+        const form = document.createElement("form");
+        form.method = "post";
+        form.action = "/nodes/" + encodeURIComponent(node) + "/sys/net_set";
+        form.className = "sys-net";
+        form.addEventListener("submit", (ev) => {
+          if (!window.confirm("Change IPv4 on this node? You may lose the agent until you reconnect.")) {
+            ev.preventDefault();
+          }
+        });
+        const iface = document.createElement("select");
+        iface.name = "iface";
+        ether.forEach((i) => {
+          const o = document.createElement("option");
+          o.value = i.name || "";
+          o.textContent = i.name || "";
+          if ((net.iface || "") === i.name) o.selected = true;
+          iface.appendChild(o);
+        });
+        const method = document.createElement("select");
+        method.name = "method";
+        ["dhcp", "static"].forEach((m) => {
+          const o = document.createElement("option");
+          o.value = m;
+          o.textContent = m === "dhcp" ? "DHCP" : "Static";
+          if ((net.method || "dhcp") === m) o.selected = true;
+          method.appendChild(o);
+        });
+        function labeled(name, input, span) {
+          const lab = document.createElement("label");
+          if (span) lab.className = span;
+          lab.appendChild(document.createTextNode(name));
+          lab.appendChild(input);
+          return lab;
+        }
+        form.appendChild(labeled("Interface", iface));
+        form.appendChild(labeled("Method", method));
+        const address = document.createElement("input");
+        address.name = "address";
+        address.placeholder = "192.168.0.50";
+        address.value = net.address || "";
+        address.autocomplete = "off";
+        const prefix = document.createElement("input");
+        prefix.name = "prefix";
+        prefix.type = "number";
+        prefix.min = "1";
+        prefix.max = "32";
+        prefix.value = net.prefix ? String(net.prefix) : "24";
+        const gateway = document.createElement("input");
+        gateway.name = "gateway";
+        gateway.placeholder = "192.168.0.1";
+        gateway.value = net.gateway || "";
+        gateway.autocomplete = "off";
+        const dns = document.createElement("input");
+        dns.name = "dns";
+        dns.placeholder = "1.1.1.1";
+        dns.value = Array.isArray(net.dns) ? net.dns.join(" ") : "";
+        dns.autocomplete = "off";
+        const addrLab = labeled("Address", address);
+        const prefixLab = labeled("Prefix", prefix);
+        const gwLab = labeled("Gateway", gateway);
+        const dnsLab = labeled("DNS", dns);
+        form.appendChild(addrLab);
+        form.appendChild(prefixLab);
+        form.appendChild(gwLab);
+        form.appendChild(dnsLab);
+        function setStaticVisible() {
+          const on = method.value === "static";
+          [addrLab, prefixLab, gwLab, dnsLab].forEach((lab) => {
+            lab.hidden = !on;
+          });
+          [address, prefix, gateway, dns].forEach((inp) => {
+            inp.disabled = !on;
+          });
+        }
+        method.addEventListener("change", setStaticVisible);
+        setStaticVisible();
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "danger span-2";
+        save.textContent = "Apply IPv4";
+        form.appendChild(save);
+        wrap.appendChild(form);
       }
     }
     host.replaceChildren(wrap);

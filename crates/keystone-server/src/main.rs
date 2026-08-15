@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -78,8 +77,8 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
         &cfg.auth.username,
         &cfg.auth.password_hash,
     )?;
-    let http_addr: SocketAddr = cfg.http_listen.parse().context("http_listen")?;
-    let grpc_addr: SocketAddr = cfg.grpc_listen.parse().context("grpc_listen")?;
+    let http_addr = cfg.http_addr().map_err(|e| anyhow::anyhow!(e))?;
+    let grpc_addr = cfg.grpc_addr().map_err(|e| anyhow::anyhow!(e))?;
     tls::install_provider();
     let ingest_tls = cfg.tls.ingest;
     let pem = tls::TlsPem::from_config(&cfg.tls)?;
@@ -115,7 +114,7 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
             .add_service(ingest::service(state))
             .serve(grpc_addr)
             .await
-            .context("gRPC ingest")
+            .with_context(|| keystone_core::listen_bind_context("gRPC ingest", grpc_addr))
     };
 
     tokio::select! {

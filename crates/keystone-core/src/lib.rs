@@ -29,7 +29,8 @@ pub use alerts::{
     apply_node_alerts, firing_alerts, AlertSnapshot, AlertTransition, ALERTS_STATE_KV_KEY,
 };
 pub use config::{
-    AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape, TlsConfig,
+    listen_bind_context, AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig,
+    SnmpScrape, TlsConfig,
 };
 pub use docker::DockerOp;
 pub use dockerhub::{parse_search, parse_tags, pull_ref, search_url, tags_url, HubRepo, HubTag};

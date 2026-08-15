@@ -51,7 +51,7 @@ pub async fn serve_http(addr: SocketAddr, app: Router, tls: Option<&TlsPem>) -> 
         None => {
             let listener = tokio::net::TcpListener::bind(addr)
                 .await
-                .with_context(|| format!("bind HTTP {addr}"))?;
+                .with_context(|| keystone_core::listen_bind_context("HTTP", addr))?;
             axum::serve(listener, app).await.context("HTTP UI")
         }
         Some(tls) => {

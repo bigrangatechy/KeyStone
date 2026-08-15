@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use keystone_core::sys::{parse_ip_addr_json, SysOp, SYS_SOCKET_PATH};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -60,11 +60,15 @@ pub async fn stream(
 }
 
 async fn connect() -> anyhow::Result<UnixStream> {
-    let path = socket_path();
-    timeout(Duration::from_secs(2), UnixStream::connect(&path))
-        .await
-        .map_err(|_| anyhow!("system helper is not running; enable keystone-sys.socket"))?
-        .with_context(|| format!("connect {path}"))
+    connect_path(&socket_path()).await
+}
+
+async fn connect_path(path: &str) -> anyhow::Result<UnixStream> {
+    let hint = "system helper is not running; enable keystone-sys.socket";
+    match timeout(Duration::from_secs(2), UnixStream::connect(path)).await {
+        Ok(Ok(stream)) => Ok(stream),
+        Ok(Err(_)) | Err(_) => anyhow::bail!("{hint}"),
+    }
 }
 
 async fn send_req(stream: &mut UnixStream, op: SysOp, payload: &Value) -> anyhow::Result<()> {
@@ -118,12 +122,25 @@ async fn local_addrs() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
-    #[test]
-    fn missing_socket_message_is_actionable() {
-        let err = anyhow!("system helper is not running; enable keystone-sys.socket");
-        let s = err.to_string();
-        assert!(s.contains("keystone-sys.socket"));
-        assert!(!s.contains("docker.sock"));
+    #[tokio::test]
+    async fn missing_socket_fails_fast_with_enable_hint() {
+        let path = format!(
+            "{}/ks-sys-missing-{}.sock",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
+        let start = Instant::now();
+        let err = connect_path(&path).await.unwrap_err().to_string();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(3),
+            "missing helper must not hang"
+        );
+        assert!(
+            err.contains("keystone-sys.socket"),
+            "operator needs the systemctl unit name, got {err}"
+        );
+        assert!(!err.contains("docker.sock"), "{err}");
     }
 }

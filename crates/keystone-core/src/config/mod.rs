@@ -5,7 +5,9 @@ mod agent;
 mod server;
 
 pub use agent::{AgentConfig, DockerConfig};
-pub use server::{PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape, TlsConfig};
+pub use server::{
+    listen_bind_context, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape, TlsConfig,
+};
 
 use std::path::Path;
 use thiserror::Error;
@@ -71,6 +73,15 @@ mod tests {
         assert!(!cfg.ingest_url.is_empty());
         assert!(!cfg.docker.manage);
         assert!(!cfg.docker.allow_exec);
+        assert!(
+            cfg.ingest_url.contains("19100"),
+            "smoke agent must dial the smoke gRPC port, not packaged :9100; got {}",
+            cfg.ingest_url
+        );
+        assert!(
+            !cfg.ingest_url.contains(":9100"),
+            "smoke agent would hit a packaged server on :9100"
+        );
     }
 
     #[test]
@@ -78,10 +89,80 @@ mod tests {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/server.toml");
         let cfg: ServerConfig = load_toml(&path).expect("server.toml");
-        assert!(cfg.http_listen.contains(':'));
-        assert!(cfg.grpc_listen.contains(':'));
+        let http = cfg.http_addr().expect("http_listen");
+        let grpc = cfg.grpc_addr().expect("grpc_listen");
+        assert!(http.ip().is_loopback(), "smoke UI must not bind 0.0.0.0");
+        assert!(
+            grpc.ip().is_loopback(),
+            "smoke ingest must not bind 0.0.0.0"
+        );
+        assert_eq!(http.port(), 18080);
+        assert_eq!(grpc.port(), 19100);
         assert!(!cfg.tls.ui_https());
         assert!(cfg.tls.pem_paths().unwrap().is_none());
+    }
+
+    #[test]
+    fn smoke_listen_does_not_collide_with_packaged() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let smoke: ServerConfig =
+            load_toml(&root.join("examples/server.toml")).expect("smoke server");
+        let packaged: ServerConfig =
+            load_toml(&root.join("packaging/deb/server/server.toml")).expect("packaged server");
+        let smoke_http = smoke.http_addr().unwrap();
+        let smoke_grpc = smoke.grpc_addr().unwrap();
+        let pack_http = packaged.http_addr().unwrap();
+        let pack_grpc = packaged.grpc_addr().unwrap();
+        assert_eq!(
+            pack_http.port(),
+            8080,
+            "packaged UI port is the operator default"
+        );
+        assert_eq!(
+            pack_grpc.port(),
+            9100,
+            "packaged ingest port is the operator default"
+        );
+        assert_ne!(
+            smoke_http.port(),
+            pack_http.port(),
+            "cargo smoke http_listen collides with packaged keystone-server"
+        );
+        assert_ne!(
+            smoke_grpc.port(),
+            pack_grpc.port(),
+            "cargo smoke grpc_listen collides with packaged keystone-server"
+        );
+        let agent: AgentConfig = load_toml(&root.join("examples/agent.toml")).expect("smoke agent");
+        let ingest_port = agent
+            .ingest_url
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .expect("ingest_url port");
+        assert_eq!(
+            ingest_port,
+            smoke_grpc.port(),
+            "smoke agent ingest_url port must match examples/server.toml grpc_listen"
+        );
+        let hint = crate::listen_bind_context("HTTP", pack_http);
+        assert!(
+            hint.contains("18080") && hint.contains("19100"),
+            "bind error must tell the operator about smoke ports, got {hint}"
+        );
+        assert!(hint.contains("8080") && hint.contains("9100"));
+        assert!(
+            !hint.contains("docker.sock"),
+            "listen collision is not a Docker problem"
+        );
+    }
+
+    #[test]
+    fn listen_addrs_reject_garbage() {
+        let cfg: ServerConfig = toml::from_str("http_listen = \"not-a-port\"\n").unwrap();
+        let err = cfg.http_addr().unwrap_err();
+        assert!(err.contains("http_listen"), "{err}");
+        assert!(cfg.grpc_addr().is_ok(), "grpc should still default");
     }
 
     #[test]

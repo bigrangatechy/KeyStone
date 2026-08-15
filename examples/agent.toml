@@ -3,18 +3,19 @@
 
 # Example KeyStone agent config for a local smoke test (writable without root).
 # Packaged installs use /var/lib/keystone/agent-buffer.
-# Run `cargo run` from the repo root.
+# Run `cargo run` from the repo root. ingest_url must match examples/server.toml
+# grpc_listen (19100), not the packaged :9100.
 #
 # Required: ingest_url, ingest_token, node_id (or hostname), buffer_dir.
 # ingest_url is http://host:9100, https://host:9100 (ingest TLS), or mdns
 # (browse the LAN). Smoke tests keep a loopback URL so they do not need
-# multicast. Packaged agents default to mdns.
+# multicast and do not steal a packaged server. Packaged agents default to mdns.
 # Optional docker.host if the engine socket is not /var/run/docker.sock.
 # Optional tls_ca_file when ingest_url is https:// and the CA is private.
 # Poll interval, Docker enable/manage/exec, labels, and compose paths are
 # node Settings once connected.
 
-ingest_url = "http://127.0.0.1:9100"
+ingest_url = "http://127.0.0.1:19100"
 ingest_token = "change-me"
 # node_id defaults to hostname when omitted
 buffer_dir = ".smoke/agent-buffer"

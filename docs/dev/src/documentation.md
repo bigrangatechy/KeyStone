@@ -34,9 +34,9 @@ If you add a metric and forget the developer table, `cargo test` fails.
 You still write the prose yourself.
 
 Operator-path tests (Add node, ingest token, mDNS records, loopback
-gRPC session) live next to the code they cover (`ingest.rs`, `http.rs`,
-`mdns.rs`). A passing suite that never opens a session or copies a
-snippet will not catch those regressions.
+gRPC session, smoke vs packaged listen ports) live next to the code they
+cover. A passing suite that never opens a session or copies a snippet will
+not catch those regressions. Smoke `examples/*.toml` must not use 8080/9100.
 
 `/help` is the operator book **for this binary**. Pages can be newer than
 an installed `.deb`. Do not teach operators to run a docs generator.

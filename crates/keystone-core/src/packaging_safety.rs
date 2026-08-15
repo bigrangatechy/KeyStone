@@ -178,6 +178,16 @@ fn sys_helper_is_opt_in_root_socket() {
 }
 
 #[test]
+fn cargo_run_defaults_to_metrics_agent() {
+    assert!(
+        AGENT_CARGO.contains("default-run = \"keystone-agent\""),
+        "cargo run -p keystone-agent must not be ambiguous with keystone-sys"
+    );
+    assert!(AGENT_CARGO.contains("name = \"keystone-sys\""));
+    assert!(AGENT_CARGO.contains("name = \"keystone-agent\""));
+}
+
+#[test]
 fn setup_snippet_matches_agent_deb_revision() {
     let setup = include_str!("../../keystone-server/templates/node_setup.html");
     let rev = AGENT_CARGO

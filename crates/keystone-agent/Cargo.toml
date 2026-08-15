@@ -10,6 +10,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "KeyStone node agent: catalog collectors, Docker control, gRPC push"
+default-run = "keystone-agent"
 
 [[bin]]
 name = "keystone-agent"

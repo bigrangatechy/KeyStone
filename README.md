@@ -60,11 +60,14 @@ Binaries: `target/release/keystone` (server) and
 `target/release/keystone-agent`.
 
 Example configs: [examples/server.toml](examples/server.toml),
-[examples/agent.toml](examples/agent.toml).
+[examples/agent.toml](examples/agent.toml). Those listen on **127.0.0.1:18080**
+(UI) and **:19100** (gRPC) so `cargo run` can sit beside an installed
+`keystone-server` on 8080/9100. Open `http://127.0.0.1:18080`.
 
 ```
-keystone --config examples/server.toml
-keystone-agent --config examples/agent.toml
+mkdir -p .smoke/tmp .smoke/agent-buffer
+TMPDIR=.smoke/tmp KEYSTONE_ADMIN_PASSWORD=changeme cargo run -p keystone-server -- serve --config examples/server.toml
+TMPDIR=.smoke/tmp cargo run -p keystone-agent -- --config examples/agent.toml
 ```
 
 First UI login is `admin` / `changeme` unless you set

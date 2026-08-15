@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 
 /// Process configuration (listen addresses, data directory, bootstrap).
 ///
@@ -92,6 +93,28 @@ impl TlsConfig {
     pub fn ingest_https(&self) -> bool {
         self.ingest && self.ui_https()
     }
+}
+
+impl ServerConfig {
+    pub fn http_addr(&self) -> Result<SocketAddr, String> {
+        parse_listen(&self.http_listen, "http_listen")
+    }
+
+    pub fn grpc_addr(&self) -> Result<SocketAddr, String> {
+        parse_listen(&self.grpc_listen, "grpc_listen")
+    }
+}
+
+fn parse_listen(raw: &str, key: &str) -> Result<SocketAddr, String> {
+    raw.parse()
+        .map_err(|e| format!("{key} {raw:?} is not host:port ({e})"))
+}
+
+/// Bind failure copy. Packaged units use 8080/9100; cargo smoke must not.
+pub fn listen_bind_context(kind: &str, addr: SocketAddr) -> String {
+    format!(
+        "bind {kind} {addr}: address already in use. Packaged keystone-server listens on 0.0.0.0:8080 and :9100. Cargo smoke uses examples/server.toml on loopback 18080/19100 so both can run."
+    )
 }
 
 fn default_http() -> String {

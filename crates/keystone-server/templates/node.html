@@ -98,7 +98,7 @@
 </section>
 <section class="tab-panel" data-panel="system">
   <h2>System</h2>
-  <p class="muted">Host apt and IPv4 for this machine — not Docker. The agent stays unprivileged; enable the root helper socket first.</p>
+  <p class="muted">Host apt and IPv4 on this machine — not Docker.</p>
   {% if !sys_error.is_empty() %}
   <p class="error">System: {{ sys_error }}</p>
   {% endif %}
