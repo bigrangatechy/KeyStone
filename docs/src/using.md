@@ -42,7 +42,8 @@ Click a row to open that node. **Add node** is the enroll form. Chips stay
 blank (`—`) until the agent has pushed samples. Disk is the fullest real
 filesystem (overlay/tmpfs skipped). Temperature is the CPU package when
 the kernel exposes it, otherwise the hottest hwmon reading. The list
-refreshes about once a second.
+refreshes about once a second. A red count next to a hostname is the number
+of chips currently warn or crit; open [Alerts](alerts.md).
 
 ## Add node
 
@@ -79,5 +80,6 @@ debugging, not the usual way to watch a host.
 ## Global Settings
 
 The header **Settings** link is the server, not a node: retention, ingest
-token, Prometheus/SNMP scrape jobs, admin password. Listen addresses and the
-admin username stay in `server.toml`.
+token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password.
+Listen addresses and the admin username stay in `server.toml`. Header
+**Alerts** is the live firing list; see [Alerts](alerts.md).

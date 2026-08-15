@@ -1,0 +1,36 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Alerts — KeyStone{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Alerts</h1>
+    <p class="muted">Same rules as the fleet chips: CPU, RAM, and disk warn at 75% and crit at 90%; temperature warn at 75°C and crit at 90°C. Optional webhook is on Settings.</p>
+  </div>
+</div>
+<table class="alerts" id="alerts"{% if alerts.is_empty() %} hidden{% endif %}>
+  <thead>
+    <tr>
+      <th>Host</th>
+      <th></th>
+      <th>Value</th>
+      <th>Detail</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in alerts %}
+    <tr data-node="{{ a.node_id }}" data-chip="{{ a.chip }}">
+      <td>
+        <a href="/nodes/{{ a.node_id }}">{{ a.hostname }}</a>
+        <div class="muted host-id"><code>{{ a.node_id }}</code></div>
+      </td>
+      <td>{{ a.label }}</td>
+      <td><span class="chip tone-{{ a.severity }}">{{ a.display }}</span></td>
+      <td class="muted">{{ a.hint }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted" id="alerts-empty"{% if !alerts.is_empty() %} hidden{% endif %}>Nothing firing.</p>
+{% endblock %}

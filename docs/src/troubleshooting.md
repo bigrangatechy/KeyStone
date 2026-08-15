@@ -68,6 +68,16 @@ unrelated.
 Lower **retention** on Settings (hours). Default 24h is the homelab-sized
 window. History lives in `data_dir/series.redb`.
 
+## Alert webhook never fires
+
+- The URL must be non-empty and start with `http://` or `https://`.
+- Only **transitions** are POSTed (new fire, warn↔crit, resolved). A
+  restart does not re-send chips that were already firing.
+- A 4xx/5xx or timeout is logged (`alert webhook`) and then dropped;
+  ingest still succeeds. Check `journalctl -u keystone-server`.
+- The chip must be warn or crit on the home page first — same 75% / 90%
+  and 75°C / 90°C rules.
+
 ## Help in the UI looks wrong
 
 `/help` is this operator book compiled into the server binary. It matches

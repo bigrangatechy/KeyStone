@@ -40,6 +40,7 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}", get(node_page))
         .route("/nodes/{id}/setup", get(node_setup_page))
         .route("/nodes/{id}/settings", post(node_settings_post))
+        .route("/alerts", get(alerts_page))
         .route("/settings", get(settings_page).post(settings_post))
         .route("/settings/rotate-token", post(settings_rotate_token))
         .route("/nodes/{id}/docker/{op}", post(docker_action))
@@ -63,6 +64,7 @@ pub fn router(state: AppState) -> Router {
         .route("/help", get(help_index))
         .route("/help/{slug}", get(help_section))
         .route("/api/v1/catalog", get(catalog_api))
+        .route("/api/v1/alerts", get(alerts_api))
         .route("/api/v1/nodes", get(nodes_api))
         .route(
             "/api/v1/nodes/{id}/dashboard",
@@ -207,6 +209,7 @@ struct SettingsTemplate {
     ingest_token_env_override: bool,
     prometheus_scrape: String,
     snmp_scrape: String,
+    alert_webhook_url: String,
     username: String,
     saved: bool,
     rotated: bool,
@@ -240,6 +243,7 @@ fn settings_view(
             .unwrap_or_else(|| ServerSettings::format_prometheus_lines(&stored.prometheus_scrape)),
         snmp_scrape: snmp_scrape
             .unwrap_or_else(|| ServerSettings::format_snmp_lines(&stored.snmp_scrape)),
+        alert_webhook_url: stored.alert_webhook_url.clone(),
         username: state.config.auth.username.clone(),
         saved,
         rotated,
@@ -278,6 +282,8 @@ struct ServerSettingsForm {
     #[serde(default)]
     snmp_scrape: String,
     #[serde(default)]
+    alert_webhook_url: String,
+    #[serde(default)]
     new_password: String,
     #[serde(default)]
     new_password_confirm: String,
@@ -291,6 +297,7 @@ async fn settings_post(
         let mut stored = state.stored_server_settings();
         stored.retention_hours = form.retention_hours.unwrap_or(stored.retention_hours);
         stored.ingest_token = form.ingest_token.clone();
+        stored.alert_webhook_url = form.alert_webhook_url.clone();
         Html(
             settings_view(
                 state,
@@ -312,6 +319,10 @@ async fn settings_post(
     };
     let snmp = match ServerSettings::parse_snmp_lines(&form.snmp_scrape) {
         Ok(j) => j,
+        Err(error) => return fail(&state, error, &form),
+    };
+    let webhook = match ServerSettings::parse_webhook_url(&form.alert_webhook_url) {
+        Ok(u) => u,
         Err(error) => return fail(&state, error, &form),
     };
     let new_password = form.new_password.trim();
@@ -345,6 +356,7 @@ async fn settings_post(
     }
     next.prometheus_scrape = prom;
     next.snmp_scrape = snmp;
+    next.alert_webhook_url = webhook;
     if let Err(e) = state.save_server_settings(&next) {
         return fail(&state, format!("could not save: {e}"), &form);
     }
@@ -375,6 +387,7 @@ struct NodeRow {
     status: String,
     last_seen: String,
     chips: Vec<FleetChip>,
+    alert_count: usize,
 }
 
 fn node_status(state: &AppState, n: &keystone_store::NodeRecord) -> String {
@@ -428,6 +441,8 @@ fn fleet_row(state: &AppState, n: keystone_store::NodeRecord) -> NodeRow {
         .series
         .latest_samples(&n.node_id)
         .unwrap_or_default();
+    let chips = fleet_chips(&samples);
+    let alert_count = chips.iter().filter(|c| c.is_firing()).count();
     NodeRow {
         hostname: settings.display_host(&n.hostname).to_string(),
         os: if n.os == "awaiting-agent" {
@@ -437,9 +452,67 @@ fn fleet_row(state: &AppState, n: keystone_store::NodeRecord) -> NodeRow {
         },
         status,
         last_seen: relative_seen(n.last_seen_unix, awaiting),
-        chips: fleet_chips(&samples),
+        chips,
+        alert_count,
         node_id: n.node_id,
     }
+}
+
+#[derive(Serialize)]
+struct AlertRow {
+    node_id: String,
+    hostname: String,
+    chip: String,
+    label: String,
+    severity: String,
+    display: String,
+    hint: String,
+}
+
+fn firing_rows(state: &AppState) -> Vec<AlertRow> {
+    let mut out = Vec::new();
+    for n in state.stores.metadata.list_nodes().unwrap_or_default() {
+        let row = fleet_row(state, n);
+        for c in row.chips.into_iter().filter(|c| c.is_firing()) {
+            out.push(AlertRow {
+                node_id: row.node_id.clone(),
+                hostname: row.hostname.clone(),
+                chip: c.id,
+                label: c.label,
+                severity: c.tone,
+                display: c.display,
+                hint: c.hint,
+            });
+        }
+    }
+    out
+}
+
+#[derive(Template)]
+#[template(path = "alerts.html")]
+struct AlertsTemplate {
+    alerts: Vec<AlertRow>,
+}
+
+#[derive(Serialize)]
+struct AlertsApi {
+    alerts: Vec<AlertRow>,
+}
+
+async fn alerts_page(State(state): State<AppState>) -> impl IntoResponse {
+    Html(
+        AlertsTemplate {
+            alerts: firing_rows(&state),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn alerts_api(State(state): State<AppState>) -> Json<AlertsApi> {
+    Json(AlertsApi {
+        alerts: firing_rows(&state),
+    })
 }
 
 async fn nodes_page(State(state): State<AppState>) -> impl IntoResponse {

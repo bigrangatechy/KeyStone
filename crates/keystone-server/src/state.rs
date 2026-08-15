@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use keystone_core::config::ServerConfig;
-use keystone_core::{NodeSettings, ServerSettings};
+use keystone_core::{AlertSnapshot, NodeSettings, ServerSettings};
 use keystone_proto::{Command, StreamChunk};
 use keystone_store::Stores;
 use parking_lot::Mutex;
@@ -170,6 +170,8 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub stores: Stores,
     pub agents: AgentRegistry,
+    pub http: reqwest::Client,
+    pub alert_state: Arc<Mutex<BTreeMap<String, AlertSnapshot>>>,
     scrape_epoch: Arc<AtomicU64>,
     env_ingest_token: Option<String>,
 }
@@ -179,10 +181,17 @@ impl AppState {
         let env_ingest_token = std::env::var("KEYSTONE_INGEST_TOKEN")
             .ok()
             .filter(|s| !s.is_empty());
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("reqwest");
+        let alert_state = Arc::new(Mutex::new(crate::alerts::load_alert_state(&stores)));
         Self {
             config: Arc::new(config),
             stores,
             agents: AgentRegistry::default(),
+            http,
+            alert_state,
             scrape_epoch: Arc::new(AtomicU64::new(0)),
             env_ingest_token,
         }

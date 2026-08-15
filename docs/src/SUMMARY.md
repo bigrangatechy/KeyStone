@@ -9,6 +9,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - [Install](install.md)
 - [Using the UI](using.md)
 - [Dashboards](dashboard.md)
+- [Alerts](alerts.md)
 - [Docker](docker.md)
 - [Configuration](configuration.md)
 - [Metrics](metrics.md)

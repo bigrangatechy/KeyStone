@@ -21,6 +21,84 @@
     }
   }
 
+  const navCount = document.getElementById("nav-alert-count");
+  const alertsTable = document.getElementById("alerts");
+
+  function paintAlertCount(n) {
+    if (!navCount) return;
+    const c = Number(n) || 0;
+    navCount.textContent = c > 0 ? String(c) : "";
+    navCount.classList.toggle("is-idle", c === 0);
+  }
+
+  function paintAlertsPage(alerts) {
+    if (!alertsTable) return;
+    const tb = alertsTable.querySelector("tbody");
+    if (!tb) return;
+    tb.replaceChildren();
+    (alerts || []).forEach((a) => {
+      const tr = document.createElement("tr");
+      tr.setAttribute("data-node", a.node_id || "");
+      tr.setAttribute("data-chip", a.chip || "");
+      const host = document.createElement("td");
+      const link = document.createElement("a");
+      link.href = "/nodes/" + encodeURIComponent(a.node_id || "");
+      link.textContent = a.hostname || a.node_id || "";
+      const sub = document.createElement("div");
+      sub.className = "muted host-id";
+      const code = document.createElement("code");
+      code.textContent = a.node_id || "";
+      sub.appendChild(code);
+      host.appendChild(link);
+      host.appendChild(sub);
+      const label = document.createElement("td");
+      label.textContent = a.label || "";
+      const value = document.createElement("td");
+      const chip = document.createElement("span");
+      chip.className = "chip tone-" + (a.severity || "");
+      chip.textContent = a.display || "";
+      value.appendChild(chip);
+      const hint = document.createElement("td");
+      hint.className = "muted";
+      hint.textContent = a.hint || "";
+      tr.appendChild(host);
+      tr.appendChild(label);
+      tr.appendChild(value);
+      tr.appendChild(hint);
+      tb.appendChild(tr);
+    });
+    const empty = document.getElementById("alerts-empty");
+    const n = (alerts || []).length;
+    alertsTable.hidden = n === 0;
+    if (empty) empty.hidden = n > 0;
+  }
+
+  async function refreshAlerts() {
+    try {
+      const r = await fetch("/api/v1/alerts");
+      if (r.status === 401 || r.status === 403) return "auth";
+      if (!r.ok) return;
+      const j = await r.json();
+      const list = j.alerts || [];
+      paintAlertCount(list.length);
+      paintAlertsPage(list);
+    } catch (e) {}
+  }
+
+  if (navCount || alertsTable) {
+    let alertsInflight = false;
+    refreshAlerts();
+    const alertsTimer = setInterval(async () => {
+      if (document.hidden || alertsInflight) return;
+      alertsInflight = true;
+      try {
+        if (await refreshAlerts() === "auth") clearInterval(alertsTimer);
+      } finally {
+        alertsInflight = false;
+      }
+    }, 2000);
+  }
+
   const fleet = document.getElementById("fleet");
   if (fleet) {
     function paintFleet(nodes) {
@@ -45,7 +123,17 @@
         }
         const seen = tr.querySelector("[data-seen]");
         if (seen) seen.textContent = n.last_seen || "";
+        const mark = tr.querySelector("[data-alert-count]");
+        const ac = Number(n.alert_count) || 0;
+        if (mark) {
+          mark.textContent = ac > 0 ? String(ac) : "";
+          mark.classList.toggle("is-idle", ac === 0);
+        }
+        tr.classList.toggle("has-alert", ac > 0);
       });
+      let total = 0;
+      (nodes || []).forEach((n) => { total += Number(n.alert_count) || 0; });
+      paintAlertCount(total);
     }
     async function refreshFleet() {
       try {

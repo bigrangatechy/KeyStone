@@ -26,6 +26,13 @@ pub struct FleetChip {
     pub hint: String,
 }
 
+impl FleetChip {
+    /// Warn and crit chips are alerts; unknown (`—`) and ok are not.
+    pub fn is_firing(&self) -> bool {
+        self.tone == "warn" || self.tone == "crit"
+    }
+}
+
 fn empty_chip(id: &str, label: &str) -> FleetChip {
     FleetChip {
         id: id.into(),
@@ -248,5 +255,7 @@ mod tests {
     fn high_cpu_is_crit() {
         let chips = fleet_chips(&[Sample::new("node_cpu_usage_ratio", 0.95, 1)]);
         assert_eq!(chips[0].tone, "crit");
+        assert!(chips[0].is_firing());
+        assert!(!fleet_chips(&[Sample::new("node_cpu_usage_ratio", 0.10, 1)])[0].is_firing());
     }
 }

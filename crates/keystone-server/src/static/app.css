@@ -27,6 +27,38 @@ code { font-family: var(--mono); font-size: 0.92em; }
 }
 .brand { font-weight: 650; color: var(--fg); letter-spacing: 0.02em; }
 .bar nav { display: flex; gap: 1rem; align-items: center; }
+.nav-count {
+  display: inline-block;
+  min-width: 1.15rem;
+  padding: 0 0.35rem;
+  margin-left: 0.15rem;
+  border-radius: 99px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-align: center;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.nav-count.is-idle { display: none; }
+.alert-mark {
+  display: inline-block;
+  margin-left: 0.4rem;
+  min-width: 1.15rem;
+  padding: 0 0.35rem;
+  border-radius: 99px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-align: center;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+.alert-mark:hover { text-decoration: none; color: #fff; }
+.alert-mark.is-idle { display: none; }
 main { padding: 1.25rem 1.5rem 3rem; max-width: 1200px; }
 
 table { width: 100%; border-collapse: collapse; }

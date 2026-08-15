@@ -170,6 +170,9 @@ pub struct ServerSettings {
     pub prometheus_scrape: Vec<PrometheusScrape>,
     #[serde(default)]
     pub snmp_scrape: Vec<SnmpScrape>,
+    /// Optional HTTP POST on alert transitions. Empty = off.
+    #[serde(default)]
+    pub alert_webhook_url: String,
 }
 
 fn default_retention_hours() -> u32 {
@@ -183,6 +186,7 @@ impl Default for ServerSettings {
             ingest_token: String::new(),
             prometheus_scrape: Vec::new(),
             snmp_scrape: Vec::new(),
+            alert_webhook_url: String::new(),
         }
     }
 }
@@ -205,7 +209,24 @@ impl ServerSettings {
             ingest_token: cfg.ingest_token.clone(),
             prometheus_scrape: cfg.prometheus_scrape.clone(),
             snmp_scrape: cfg.snmp_scrape.clone(),
+            alert_webhook_url: String::new(),
         }
+    }
+
+    /// Empty is off. Otherwise `http://` or `https://` with no whitespace.
+    pub fn parse_webhook_url(raw: &str) -> Result<String, String> {
+        let t = raw.trim();
+        if t.is_empty() {
+            return Ok(String::new());
+        }
+        let lower = t.to_ascii_lowercase();
+        if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+            return Err("alert webhook URL must start with http:// or https://".into());
+        }
+        if t.chars().any(char::is_whitespace) {
+            return Err("alert webhook URL must not contain spaces".into());
+        }
+        Ok(t.to_string())
     }
 
     pub fn clamp_retention_hours(hours: u32) -> u32 {
@@ -356,8 +377,29 @@ mod tests {
     fn server_settings_default_retention_is_24h() {
         let s = ServerSettings::parse_or_default(Some("{}"));
         assert_eq!(s.retention_hours, 24);
+        assert_eq!(s.alert_webhook_url, "");
         assert_eq!(ServerSettings::clamp_retention_hours(0), 1);
         assert_eq!(ServerSettings::clamp_retention_hours(99_000), 24 * 365);
+    }
+
+    #[test]
+    fn missing_webhook_field_defaults_empty() {
+        let s =
+            ServerSettings::parse_or_default(Some(r#"{"retention_hours":48,"ingest_token":"x"}"#));
+        assert_eq!(s.retention_hours, 48);
+        assert_eq!(s.alert_webhook_url, "");
+    }
+
+    #[test]
+    fn webhook_url_must_be_http() {
+        assert_eq!(ServerSettings::parse_webhook_url("  ").unwrap(), "");
+        assert_eq!(
+            ServerSettings::parse_webhook_url("https://hooks.example/ks").unwrap(),
+            "https://hooks.example/ks"
+        );
+        assert!(ServerSettings::parse_webhook_url("javascript:alert(1)").is_err());
+        assert!(ServerSettings::parse_webhook_url("file:///etc/passwd").is_err());
+        assert!(ServerSettings::parse_webhook_url("https://ex ample").is_err());
     }
 
     #[test]

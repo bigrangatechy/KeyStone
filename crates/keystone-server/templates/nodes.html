@@ -6,7 +6,7 @@
 <div class="page-head">
   <div>
     <h1>Nodes</h1>
-    <p class="muted">Live CPU, RAM, disk, and temperature for the whole lab. Open a host for Overview and Docker.</p>
+    <p class="muted">Live CPU, RAM, disk, and temperature for the whole lab. Open a host for Overview and Docker. A red count next to a hostname means something is firing — see <a href="/alerts">Alerts</a>.</p>
   </div>
   <a class="btn" href="/nodes/new">Add node</a>
 </div>
@@ -24,9 +24,10 @@
   </thead>
   <tbody>
     {% for n in nodes %}
-    <tr data-node="{{ n.node_id }}">
+    <tr data-node="{{ n.node_id }}"{% if n.alert_count > 0 %} class="has-alert"{% endif %}>
       <td>
         <a href="/nodes/{{ n.node_id }}">{{ n.hostname }}</a>
+        <a class="alert-mark{% if n.alert_count == 0 %} is-idle{% endif %}" href="/alerts" data-alert-count title="Firing alerts">{% if n.alert_count > 0 %}{{ n.alert_count }}{% endif %}</a>
         <div class="muted host-id"><code>{{ n.node_id }}</code>{% if !n.os.is_empty() %} · {{ n.os }}{% endif %}</div>
       </td>
       {% for c in n.chips %}

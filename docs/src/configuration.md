@@ -102,6 +102,12 @@ name | target | community | interval_secs | node_id
 `public`. This version reads `sysUpTime.0` and a scrape-ok flag — enough to
 see that a switch answers, not a full NMS.
 
+### Alert webhook
+
+Optional URL. Empty is off. The server POSTs JSON when a fleet chip starts
+firing, changes severity, or clears. See [Alerts](alerts.md). Only
+`http://` and `https://` are accepted. Ingest does not wait on the POST.
+
 ### Admin password
 
 Username stays in `server.toml`. Leave the password fields empty to keep

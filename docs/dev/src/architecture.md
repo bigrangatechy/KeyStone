@@ -29,7 +29,7 @@ stream; the server never dials an agent and never opens a remote
 
 | Crate | Binary / role |
 |---|---|
-| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate. No I/O. |
+| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions. No I/O. |
 | `keystone-proto` | Generated from `proto/ingest.proto`. |
 | `keystone-store` | `keystone.sqlite` + `series.redb`. |
 | `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client. |
@@ -42,7 +42,9 @@ data dir in examples is `.smoke`.
 
 1. Agent opens `Ingest.Session`, sends `PushFrame` (heartbeat + samples +
    token) on an interval.
-2. Server allowlists samples, upserts the node row, stores series, ACKs.
+2. Server allowlists samples, upserts the node row, stores series, diffs
+   fleet-chip alerts (`apply_node_alerts`), ACKs. Webhook POSTs (if
+   configured) are `tokio::spawn`’d and must not block the ACK.
 3. On first good push for a node id, the server registers the stream in
    `AgentRegistry` and sends `set_runtime` (poll interval, labels, Docker
    flags, compose paths) from `NodeSettings`.
@@ -52,7 +54,10 @@ data dir in examples is `.smoke`.
    that stream. `cancel` aborts a follow when the browser disconnects.
 5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`. The
    home page polls `GET /api/v1/nodes` every second for fleet chips
-   (`fleet_chips` in `keystone-core`).
+   (`fleet_chips` in `keystone-core`). Header **Alerts** polls
+   `GET /api/v1/alerts` every 2s. A chip fires when `FleetChip::is_firing`
+   (`tone` is `warn` or `crit`). Previous firing map is kv `alerts_state`
+   so a restart does not re-POST the webhook.
 
 `set_interval` still exists on the agent for older payloads; current servers
 send `set_runtime`.
@@ -60,4 +65,5 @@ send `set_runtime`.
 ## What is not in this slice
 
 SSO, multi-user RBAC enforcement beyond the permission enum, HTTPS
-termination, remote Docker, 32-bit ARM packages, a node cap.
+termination, remote Docker, 32-bit ARM packages, a node cap, per-node
+alert thresholds, PagerDuty.

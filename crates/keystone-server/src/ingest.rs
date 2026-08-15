@@ -163,6 +163,7 @@ fn handle_push(state: &AppState, frame: &PushFrame) -> anyhow::Result<String> {
         tracing::debug!("dropped {dropped} unknown metrics from {}", hb.node_id);
     }
     state.stores.series.write_samples(&hb.node_id, &kept)?;
+    crate::alerts::note_samples(state, &hb.node_id, &kept);
     Ok(hb.node_id.clone())
 }
 

@@ -32,7 +32,9 @@ Heartbeat fields: `node_id`, `hostname`, `agent_version`, `os`, `kernel`,
 Token check: if Settings (or `KEYSTONE_INGEST_TOKEN`) is non-empty, the
 frame token must match or the push is nacked. Empty server token accepts
 any (dev only). Unknown metric names are dropped; the rest are written to
-Redb and the node row is upserted.
+Redb and the node row is upserted. After a successful write the server
+runs `apply_node_alerts` against the latest samples for that `node_id`
+(same path on Prometheus/SNMP scrape). Webhook POSTs are spawned.
 
 A new `node_id` on a good push is enrolled automatically.
 

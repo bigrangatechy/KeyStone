@@ -46,6 +46,7 @@ pub fn sections() -> Vec<HelpSection> {
         section("install", "Install", operator_md!("install.md")),
         section("using", "Using the UI", operator_md!("using.md")),
         section("dashboard", "Dashboards", operator_md!("dashboard.md")),
+        section("alerts", "Alerts", operator_md!("alerts.md")),
         section("docker", "Docker", operator_md!("docker.md")),
         section(
             "configuration",

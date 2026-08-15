@@ -20,6 +20,7 @@ first open (`state.rs`).
 | `ingest_token` | Agents must match. Empty = accept any. |
 | `prometheus_scrape` | `Vec<PrometheusScrape>` |
 | `snmp_scrape` | `Vec<SnmpScrape>` |
+| `alert_webhook_url` | Optional. Empty = off. `http://` or `https://` only (`parse_webhook_url`). POST JSON on alert **transitions** (new fire, severity change, resolved). Spawned; ingest does not wait. |
 
 Pipe-separated textareas:
 

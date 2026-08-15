@@ -21,7 +21,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - `audit` — mutating Docker (and similar) with username, node, op, target,
   ok, detail.
 - `kv` — `k` / `v` text. Server operator settings are key `server`
-  (`ServerSettings::KV_KEY`), JSON.
+  (`ServerSettings::KV_KEY`), JSON. Previous fleet-chip firing map is key
+  `alerts_state` (`ALERTS_STATE_KV_KEY`), JSON object keyed
+  `{node_id}::{chip}` so a restart does not re-POST the webhook.
 
 Node settings and dashboard layouts are JSON on the node row, not kv, so
 they travel with the node if you ever dump that table.

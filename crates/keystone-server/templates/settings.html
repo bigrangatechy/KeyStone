@@ -4,7 +4,7 @@
 {% block title %}Settings — KeyStone{% endblock %}
 {% block content %}
 <h1>Settings</h1>
-<p class="muted">These apply to this server. Listen addresses, data directory, and the admin username stay in the config file (development / bootstrap). After first start this page is the source of truth for retention, the ingest token, and scrape jobs.</p>
+<p class="muted">These apply to this server. Listen addresses, data directory, and the admin username stay in the config file (development / bootstrap). After first start this page is the source of truth for retention, the ingest token, scrape jobs, and the optional alert webhook.</p>
 {% if saved %}<p>Saved.</p>{% endif %}
 {% if rotated %}<p>New ingest token generated. Update each agent’s <code>ingest_token</code> and restart it.</p>{% endif %}
 {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
@@ -36,6 +36,13 @@
     <label>Jobs (one per line)
       <textarea name="snmp_scrape" rows="5" placeholder="name | target | community | interval_secs | node_id">{{ snmp_scrape }}</textarea>
       <span class="muted"><code>name | target | community | interval_secs | node_id</code>. Community defaults to <code>public</code>.</span>
+    </label>
+  </fieldset>
+  <fieldset>
+    <legend>Alerts</legend>
+    <label>Webhook URL
+      <input name="alert_webhook_url" value="{{ alert_webhook_url }}" placeholder="https://example.invalid/hooks/keystone" autocomplete="off">
+      <span class="muted">Optional. Empty is off. KeyStone POSTs JSON when a fleet chip starts firing, changes severity, or clears. <code>http://</code> or <code>https://</code> only. Failures are logged; ingest is not delayed. The body includes the current value (for example <code>92%</code>).</span>
     </label>
   </fieldset>
   <fieldset>

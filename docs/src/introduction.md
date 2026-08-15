@@ -46,7 +46,7 @@ as a node too.
 ## This book
 
 These chapters are the **operator** documentation: install, add nodes,
-Settings, dashboards, Docker, and security as you run it. The running server
+Settings, dashboards, alerts, Docker, and security as you run it. The running server
 serves the same text at `/help` after you log in, for this version of the
 binary. `keystone docs` prints it on stdout.
 

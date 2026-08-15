@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+pub mod alerts;
 pub mod auth;
 pub mod cli;
 pub mod help;

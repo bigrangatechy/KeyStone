@@ -56,6 +56,13 @@ local socket on the agent host.
 Unknown metric names are dropped at ingest and at scrape. Exposition text
 from a Prometheus job cannot inject arbitrary series names into the catalog.
 
+## Alert webhook
+
+The optional Settings URL receives the live chip value (`display`) and
+host identity when an alert fires or clears. Anyone who can change that
+field, or who can receive the POST, sees those numbers. Use HTTPS to a
+service you control. The server does not retry failed deliveries.
+
 ## Retention and data
 
 Series live in `data_dir` (Redb). Metadata, users, sessions, node settings,

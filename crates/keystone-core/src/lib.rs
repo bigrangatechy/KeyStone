@@ -7,6 +7,7 @@
 //! `docs/dev/`. Coverage tests fail if the developer pages miss a catalog
 //! name, `DockerOp`, or `Permission`.
 
+pub mod alerts;
 pub mod config;
 pub mod docker;
 pub mod fleet;
@@ -20,6 +21,9 @@ pub mod settings;
 pub mod temp;
 pub mod widgets;
 
+pub use alerts::{
+    apply_node_alerts, firing_alerts, AlertSnapshot, AlertTransition, ALERTS_STATE_KV_KEY,
+};
 pub use config::{
     AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape,
 };

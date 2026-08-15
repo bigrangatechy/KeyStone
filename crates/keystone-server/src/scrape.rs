@@ -71,6 +71,8 @@ async fn prometheus_loop(state: AppState, job: PrometheusScrape) {
                 }
                 if let Err(e) = state.stores.series.write_samples(&node_id, &kept) {
                     warn!("store scrape {}: {e}", job.name);
+                } else {
+                    crate::alerts::note_samples(&state, &node_id, &kept);
                 }
             }
             Err(e) => warn!("prometheus scrape {}: {e}", job.name),
@@ -152,14 +154,18 @@ async fn snmp_loop(state: AppState, job: SnmpScrape) {
                     Sample::new("snmp_scrape_ok", 1.0, ts).with_label("target", &job.target),
                 ];
                 let (kept, _) = sample::allowlist(samples);
-                let _ = state.stores.series.write_samples(&node_id, &kept);
+                if state.stores.series.write_samples(&node_id, &kept).is_ok() {
+                    crate::alerts::note_samples(&state, &node_id, &kept);
+                }
             }
             Err(e) => {
                 warn!("snmp scrape {}: {e}", job.name);
                 let samples =
                     vec![Sample::new("snmp_scrape_ok", 0.0, ts).with_label("target", &job.target)];
                 let (kept, _) = sample::allowlist(samples);
-                let _ = state.stores.series.write_samples(&node_id, &kept);
+                if state.stores.series.write_samples(&node_id, &kept).is_ok() {
+                    crate::alerts::note_samples(&state, &node_id, &kept);
+                }
             }
         }
     }
