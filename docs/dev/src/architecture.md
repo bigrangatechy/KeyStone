@@ -5,6 +5,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Architecture
 
+The product goal is a homelab replacement for Portainer and Netdata: one
+UI, unlimited Linux nodes, live host metrics, per-node Docker through a
+local agent.
+
 KeyStone is a Rust workspace. Agents **push** over a bidirectional gRPC
 stream; the server never dials an agent and never opens a remote
 `docker.sock`.

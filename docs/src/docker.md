@@ -5,6 +5,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Docker
 
+This is the Portainer-shaped half of KeyStone: containers, Compose, images,
+volumes, networks, and logs for **this** node, from the same UI as the
+metrics.
+
 Docker control is **per node** and **off until you enable it**. The server
 never opens a remote engine socket. The agent on that machine talks to
 Docker Engine locally (default `/var/run/docker.sock`). Anyone who can use

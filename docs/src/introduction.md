@@ -5,18 +5,33 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # KeyStone
 
-KeyStone is unlimited-node homelab monitoring with a per-node Docker control
-plane. It is licensed under GPL-2.0-or-later. The software does not impose a
-node cap.
+KeyStone is a **homelab replacement for Portainer and Netdata**: one UI for
+live host metrics *and* Docker Engine on every machine. It is licensed
+under GPL-2.0-or-later. The software does not impose a node cap.
 
-You run **one** dashboard (the server) and an **agent** on every machine you
+You run **one** dashboard (the server) and an **agent** on every box you
 want in that dashboard. Agents **push** host metrics over a gRPC session, so
-the boxes can sit behind NAT. The same session carries Docker commands when
-you opt in on that node. The server can also **scrape** Prometheus exporters
-and SNMP devices that do not run an agent.
+the machines can sit behind NAT. The same session carries Docker commands
+when you opt in on that node. The server can also **scrape** Prometheus
+exporters and SNMP devices that do not run an agent.
 
 Agents have no UI. Docker Engine is only ever opened on the node that runs
 the agent — the server never talks to a remote `docker.sock`.
+
+## Instead of two stacks
+
+| You used to run | KeyStone |
+|---|---|
+| **Netdata** (or similar) on each host for CPU, RAM, disks, NICs, GPU, temperatures | Per-node Overview: customisable widgets, default **1s** poll, history kept on the server (default 24h) |
+| **Portainer** (or similar) against Docker Engine for containers, Compose, images, volumes, networks, logs | The same node page: Observe / Manage / Exec, local socket via the agent |
+
+One login, one agent per machine, as many nodes as you have. You do not
+expose `docker.sock` over the network, and you do not run a metrics UI on
+every Pi.
+
+This version is the homelab slice: Linux agents (`amd64` / `arm64`), a
+local admin account, catalog metrics, and per-node Docker. It is not
+Kubernetes, not a SaaS cloud, and not every collector Netdata ships.
 
 ## Two packages
 

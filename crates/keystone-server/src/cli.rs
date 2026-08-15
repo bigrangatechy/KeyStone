@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(
     name = "keystone",
-    about = "KeyStone server: unlimited-node monitoring, per-node Docker",
+    about = "KeyStone server: homelab metrics and per-node Docker (Portainer + Netdata)",
     version
 )]
 pub struct ServerCli {

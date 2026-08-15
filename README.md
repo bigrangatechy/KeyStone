@@ -5,13 +5,15 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # KeyStone
 
-Unlimited-node server monitoring with per-node Docker management. Licensed
-under **GPL-2.0-or-later**. There is no node cap in the software.
+A homelab replacement for **Portainer** and **Netdata**: one UI for live
+host metrics and Docker Engine on every machine. Licensed under
+**GPL-2.0-or-later**. There is no node cap in the software.
 
 Agents push host (and optional container) metrics to a central server. The
 server can also scrape Prometheus exporters and SNMP devices. Each node has
-a dedicated view for metrics and, when enabled, full Docker Engine control
-(containers, Compose, images, volumes, networks).
+a customisable metrics overview and, when you enable it, Docker control
+(containers, Compose, images, volumes, networks, logs) through the **local**
+engine socket — the server never opens a remote `docker.sock`.
 
 ## License
 

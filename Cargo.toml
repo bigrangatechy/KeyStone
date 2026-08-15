@@ -19,7 +19,7 @@ license = "GPL-2.0-or-later"
 authors = ["The KeyStone Authors"]
 repository = "http://git.bigrangatech.com/Ranga/keystone"
 homepage = "http://git.bigrangatech.com/Ranga/keystone"
-description = "Unlimited-node server monitoring with per-node Docker management"
+description = "Homelab replacement for Portainer and Netdata: host metrics and per-node Docker"
 
 [workspace.dependencies]
 keystone-core = { path = "crates/keystone-core", version = "0.1.0" }

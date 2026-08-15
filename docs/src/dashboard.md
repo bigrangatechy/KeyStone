@@ -5,6 +5,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Dashboards
 
+This is the Netdata-shaped half of KeyStone: live host metrics on one page
+per machine, customisable, without a metrics UI on every box.
+
 Each node Overview is a grid of cards. The page refreshes from the server at
 the node’s **poll interval** (Settings, default **1 second**, range 1–60).
 A connected agent is told to push at the same interval, so the donuts and

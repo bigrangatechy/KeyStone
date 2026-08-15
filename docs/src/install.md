@@ -5,7 +5,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Install
 
-Two `.deb` packages, on purpose: **one UI**, agents on every other machine.
+Two `.deb` packages, on purpose: **one UI** for metrics and Docker, agents
+on every other machine — not Portainer on a Docker host and Netdata on each
+Pi.
 
 | Package | Role | Install on |
 |---|---|---|

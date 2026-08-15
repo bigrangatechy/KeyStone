@@ -5,7 +5,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Using the UI
 
-The HTTP UI is the only console. Agents do not serve a web page.
+The HTTP UI is the only console. Agents do not serve a web page. Open a
+node for the Netdata-shaped **Overview**; the Docker tabs are the
+Portainer-shaped control plane for that machine.
 
 ## Sign in
 
