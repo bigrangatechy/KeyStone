@@ -24,7 +24,8 @@ On the node **Settings** tab:
 2. **Allow mutations** — start, stop, restart, kill, remove; Compose
    up/down/pull; image pull/prune/remove; volume and network create/remove.
    Destructive actions ask for confirmation. The pull/create forms take a
-   plain name, not JSON.
+   plain name, not JSON. Image pull can also be filled from a Docker Hub
+   search on that same form.
 3. **Allow `docker exec`** — reserved for a future interactive exec. This
    version does **not** expose exec in the UI even if the box is ticked.
    Leave it off.
@@ -54,8 +55,8 @@ when mutations are off.
   labels, with a service table per project. **Logs** follows
   `docker compose logs`. With Manage: up / down / pull. **Compose files**
   on Settings are extra `-f` paths when a command does not name a file.
-- **Images** — tags, short id, size. With Manage: pull by name, prune
-  unused, remove.
+- **Images** — tags, short id, size. With Manage: pull by name, search
+  Docker Hub to fill that name, prune unused, remove.
 - **Volumes** and **Networks** — list; create/remove with Manage.
 
 Mutations require a **logged-in UI session**. The ingest token used by
@@ -64,6 +65,23 @@ log (who, node, operation, target, success).
 
 Leave a logs page to stop follow: the browser disconnects, the server
 cancels the agent stream. There is no interactive exec/PTY in this UI.
+
+## Pulling an image
+
+Type `nginx:1.27` (or `ghcr.io/…`) in **Pull** and submit. That is
+`image_pull` on the **agent**. The server never talks to Docker Engine.
+
+Optional: **Search Docker Hub** on the Images toolbar. The browser asks
+the KeyStone server; the server queries Hub’s public HTTP API (not
+`docker.sock`, and not your ingest token). Official images are marked.
+Pick a tag to see last updated and architectures (`amd64`, `arm64`, …).
+That **fills** the pull field — you still press Pull. This is not an app store
+and does not log into Hub.
+
+Unauthenticated Hub search is rate-limited per the **server’s** IP. If
+search fails, type the name yourself. GHCR and private registries are
+not browsed here; you can still pull them by typing the name if that
+node can reach the registry.
 
 ## If the tabs are empty or error
 

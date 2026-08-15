@@ -58,14 +58,16 @@
   <h2>Images</h2>
   {% if docker_manage && docker_reason.is_empty() %}
   <div class="docker-toolbar">
-    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_pull">
-      <input name="name" placeholder="nginx:latest" size="32" required>
+    <form class="inline" id="image-pull-form" method="post" action="/nodes/{{ node_id }}/docker/image_pull">
+      <input id="image-pull-name" name="name" placeholder="nginx:1.27" size="32" required>
       <button type="submit">Pull</button>
     </form>
+    <input id="hub-query" type="search" placeholder="Search Docker Hub" size="24" autocomplete="off" spellcheck="false">
     <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_prune" data-confirm="Prune unused images on this node?">
       <button type="submit" class="danger">Prune unused</button>
     </form>
   </div>
+  <div id="hub-results" hidden></div>
   {% endif %}
   <div id="images" data-json="{{ images_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>

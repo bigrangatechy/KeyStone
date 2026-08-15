@@ -32,7 +32,7 @@ stream; the server never dials an agent and never opens a remote
 
 | Crate | Binary / role |
 |---|---|
-| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers. No I/O. |
+| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers, Docker Hub search/tag mapping (no I/O). |
 | `keystone-proto` | Generated from `proto/ingest.proto`. |
 | `keystone-store` | `keystone.sqlite` + `series.redb`. |
 | `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client, optional mDNS browse. |
@@ -58,6 +58,9 @@ data dir in examples is `.smoke`.
    The agent runs `DockerOp` and returns `CommandResult`. Logs use
    `StreamChunk` then a result; the HTML logs page is an EventSource onto
    that stream. `cancel` aborts a follow when the browser disconnects.
+   Image pull is still that path. Docker Hub search is a separate
+   cookie-authed GET: the server talks to `hub.docker.com` over HTTPS and
+   returns names/tags; it never pulls and never opens `docker.sock`.
 5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`. The
    home page polls `GET /api/v1/nodes` every second for fleet chips
    (`fleet_chips` in `keystone-core`). Header **Alerts** polls
@@ -72,4 +75,5 @@ send `set_runtime`.
 
 SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
-thresholds, PagerDuty.
+thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
+browse, Docker Hub login.

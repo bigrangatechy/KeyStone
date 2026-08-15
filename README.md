@@ -40,7 +40,7 @@ They do not conflict. CI builds `amd64` and `arm64` (Pi 4/5). See
 
 ```
 # Match dpkg --print-architecture (amd64 on typical Ubuntu, arm64 on a 64-bit Pi)
-sudo apt install ./keystone-server_0.1.0-3_amd64.deb ./keystone-agent_0.1.0-3_amd64.deb
+sudo apt install ./keystone-server_0.1.0-4_amd64.deb ./keystone-agent_0.1.0-3_amd64.deb
 sudo systemctl enable --now keystone-server keystone-agent
 
 # Every other node

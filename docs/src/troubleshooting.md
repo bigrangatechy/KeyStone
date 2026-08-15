@@ -122,6 +122,9 @@ token does not.
   checkbox on and save; a connected agent applies it without restart.
 - Logs page stays empty: the agent must be **control connected**. Leave the
   page to cancel follow. Exec is not in the UI yet.
+- Docker Hub search empty or an error: type `nginx:1.27` in Pull yourself.
+  Hub rate-limits the **server** IP (not each browser). GHCR and private
+  registries are not searched; paste the full name if the node can pull it.
 
 ## Token rotate left every node red
 

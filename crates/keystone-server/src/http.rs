@@ -101,6 +101,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/catalog", get(catalog_api))
         .route("/api/v1/alerts", get(alerts_api))
         .route("/api/v1/nodes", get(nodes_api))
+        .route("/api/v1/dockerhub/search", get(crate::dockerhub::search))
+        .route("/api/v1/dockerhub/tags", get(crate::dockerhub::tags))
         .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
@@ -2177,6 +2179,21 @@ mod tests {
         assert!(
             !toml.contains("8080"),
             "snippet must not send agents to the UI port"
+        );
+    }
+
+    #[test]
+    fn dockerhub_api_is_behind_the_session_cookie() {
+        let src = include_str!("http.rs");
+        let head = src.split("#[cfg(test)]").next().expect("router source");
+        let authed_end = head.find(".layer(").expect("session layer");
+        let search = head.find("/api/v1/dockerhub/search").expect("search route");
+        let tags = head.find("/api/v1/dockerhub/tags").expect("tags route");
+        assert!(search < authed_end, "Hub search must require a UI session");
+        assert!(tags < authed_end, "Hub tags must require a UI session");
+        assert!(
+            !head[authed_end..].contains("/api/v1/dockerhub"),
+            "Hub lookup must not be on the public router"
         );
     }
 

@@ -4,6 +4,7 @@
 pub mod alerts;
 pub mod auth;
 pub mod cli;
+pub mod dockerhub;
 pub mod help;
 pub mod http;
 pub mod ingest;

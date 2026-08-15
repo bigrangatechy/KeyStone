@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Shared types for KeyStone: metric catalog, config, RBAC, Docker ops.
+//! Shared types for KeyStone: metric catalog, config, RBAC, Docker ops,
+//! Docker Hub search/tag mapping (no HTTP).
 //!
 //! Operator docs live in `docs/src/` (served at `/help`). Internals live in
 //! `docs/dev/`. Coverage tests fail if the developer pages miss a catalog
@@ -10,6 +11,7 @@
 pub mod alerts;
 pub mod config;
 pub mod docker;
+pub mod dockerhub;
 pub mod fleet;
 pub mod gpu;
 pub mod mdns;
@@ -29,6 +31,7 @@ pub use config::{
     AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape, TlsConfig,
 };
 pub use docker::DockerOp;
+pub use dockerhub::{parse_search, parse_tags, pull_ref, search_url, tags_url, HubRepo, HubTag};
 pub use fleet::{fleet_chips, FleetChip};
 pub use mdns::{ingest_url_from_mdns, wants_mdns, MDNS_SERVICE_TYPE};
 pub use metrics::{catalog, is_known_metric, MetricDef, MetricType, Stability};

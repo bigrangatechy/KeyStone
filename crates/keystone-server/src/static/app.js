@@ -424,6 +424,179 @@
     compose.replaceChildren(wrap);
   }
 
+  function hubError(r, data) {
+    if (data && data.error) return data.error;
+    if (r.status === 429) return "Docker Hub rate-limited this server. Type the image name to pull.";
+    if (r.status === 401 || r.status === 403) return "Sign in again to search Docker Hub.";
+    return "Could not reach Docker Hub. Type the image name to pull.";
+  }
+
+  function formatStars(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x) || x <= 0) return "";
+    if (x >= 1000) return Math.round(x / 1000) + "k stars";
+    return String(Math.round(x)) + " stars";
+  }
+
+  function bindHubSearch() {
+    const input = document.getElementById("hub-query");
+    const out = document.getElementById("hub-results");
+    const nameField = document.getElementById("image-pull-name");
+    if (!input || !out || !nameField) return;
+
+    let timer = 0;
+    let searchAbort = null;
+    let tagsAbort = null;
+
+    function show(node) {
+      out.hidden = !node;
+      out.replaceChildren(node || document.createTextNode(""));
+    }
+
+    function statusLine(text, isError) {
+      const p = el("p", isError ? "error" : "muted", text);
+      const wrap = el("div", "hub-panel");
+      wrap.appendChild(p);
+      show(wrap);
+    }
+
+    input.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      const q = input.value.trim();
+      if (q.length < 2) {
+        if (searchAbort) searchAbort.abort();
+        show(null);
+        return;
+      }
+      timer = window.setTimeout(() => runSearch(q), 350);
+    });
+
+    async function runSearch(q) {
+      if (searchAbort) searchAbort.abort();
+      searchAbort = new AbortController();
+      statusLine("Searching Docker Hub…", false);
+      try {
+        const r = await fetch("/api/v1/dockerhub/search?q=" + encodeURIComponent(q), {
+          signal: searchAbort.signal
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          statusLine(hubError(r, data), true);
+          return;
+        }
+        paintRepos(Array.isArray(data.results) ? data.results : []);
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+        statusLine("Could not reach Docker Hub. Type the image name to pull.", true);
+      }
+    }
+
+    function paintRepos(results) {
+      const wrap = el("div", "hub-panel");
+      wrap.appendChild(el("p", "muted", "Pick a repository, then a tag. That fills Pull — the agent still pulls."));
+      if (!results.length) {
+        wrap.appendChild(el("p", "muted", "No repositories matched."));
+        show(wrap);
+        return;
+      }
+      const list = document.createElement("ul");
+      list.className = "hub-list";
+      results.forEach((repo) => {
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const title = document.createElement("span");
+        const code = document.createElement("code");
+        code.textContent = repo.pull_name || repo.name || "";
+        title.appendChild(code);
+        if (repo.official) {
+          const badge = document.createElement("span");
+          badge.className = "hub-official";
+          badge.textContent = "official";
+          title.appendChild(badge);
+        }
+        btn.appendChild(title);
+        const meta = document.createElement("span");
+        meta.className = "hub-meta muted";
+        const bits = [];
+        if (repo.description) bits.push(repo.description);
+        const stars = formatStars(repo.stars);
+        if (stars) bits.push(stars);
+        meta.textContent = bits.join(" · ");
+        if (meta.textContent) btn.appendChild(meta);
+        btn.addEventListener("click", () => {
+          list.querySelectorAll("button").forEach((b) => b.classList.remove("is-open"));
+          btn.classList.add("is-open");
+          loadTags(wrap, repo);
+        });
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+      wrap.appendChild(list);
+      show(wrap);
+    }
+
+    async function loadTags(wrap, repo) {
+      if (tagsAbort) tagsAbort.abort();
+      tagsAbort = new AbortController();
+      let tagsHost = wrap.querySelector(".hub-tags");
+      if (!tagsHost) {
+        tagsHost = el("div", "hub-tags");
+        wrap.appendChild(tagsHost);
+      }
+      tagsHost.replaceChildren(el("p", "muted", "Loading tags…"));
+      const ns = encodeURIComponent(repo.namespace || "library");
+      const name = encodeURIComponent(repo.name || "");
+      try {
+        const r = await fetch("/api/v1/dockerhub/tags?namespace=" + ns + "&name=" + name, {
+          signal: tagsAbort.signal
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          tagsHost.replaceChildren(el("p", "error", hubError(r, data)));
+          return;
+        }
+        paintTags(tagsHost, Array.isArray(data.results) ? data.results : []);
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+        tagsHost.replaceChildren(el("p", "error", "Could not load tags. Type the image name to pull."));
+      }
+    }
+
+    function paintTags(host, results) {
+      host.replaceChildren();
+      if (!results.length) {
+        host.appendChild(el("p", "muted", "No tags returned."));
+        return;
+      }
+      const list = document.createElement("ul");
+      list.className = "hub-list";
+      results.forEach((tag) => {
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const code = document.createElement("code");
+        code.textContent = tag.pull_ref || "";
+        btn.appendChild(code);
+        const meta = document.createElement("span");
+        meta.className = "hub-meta muted";
+        const bits = [];
+        if (tag.last_updated) bits.push(tag.last_updated);
+        const archs = Array.isArray(tag.architectures) ? tag.architectures.join(", ") : "";
+        if (archs) bits.push(archs);
+        meta.textContent = bits.join(" · ");
+        if (meta.textContent) btn.appendChild(meta);
+        btn.addEventListener("click", () => {
+          nameField.value = tag.pull_ref || "";
+          nameField.focus();
+        });
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+      host.appendChild(list);
+    }
+  }
+
   const images = document.getElementById("images");
   if (images && !dockerBlocked(images)) {
     const data = parse(images);
@@ -455,6 +628,8 @@
     table.appendChild(body);
     images.replaceChildren(table);
   }
+
+  bindHubSearch();
 
   const volumes = document.getElementById("volumes");
   if (volumes && !dockerBlocked(volumes)) {

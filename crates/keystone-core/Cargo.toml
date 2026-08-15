@@ -9,7 +9,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Shared types, metric catalog, config, RBAC, and widgets for KeyStone"
+description = "Shared types, metric catalog, config, RBAC, widgets, and Docker Hub mapping for KeyStone"
 
 [dependencies]
 inventory.workspace = true

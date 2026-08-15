@@ -148,6 +148,12 @@ flags are false, even if the UI were buggy.
 Do not point `docker.host` at another machine’s engine. KeyStone’s model is
 local socket on the agent host.
 
+The Images tab can search **Docker Hub** through the server (public Hub
+HTTP API, cookie session). That lookup is not a Docker Engine call and
+does not use the ingest token. Pull still runs on the agent. Hub
+rate-limits unauthenticated search per IP — if it fails, type the image
+name. There is no Hub login in this version.
+
 ## Metrics allowlist
 
 Unknown metric names are dropped at ingest and at scrape. Exposition text
