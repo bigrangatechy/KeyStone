@@ -11,9 +11,9 @@
 <body class="login-body">
   <form class="login" method="post" action="/login">
     <h1>KeyStone</h1>
-    <p class="muted">Unlimited-node monitoring</p>
+    <p class="muted">First sign-in is <code>{{ username }}</code> / <code>changeme</code> unless you set a password at install. You will be asked to choose a new one.</p>
     {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
-    <label>Username <input name="username" required autofocus></label>
+    <label>Username <input name="username" value="{{ username }}" required autofocus></label>
     <label>Password <input name="password" type="password" required></label>
     <button type="submit">Sign in</button>
   </form>

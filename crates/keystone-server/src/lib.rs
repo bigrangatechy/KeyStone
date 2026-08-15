@@ -7,6 +7,7 @@ pub mod cli;
 pub mod help;
 pub mod http;
 pub mod ingest;
+pub mod mdns;
 pub mod scrape;
 pub mod state;
 pub mod tls;

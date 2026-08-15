@@ -12,6 +12,7 @@ pub mod config;
 pub mod docker;
 pub mod fleet;
 pub mod gpu;
+pub mod mdns;
 pub mod metrics;
 pub mod net;
 pub mod node;
@@ -29,6 +30,7 @@ pub use config::{
 };
 pub use docker::DockerOp;
 pub use fleet::{fleet_chips, FleetChip};
+pub use mdns::{ingest_url_from_mdns, wants_mdns, MDNS_SERVICE_TYPE};
 pub use metrics::{catalog, is_known_metric, MetricDef, MetricType, Stability};
 pub use node::NodeIdentity;
 pub use rbac::Permission;

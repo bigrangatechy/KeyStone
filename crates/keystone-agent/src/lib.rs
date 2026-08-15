@@ -5,6 +5,7 @@ pub mod buffer;
 pub mod cli;
 pub mod collect;
 pub mod docker;
+pub mod mdns;
 pub mod session;
 
 pub use cli::AgentCli;

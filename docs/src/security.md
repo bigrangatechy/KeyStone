@@ -22,8 +22,9 @@ This version is one local admin (Argon2id). There is no SSO and no extra
 roles: the signed-in user can view every node, and can manage Docker on a
 node to the extent that node’s Settings allow.
 
-When the admin row is first created from `KEYSTONE_ADMIN_PASSWORD`, the
-next login must choose a different password (8+ characters) before the UI
+When the admin row is first created (empty `password_hash`), the password
+is `KEYSTONE_ADMIN_PASSWORD` if set, otherwise **`changeme`**. The next
+login must choose a different password (8+ characters) before the UI
 unlocks. Putting a hash in `server.toml` yourself skips that prompt.
 
 ## Authenticator (2FA)
@@ -118,6 +119,12 @@ There is no skip-verify flag.
 
 Do not expose `grpc_listen` without a non-empty ingest token. Empty token
 means any client can push (and enroll) — local smoke tests only.
+
+The UI advertises ingest on **mDNS** (`_keystone._tcp.local.`, UDP 5353).
+TXT has only `scheme=http` or `scheme=https`. The **ingest token is never
+in mDNS**. Anyone on the LAN can learn the gRPC port; they still need the
+token to push. mDNS does not cross routers unless you run a reflector.
+If multicast is blocked, set `ingest_url` to an explicit `http(s)://`.
 
 Rotate the token from Settings when it leaks. Update every `agent.toml` (or
 agent environment) and restart those agents; connected sessions will fail

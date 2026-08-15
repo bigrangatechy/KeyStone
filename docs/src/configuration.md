@@ -18,7 +18,7 @@ exists) from **operator settings** (the UI after first start).
 | `grpc_listen` | Agent ingest. Default `0.0.0.0:9100`. TLS when `[tls]` is set and `ingest` is true (the default once certs exist). |
 | `data_dir` | SQLite, session cookies’ store, series database. Packaged: `/var/lib/keystone`. |
 | `[auth] username` | Local admin name. Default `admin`. |
-| `[auth] password_hash` | Argon2id hash. Empty means hash `KEYSTONE_ADMIN_PASSWORD` on first start. |
+| `[auth] password_hash` | Argon2id hash. Empty means hash `KEYSTONE_ADMIN_PASSWORD` on first start, or `changeme` if that is unset. |
 | `[tls] cert_file` / `key_file` | PEM paths. Both set = UI HTTPS. Both empty = plaintext. |
 | `[tls] ingest` | Also wrap gRPC. Default **true**. Set `false` to leave agents on `http://`. |
 
@@ -30,14 +30,14 @@ Environment:
 | Variable | Meaning |
 |---|---|
 | `KEYSTONE_SERVER_CONFIG` | Config path if you do not pass `--config`. Default `/etc/keystone/server.toml`. |
-| `KEYSTONE_ADMIN_PASSWORD` | First-start password when `password_hash` is empty. Also used by `keystone hash-password`. The UI then requires a new password on first login. |
+| `KEYSTONE_ADMIN_PASSWORD` | Optional first-start password when `password_hash` is empty (otherwise `changeme`). Also used by `keystone hash-password`. The UI then requires a new password on first login. |
 | `KEYSTONE_INGEST_TOKEN` | If set, **always** overrides the ingest token stored in Settings. The Settings field is read-only until you unset it. |
 
 ### Agent — `/etc/keystone/agent.toml`
 
 | Field | Meaning |
 |---|---|
-| `ingest_url` | gRPC URL of the server, e.g. `http://keystone.home.arpa:9100` or `https://…:9100` when ingest TLS is on. Host must match the cert. |
+| `ingest_url` | gRPC URL of the server, e.g. `http://keystone.home.arpa:9100` or `https://…:9100` when ingest TLS is on. Host must match the cert. Packaged default **`mdns`**: browse `_keystone._tcp.local.` on the LAN (UDP 5353). Empty and `mdns://` mean the same. |
 | `ingest_token` | Must match Settings (or `KEYSTONE_INGEST_TOKEN`). |
 | `node_id` | Stable id. Empty = hostname. |
 | `buffer_dir` | On-disk push buffer while the server is unreachable. Packaged: `/var/lib/keystone/agent-buffer`. |

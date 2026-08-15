@@ -60,11 +60,12 @@ sets `docker_enabled` on the new row.
 
 ## `AgentConfig` / `ServerConfig`
 
-Serde TOML. Agent required at runtime: `ingest_url`, token, `node_id` or
-hostname, `buffer_dir`. `tls_ca_file` when `ingest_url` is `https://` and
-the CA is not in web PKI. Docker enable/manage/exec in TOML apply only until
-the first `set_runtime`. Comments on the structs should describe that
-split; do not point at generated markdown.
+Serde TOML. Agent required at runtime: `ingest_url` (`http(s)://…` or
+`mdns`), token, `node_id` or hostname, `buffer_dir`. `tls_ca_file` when
+the resolved ingest URL is `https://` and the CA is not in web PKI. Docker
+enable/manage/exec in TOML apply only until the first `set_runtime`.
+Comments on the structs should describe that split; do not point at
+generated markdown.
 
 Examples: `examples/agent.toml`, `examples/server.toml`. Packaged copies:
 `packaging/deb/*/`. Tests in `config/mod.rs` parse the examples.

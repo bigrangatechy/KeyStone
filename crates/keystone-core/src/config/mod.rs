@@ -92,7 +92,8 @@ mod tests {
         assert!(!server.tls.ui_https());
         let agent: AgentConfig =
             load_toml(&root.join("packaging/deb/agent/agent.toml")).expect("packaged agent");
-        assert!(agent.ingest_url.starts_with("http://"));
+        assert!(crate::wants_mdns(&agent.ingest_url));
+        assert_eq!(agent.ingest_token, "change-me");
         assert!(agent.tls_ca_file.is_empty());
     }
 

@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 /// connected; TOML is the fallback until then.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    /// gRPC ingest URL, for example `http://keystone.example:9100` or
-    /// `https://keystone.example:9100` when the server has ingest TLS.
+    /// gRPC ingest URL (`http://host:9100` / `https://host:9100`), or
+    /// `mdns` to browse `_keystone._tcp.local.` on the LAN.
     pub ingest_url: String,
     /// Shared ingest token. This cannot call Docker manage APIs.
     #[serde(default)]

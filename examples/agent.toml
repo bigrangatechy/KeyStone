@@ -6,6 +6,9 @@
 # Run `cargo run` from the repo root.
 #
 # Required: ingest_url, ingest_token, node_id (or hostname), buffer_dir.
+# ingest_url is http://host:9100, https://host:9100 (ingest TLS), or mdns
+# (browse the LAN). Smoke tests keep a loopback URL so they do not need
+# multicast. Packaged agents default to mdns.
 # Optional docker.host if the engine socket is not /var/run/docker.sock.
 # Optional tls_ca_file when ingest_url is https:// and the CA is private.
 # Poll interval, Docker enable/manage/exec, labels, and compose paths are

@@ -2,5 +2,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Optional environment for keystone-server.service
-# KEYSTONE_ADMIN_PASSWORD=  # first start only, if auth.password_hash is empty
+# First start without a hash uses password changeme (must change in the UI).
+# KEYSTONE_ADMIN_PASSWORD=  # override that bootstrap password
 # KEYSTONE_INGEST_TOKEN=change-me

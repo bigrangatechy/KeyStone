@@ -232,6 +232,16 @@ impl AppState {
         let env_ingest_token = std::env::var("KEYSTONE_INGEST_TOKEN")
             .ok()
             .filter(|s| !s.is_empty());
+        Self::from_parts(config, stores, env_ingest_token)
+    }
+
+    /// Tests must not inherit `KEYSTONE_INGEST_TOKEN` from the developer’s shell.
+    #[cfg(test)]
+    pub(crate) fn for_test(config: ServerConfig, stores: Stores) -> Self {
+        Self::from_parts(config, stores, None)
+    }
+
+    fn from_parts(config: ServerConfig, stores: Stores, env_ingest_token: Option<String>) -> Self {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()

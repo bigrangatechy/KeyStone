@@ -179,15 +179,21 @@ async fn require_session(
 #[template(path = "login.html")]
 struct LoginTemplate {
     error: String,
+    username: String,
 }
 
-async fn login_page() -> impl IntoResponse {
+fn login_view(state: &AppState, error: String) -> LoginTemplate {
+    LoginTemplate {
+        error,
+        username: state.config.auth.username.clone(),
+    }
+}
+
+async fn login_page(State(state): State<AppState>) -> impl IntoResponse {
     Html(
-        LoginTemplate {
-            error: String::new(),
-        }
-        .render()
-        .unwrap_or_else(|e| e.to_string()),
+        login_view(&state, String::new())
+            .render()
+            .unwrap_or_else(|e| e.to_string()),
     )
 }
 
@@ -206,7 +212,7 @@ async fn login_post(
     let login_fail = |error: String| {
         (
             StatusCode::UNAUTHORIZED,
-            Html(LoginTemplate { error }.render().unwrap_or_default()),
+            Html(login_view(&state, error).render().unwrap_or_default()),
         )
             .into_response()
     };
@@ -1084,6 +1090,7 @@ async fn nodes_api(State(state): State<AppState>) -> Json<NodesApi> {
 #[template(path = "node_new.html")]
 struct NodeNewTemplate {
     ingest_url: String,
+    explicit_ingest_url: String,
     error: String,
 }
 
@@ -1114,6 +1121,46 @@ fn suggested_ingest_url(headers: &HeaderMap, cfg: &keystone_core::config::Server
     format!("{scheme}://{}:{grpc_port}", host_without_port(host))
 }
 
+/// Packaged / same-LAN default. Ingest TLS needs a hostname that matches
+/// the cert, so that path keeps the explicit URL from the Host header.
+fn default_agent_ingest_url(
+    headers: &HeaderMap,
+    cfg: &keystone_core::config::ServerConfig,
+) -> String {
+    if cfg.tls.ingest_https() {
+        suggested_ingest_url(headers, cfg)
+    } else {
+        "mdns".into()
+    }
+}
+
+fn node_new_page(
+    headers: &HeaderMap,
+    cfg: &keystone_core::config::ServerConfig,
+    error: String,
+) -> NodeNewTemplate {
+    NodeNewTemplate {
+        ingest_url: default_agent_ingest_url(headers, cfg),
+        explicit_ingest_url: suggested_ingest_url(headers, cfg),
+        error,
+    }
+}
+
+fn agent_toml_snippet(ingest_url: &str, explicit: &str, token: &str, node_id: &str) -> String {
+    let mut s = format!(
+        "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{node_id}\"\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n",
+    );
+    if keystone_core::wants_mdns(ingest_url) {
+        s.push_str(&format!(
+            "# ingest_url = \"{explicit}\"  # other subnet, or if mDNS is blocked\n",
+        ));
+    }
+    if ingest_url.starts_with("https://") || explicit.starts_with("https://") {
+        s.push_str("# tls_ca_file = \"/etc/keystone/ca.pem\"  # private CA or self-signed only\n");
+    }
+    s
+}
+
 fn slug_node_id(hostname: &str, node_id: &str) -> Result<String, String> {
     let raw = if node_id.trim().is_empty() {
         hostname
@@ -1141,12 +1188,9 @@ fn slug_node_id(hostname: &str, node_id: &str) -> Result<String, String> {
 
 async fn add_node_page(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     Html(
-        NodeNewTemplate {
-            ingest_url: suggested_ingest_url(&headers, &state.config),
-            error: String::new(),
-        }
-        .render()
-        .unwrap_or_else(|e| e.to_string()),
+        node_new_page(&headers, &state.config, String::new())
+            .render()
+            .unwrap_or_else(|e| e.to_string()),
     )
 }
 
@@ -1174,10 +1218,11 @@ async fn add_node_post(
                 .register_node(&node_id, &hostname, "[]")
             {
                 return Html(
-                    NodeNewTemplate {
-                        ingest_url: suggested_ingest_url(&headers, &state.config),
-                        error: format!("could not register node: {e}"),
-                    }
+                    node_new_page(
+                        &headers,
+                        &state.config,
+                        format!("could not register node: {e}"),
+                    )
                     .render()
                     .unwrap_or_default(),
                 )
@@ -1202,7 +1247,7 @@ async fn add_node_post(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
-                .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config));
+                .unwrap_or_else(|| default_agent_ingest_url(&headers, &state.config));
             let qs = format!(
                 "/nodes/{node_id}/setup?ingest_url={}&docker={}",
                 urlencoding_lite(&ingest),
@@ -1211,12 +1256,9 @@ async fn add_node_post(
             Redirect::to(&qs).into_response()
         }
         Err(error) => Html(
-            NodeNewTemplate {
-                ingest_url: suggested_ingest_url(&headers, &state.config),
-                error,
-            }
-            .render()
-            .unwrap_or_default(),
+            node_new_page(&headers, &state.config, error)
+                .render()
+                .unwrap_or_default(),
         )
         .into_response(),
     }
@@ -1264,20 +1306,13 @@ async fn node_setup_page(
     let ingest_url = q
         .ingest_url
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| suggested_ingest_url(&headers, &state.config));
+        .unwrap_or_else(|| default_agent_ingest_url(&headers, &state.config));
     let settings = node_settings(&state, &id);
     let docker = q.docker.as_deref() == Some("true") || settings.docker_enabled;
     let token = state.ingest_token();
     let awaiting = node.awaiting_agent();
-    let mut agent_toml = format!(
-        "ingest_url = \"{ingest_url}\"\ningest_token = \"{token}\"\nnode_id = \"{}\"\nbuffer_dir = \"/var/lib/keystone/agent-buffer\"\n",
-        node.node_id,
-    );
-    if ingest_url.starts_with("https://") {
-        agent_toml.push_str(
-            "# tls_ca_file = \"/etc/keystone/ca.pem\"  # private CA or self-signed only\n",
-        );
-    }
+    let explicit = suggested_ingest_url(&headers, &state.config);
+    let agent_toml = agent_toml_snippet(&ingest_url, &explicit, &token, &node.node_id);
     Html(
         NodeSetupTemplate {
             node_id: node.node_id,
@@ -2112,5 +2147,55 @@ mod tests {
         assert_eq!(relative_seen(now, false), "just now");
         assert_eq!(relative_seen(now - 12, false), "12s ago");
         assert_eq!(relative_seen(now - 120, false), "2m ago");
+    }
+
+    fn host_headers(host: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::HOST, host.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn suggested_ingest_uses_grpc_port_not_ui_port() {
+        let cfg = keystone_core::config::ServerConfig::default();
+        let url = suggested_ingest_url(&host_headers("192.168.1.10:8080"), &cfg);
+        assert_eq!(url, "http://192.168.1.10:9100");
+        assert!(!url.contains("8080"));
+    }
+
+    #[test]
+    fn add_node_snippet_is_mdns_plus_token_with_explicit_fallback() {
+        let cfg = keystone_core::config::ServerConfig::default();
+        let headers = host_headers("192.168.1.10:8080");
+        assert_eq!(default_agent_ingest_url(&headers, &cfg), "mdns");
+        let explicit = suggested_ingest_url(&headers, &cfg);
+        let toml = agent_toml_snippet("mdns", &explicit, "s3cret-from-settings", "lab-pi");
+        assert!(toml.contains("ingest_url = \"mdns\""));
+        assert!(toml.contains("ingest_token = \"s3cret-from-settings\""));
+        assert!(toml.contains("node_id = \"lab-pi\""));
+        assert!(toml.contains("http://192.168.1.10:9100"));
+        assert!(
+            !toml.contains("8080"),
+            "snippet must not send agents to the UI port"
+        );
+    }
+
+    #[test]
+    fn ingest_tls_snippet_is_https_not_mdns() {
+        let cfg = keystone_core::config::ServerConfig {
+            tls: keystone_core::config::TlsConfig {
+                cert_file: "/c.pem".into(),
+                key_file: "/k.pem".into(),
+                ingest: true,
+            },
+            ..keystone_core::config::ServerConfig::default()
+        };
+        let headers = host_headers("keystone.home.arpa:8080");
+        let url = default_agent_ingest_url(&headers, &cfg);
+        assert_eq!(url, "https://keystone.home.arpa:9100");
+        let toml = agent_toml_snippet(&url, &url, "tok", "n1");
+        assert!(toml.contains("ingest_url = \"https://keystone.home.arpa:9100\""));
+        assert!(toml.contains("tls_ca_file"));
+        assert!(!toml.contains("ingest_url = \"mdns\""));
     }
 }

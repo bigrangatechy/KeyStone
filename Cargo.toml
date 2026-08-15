@@ -45,6 +45,7 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"] }
 inventory = "0.3"
+mdns-sd = "0.11"
 parking_lot = "0.12"
 prost = "0.13"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

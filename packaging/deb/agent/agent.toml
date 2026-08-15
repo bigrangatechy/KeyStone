@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Packaged default. Prefer the agent.toml from Add node in the UI.
-# Edit ingest_url and ingest_token if you skip that, then:
+# ingest_url = "mdns" finds the UI on the same LAN (UDP 5353).
+# Other subnet: set ingest_url to http://<ui-host>:9100 (gRPC, not :8080).
+# ingest_token must match Settings (Generate new ingest token if you
+# rotated away from change-me). Then:
 #   systemctl enable --now keystone-agent
 #
 # Docker, poll interval, labels, and compose paths are node Settings
 # after the agent connects. docker.host stays here if the socket is
 # not /var/run/docker.sock.
 
-ingest_url = "http://keystone.home.arpa:9100"
+ingest_url = "mdns"
 ingest_token = "change-me"
 buffer_dir = "/var/lib/keystone/agent-buffer"
 # tls_ca_file = "/etc/keystone/ca.pem"  # private CA / self-signed; omit for Let's Encrypt

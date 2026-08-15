@@ -14,15 +14,13 @@ plane.
 
 Open the listen address from `http_listen` (packaged default port **8080**).
 This version is a **single local admin** account: username from
-`server.toml` (`admin` unless you changed it), password from the first-start
-hash.
+`server.toml` (`admin` unless you changed it). Packaged first start is
+password **`changeme`** (or `KEYSTONE_ADMIN_PASSWORD` if you set it).
 
-If the account was created from `KEYSTONE_ADMIN_PASSWORD` (empty
-`password_hash` in the file), the first sign-in asks you to **choose a new
-password** (at least 8 characters, not the bootstrap one). You cannot use
-the rest of the UI until that is saved. After that, a short **welcome tour**
-points at Nodes, Alerts, Settings, and Add node. Skip it anytime; replay it
-from Settings.
+The first sign-in asks you to **choose a new password** (at least 8
+characters, not the bootstrap one). You cannot use the rest of the UI until
+that is saved. After that, a short **welcome tour** points at Nodes, Alerts,
+Settings, and Add node. Skip it anytime; replay it from Settings.
 
 If you enabled an **authenticator** on Settings, sign-in asks for a 6-digit
 code (or a backup code) after the password. See [Security](security.md).
@@ -61,13 +59,22 @@ Enter a hostname (used as the default `node_id` unless you override it).
 Optionally tick that the box runs Docker — that only pre-enables **Observe
 Docker** on the node; Manage and Exec stay off until you turn them on.
 
-The setup page is the install snippet: ingest URL (gRPC port), ingest token,
-`node_id`, and `buffer_dir`. Copy it to `/etc/keystone/agent.toml` on the
-target and start `keystone-agent`. You can reopen **install agent** from the
-node header later.
+The ingest URL defaults to **`mdns`**: the agent browses the LAN for this
+UI (same broadcast domain, UDP 5353) and does not need this machine’s IP.
+Paste an `http://host:9100` URL instead if the node is on another subnet
+or multicast is blocked. (gRPC port **9100**, not the UI on **8080**.)
+Ingest TLS needs a hostname that matches the certificate, so that path
+fills the explicit `https://` URL.
+
+The setup page is the install snippet: ingest URL, ingest token, `node_id`,
+and `buffer_dir`. Copy it to `/etc/keystone/agent.toml` on the target and
+start `keystone-agent`. You can reopen **install agent** from the node
+header later.
 
 Unknown agents that present the current ingest token are enrolled without
 the form. Their `node_id` is whatever the agent sent (hostname if unset).
+A packaged agent with `ingest_url = "mdns"` and a matching token can
+appear on the home page without Add node at all.
 
 ## Node page
 

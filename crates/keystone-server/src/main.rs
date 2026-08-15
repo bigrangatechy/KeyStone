@@ -10,7 +10,7 @@ use keystone_core::config::{self, ServerConfig};
 use keystone_server::auth;
 use keystone_server::cli::{Command, ServerCli};
 use keystone_server::state::AppState;
-use keystone_server::{help, http, ingest, scrape, tls};
+use keystone_server::{help, http, ingest, mdns, scrape, tls};
 use keystone_store::Stores;
 use tracing_subscriber::EnvFilter;
 
@@ -88,6 +88,7 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
     if http_tls {
         tracing::info!("TLS cert {} key {}", cfg.tls.cert_file, cfg.tls.key_file);
     }
+    let grpc_listen = cfg.grpc_listen.clone();
     let state = AppState::new(cfg, stores);
     state.seed_server_settings()?;
     scrape::spawn(state.clone());
@@ -99,6 +100,7 @@ async fn serve(config_path: PathBuf) -> anyhow::Result<()> {
     } else {
         tracing::info!("gRPC ingest on {grpc_addr} (plaintext)");
     }
+    mdns::advertise_ingest(&grpc_listen, ingest_tls);
 
     let app = http::router(state.clone());
     let http = tls::serve_http(http_addr, app, pem.as_ref());

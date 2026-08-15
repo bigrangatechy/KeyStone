@@ -189,3 +189,186 @@ fn identity_from_heartbeat(hb: &Heartbeat) -> NodeIdentity {
             .collect(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keystone_core::config::ServerConfig;
+    use keystone_proto::ingest_client::IngestClient;
+    use keystone_store::Stores;
+    use tokio::net::TcpListener;
+    use tokio::time::{sleep, Duration};
+    use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
+    use tokio_stream::StreamExt;
+    use tonic::transport::Server;
+
+    fn scratch(token: &str) -> (std::path::PathBuf, AppState) {
+        let dir = std::env::temp_dir().join(format!("ks-ing-{}", uuid::Uuid::new_v4()));
+        let stores = Stores::open(&dir, 24).unwrap();
+        let cfg = ServerConfig {
+            data_dir: dir.to_string_lossy().into(),
+            ingest_token: token.into(),
+            ..ServerConfig::default()
+        };
+        let state = AppState::for_test(cfg, stores);
+        state.seed_server_settings().unwrap();
+        (dir, state)
+    }
+
+    fn push(node: &str, token: &str, samples: Vec<keystone_proto::Sample>) -> PushFrame {
+        PushFrame {
+            heartbeat: Some(Heartbeat {
+                node_id: node.into(),
+                hostname: node.into(),
+                agent_version: "test".into(),
+                os: "linux".into(),
+                kernel: "test".into(),
+                docker_version: String::new(),
+                labels: vec![],
+            }),
+            samples,
+            ingest_token: token.into(),
+        }
+    }
+
+    fn cpu_sample() -> keystone_proto::Sample {
+        keystone_proto::Sample {
+            metric: "node_cpu_usage_ratio".into(),
+            labels: vec![],
+            value: 0.42,
+            timestamp_unix_ms: 1,
+        }
+    }
+
+    #[test]
+    fn add_node_then_matching_push_clears_awaiting() {
+        let (dir, state) = scratch("lab-token");
+        state
+            .stores
+            .metadata
+            .register_node("lab-pi", "lab-pi", "[]")
+            .unwrap();
+        assert!(state
+            .stores
+            .metadata
+            .get_node("lab-pi")
+            .unwrap()
+            .unwrap()
+            .awaiting_agent());
+        handle_push(&state, &push("lab-pi", "lab-token", vec![cpu_sample()])).unwrap();
+        let node = state.stores.metadata.get_node("lab-pi").unwrap().unwrap();
+        assert!(!node.awaiting_agent());
+        let latest = state.stores.series.latest_samples("lab-pi").unwrap();
+        assert!(latest.iter().any(|s| s.metric == "node_cpu_usage_ratio"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unknown_agent_with_token_enrolls_without_form() {
+        let (dir, state) = scratch("lab-token");
+        handle_push(&state, &push("ubuntu-box", "lab-token", vec![cpu_sample()])).unwrap();
+        let node = state
+            .stores
+            .metadata
+            .get_node("ubuntu-box")
+            .unwrap()
+            .expect("auto-enroll");
+        assert!(!node.awaiting_agent());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wrong_token_does_not_enroll() {
+        let (dir, state) = scratch("lab-token");
+        let err = handle_push(&state, &push("stranger", "nope", vec![cpu_sample()])).unwrap_err();
+        assert!(err.to_string().contains("invalid ingest token"));
+        assert!(state
+            .stores
+            .metadata
+            .get_node("stranger")
+            .unwrap()
+            .is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn catalog_keeps_allowlisted_and_drops_unknown() {
+        let (dir, state) = scratch("lab-token");
+        handle_push(
+            &state,
+            &push(
+                "lab-pi",
+                "lab-token",
+                vec![
+                    cpu_sample(),
+                    keystone_proto::Sample {
+                        metric: "totally_fake_metric".into(),
+                        labels: vec![],
+                        value: 9.0,
+                        timestamp_unix_ms: 1,
+                    },
+                ],
+            ),
+        )
+        .unwrap();
+        let latest = state.stores.series.latest_samples("lab-pi").unwrap();
+        assert!(latest.iter().any(|s| s.metric == "node_cpu_usage_ratio"));
+        assert!(!latest.iter().any(|s| s.metric == "totally_fake_metric"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Loopback gRPC session: what a LAN agent does after it has an ingest URL.
+    #[tokio::test]
+    async fn grpc_session_enrolls_on_matching_token() {
+        let (dir, state) = scratch("lab-token");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming = TcpListenerStream::new(listener);
+        let serve_state = state.clone();
+        let server = tokio::spawn(async move {
+            Server::builder()
+                .add_service(service(serve_state))
+                .serve_with_incoming(incoming)
+                .await
+        });
+        let mut client = None;
+        for _ in 0..50 {
+            if let Ok(c) = IngestClient::connect(format!("http://{addr}")).await {
+                client = Some(c);
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        let mut client = client.expect("dial ingest");
+        let (tx, rx) = mpsc::channel(4);
+        let mut inbound = client
+            .session(ReceiverStream::new(rx))
+            .await
+            .expect("session")
+            .into_inner();
+        tx.send(AgentToServer {
+            body: Some(agent_to_server::Body::Push(push(
+                "grpc-node",
+                "lab-token",
+                vec![cpu_sample()],
+            ))),
+        })
+        .await
+        .unwrap();
+        let msg = inbound.next().await.expect("ack").expect("ok status");
+        match msg.body {
+            Some(server_to_agent::Body::Ack(ack)) => assert!(ack.ok, "{}", ack.error),
+            other => panic!("expected ack, got {other:?}"),
+        }
+        drop(tx);
+        let node = state
+            .stores
+            .metadata
+            .get_node("grpc-node")
+            .unwrap()
+            .expect("enrolled over gRPC");
+        assert!(!node.awaiting_agent());
+        server.abort();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

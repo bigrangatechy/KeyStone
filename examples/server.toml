@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # Example KeyStone server config for a local smoke test (writable without root).
-# Packaged installs use /var/lib/keystone. Set KEYSTONE_ADMIN_PASSWORD on first
-# start if password_hash is empty. Run `cargo run` from the repo root.
+# Packaged installs use /var/lib/keystone. Empty password_hash uses
+# KEYSTONE_ADMIN_PASSWORD, or changeme. Run `cargo run` from the repo root.
 #
 # Listen addresses, data_dir, and auth.username stay here (development /
 # bootstrap). Retention, ingest token, and scrape jobs are seeded from this

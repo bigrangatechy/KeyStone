@@ -131,7 +131,9 @@ pub struct ServerAuth {
     /// Local admin username.
     #[serde(default = "default_user")]
     pub username: String,
-    /// Argon2id password hash. If empty, `KEYSTONE_ADMIN_PASSWORD` is hashed on first start.
+    /// Argon2id password hash. If empty, `KEYSTONE_ADMIN_PASSWORD` is hashed
+    /// on first start, or `changeme` if that env is unset. First UI login
+    /// must choose a new password.
     #[serde(default)]
     pub password_hash: String,
 }

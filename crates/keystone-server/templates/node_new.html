@@ -15,7 +15,7 @@
   </label>
   <label>Agent ingest URL (gRPC)
     <input name="ingest_url" value="{{ ingest_url }}">
-    <span class="muted">What the agent uses to reach this server, not the UI port.</span>
+    <span class="muted"><code>mdns</code> finds this server on the LAN. Other subnet: <code>{{ explicit_ingest_url }}</code> (gRPC port, not the UI).</span>
   </label>
   <label class="check"><input type="checkbox" name="docker" value="on"> This node runs Docker</label>
   <button type="submit">Add node</button>

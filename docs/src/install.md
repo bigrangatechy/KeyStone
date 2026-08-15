@@ -22,31 +22,45 @@ cap: install the agent on as many boxes as you want.
 
 ## Packages (amd64 and arm64)
 
-CI builds `.deb` files for `amd64` (PCs, most VMs) and `arm64` (Raspberry
-Pi 4 and 5 on 64-bit Raspberry Pi OS). 32-bit Raspberry Pi OS (`armhf`)
-is not packaged; use the 64-bit image.
+CI builds `.deb` files for `amd64` (PCs, Ubuntu/Debian VMs) and `arm64`
+(Raspberry Pi 4 and 5 on 64-bit Raspberry Pi OS). 32-bit Raspberry Pi OS
+(`armhf`) is not packaged; use the 64-bit image.
 
-On a Pi, check:
+Match the filename to the machine. Check:
 
 ```
 dpkg --print-architecture
-uname -m
 ```
 
-You want `arm64` and `aarch64`.
+| That prints | Use |
+|---|---|
+| `amd64` | `*_amd64.deb` (typical Ubuntu server) |
+| `arm64` | `*_arm64.deb` (64-bit Pi; `uname -m` is `aarch64`) |
 
-Install the matching artifacts (example, 64-bit Pi):
+Installing an `arm64` file on `amd64` (or the other way around) fails.
+`apt` may say `Unsupported file` instead of a clear architecture error.
+
+**Ubuntu / Debian PC or VM (`amd64`):**
 
 ```
+# Copy out of ~/Downloads first if apt complains that _apt cannot read the file
+sudo cp keystone-server_0.1.0-2_amd64.deb keystone-agent_0.1.0-2_amd64.deb /tmp/
+
 # The one UI box (optional: agent as well, so this host is in the list)
-sudo apt install ./keystone-server_0.1.0-1_arm64.deb
-sudo apt install ./keystone-agent_0.1.0-1_arm64.deb   # optional on the UI host
+sudo apt install /tmp/keystone-server_0.1.0-2_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-2_amd64.deb   # optional on the UI host
 
 # Every other node: agent only
-sudo apt install ./keystone-agent_0.1.0-1_arm64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-2_amd64.deb
 ```
 
-On a PC or VM, use the `amd64` files the same way.
+A **Notice** about `_apt` / `pkgAcquire::Run (13: Permission denied)` means
+apt could not sandbox-read a file under your home directory. The install
+often still succeeds. Installing from `/tmp` (world-traversable) avoids it.
+Check with `dpkg -l keystone-server keystone-agent`.
+
+**64-bit Raspberry Pi (`arm64`):** same commands with `arm64` in the
+filename instead of `amd64`.
 
 ## First start (server)
 
@@ -63,30 +77,28 @@ Do **not** keep changing retention, scrape jobs, or the ingest token in this
 file after the first successful start. Those are seeded once, then edited on
 the **Settings** page. See [Configuration](configuration.md).
 
-Set the first admin password in `/etc/default/keystone-server`:
-
-```
-KEYSTONE_ADMIN_PASSWORD=a-password-you-chose
-```
-
-Alternatively leave `auth.password_hash` empty and set the environment for
-one start, or put a hash from `keystone hash-password` into `server.toml`.
-
 Then:
 
 ```
 sudo systemctl enable --now keystone-server
 ```
 
-Open `http://<that-host>:8080` (or `https://` if you enabled `[tls]`), log
-in, and go to **Settings**. Confirm:
+Open `http://<that-host>:8080` (not `https://` unless you enabled `[tls]`).
+First sign-in is **`admin` / `changeme`**. The UI then requires a new
+password (8+ characters, not `changeme`). To pick the bootstrap password
+yourself instead, set `KEYSTONE_ADMIN_PASSWORD` in
+`/etc/default/keystone-server` before the first start, or put a hash from
+`keystone hash-password` in `server.toml`.
+
+Go to **Settings**. Confirm:
 
 - Ingest token (seeded from `ingest_token` in the file, or generated if empty)
 - Series retention (default **24 hours**)
 - Any Prometheus or SNMP scrape jobs you want
 
-Clear `KEYSTONE_ADMIN_PASSWORD` from `/etc/default/keystone-server` after the
-hash exists so the password is not sitting in an env file.
+If you set `KEYSTONE_ADMIN_PASSWORD`, clear it from
+`/etc/default/keystone-server` after the hash exists so the password is not
+sitting in an env file.
 
 If this UI will sit behind a reverse proxy or Cloudflare Tunnel, enable an
 **authenticator** on Settings before the hostname is public. See
@@ -96,18 +108,22 @@ by default, agent ingest as well.
 
 ## First start (agent)
 
-Prefer **Add node** in the UI: it writes a short `agent.toml` with ingest URL,
-token, and node id. Copy that file to `/etc/keystone/agent.toml` on the node
-and:
+Prefer **Add node** in the UI: it writes a short `agent.toml` with ingest
+URL (`mdns` on a typical LAN), token, and node id. Copy that file to
+`/etc/keystone/agent.toml` on the node and:
 
 ```
 sudo systemctl enable --now keystone-agent
 ```
 
-If you skip the form, edit `/etc/keystone/agent.toml` yourself:
+If you skip the form, the packaged agent already uses mDNS. Set
+`ingest_token` to the value on **Settings** (not `change-me` if you
+rotated it) and start the unit. Or edit `/etc/keystone/agent.toml`
+yourself:
 
 ```
-ingest_url = "http://keystone.home.arpa:9100"
+ingest_url = "mdns"
+# ingest_url = "http://192.168.1.10:9100"  # other subnet / no multicast
 ingest_token = "the-token-from-Settings"
 # node_id defaults to hostname when omitted
 buffer_dir = "/var/lib/keystone/agent-buffer"
@@ -115,7 +131,9 @@ buffer_dir = "/var/lib/keystone/agent-buffer"
 ```
 
 `ingest_url` is the **gRPC** address (`grpc_listen` on the server), not the
-HTTP UI port. Use `https://` when the server has ingest TLS.
+HTTP UI port — except `mdns`, which finds that address on the LAN. Use
+`https://` when the server has ingest TLS (mDNS cannot satisfy certificate
+names; set the URL by hand).
 
 Poll interval, Docker, labels, and Compose paths are **node Settings** after
 the agent connects. The only Docker field that stays in `agent.toml` is
@@ -152,7 +170,8 @@ cargo build --release -p keystone-server -p keystone-agent
 
 Binaries: `target/release/keystone` (server) and
 `target/release/keystone-agent`. Copy example configs from `examples/` and
-set `KEYSTONE_ADMIN_PASSWORD` on first server start. Matching ingest token
+set `KEYSTONE_ADMIN_PASSWORD` on first server start if you do not want
+`admin` / `changeme`. Matching ingest token
 on Settings and each agent.
 
 The agent defaults to hostname as `node_id`. Enable Docker from that node’s
@@ -165,12 +184,12 @@ There is no license file or seat count to raise when you add nodes.
 The dashboard runs on **one** machine. Other boxes only run `keystone-agent`.
 After the server is up, open the UI, click **Add node**, and enter the
 hostname. KeyStone registers it as “awaiting agent” and shows a generated
-`agent.toml` (ingest URL on the gRPC port, shared token, `node_id`).
+`agent.toml` (`mdns` or an explicit gRPC URL, shared token, `node_id`).
 
 Install that config on the remote host and start the agent. The next
 heartbeat replaces “awaiting agent” with “connected”. You can also skip the
 form: an unknown agent that connects with a matching token is enrolled
-automatically.
+automatically — including a packaged agent that found the UI via mDNS.
 
 If you ticked “this node runs Docker” on the add-node form, Observe Docker
 is already enabled on that node’s Settings when the agent appears.
@@ -185,7 +204,21 @@ keep running. KeyStone never `Depends:` on `docker.io` / `docker-ce`, so
 every container.
 
 `/etc/keystone/*.toml` and `/etc/default/keystone-*` are conffiles: dpkg
-keeps your edits (it may prompt if a packaged default changed).
+keeps your edits (it may prompt if a packaged default changed). Keep the
+installed file (`N`) unless you intend to take the new defaults. A new
+agent package defaults `ingest_url` to `mdns`; that does **not** apply
+until you accept the new file or edit the existing one. `ingest_token`
+must still match **Settings** — do not reset it to `change-me` if you
+already generated a token.
+
+Same Debian revision (`0.1.0-1` over itself) looks like “already the
+newest version” and does not replace the binary; use
+`apt install --reinstall ./….deb`. A newer revision (`0.1.0-2`) is a
+normal upgrade.
+
+Do **not** `apt purge` to pick up a new binary: purge deletes
+`keystone.sqlite` (admin password, 2FA, nodes) and `series.redb`.
+`apt remove` without purge, or installing over the top, keeps that state.
 
 `apt remove` stops the KeyStone unit and leaves data on disk. `apt purge`
 deletes only KeyStone’s own state: `keystone.sqlite` / `series.redb` for

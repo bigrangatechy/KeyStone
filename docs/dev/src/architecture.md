@@ -15,12 +15,14 @@ stream; the server never dials an agent and never opens a remote
 
 ```
   agent (collectors + optional bollard)
+       │  optional mDNS browse `_keystone._tcp.local.` then
        │  gRPC Session: PushFrame / Command / StreamChunk
        ▼
   keystone-server
        ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`)
        │     optional rustls on `http_listen` (`tls.rs`)
        ├── ingest (tonic), optional rustls on `grpc_listen`
+       ├── mDNS advertise of ingest (`mdns.rs`, UDP 5353; no token in TXT)
        ├── scrape (Prometheus HTTP, SNMP GET)
        ├── keystone-store (SQLite metadata + Redb series)
        └── widgets hydrate → JSON for app.js
@@ -30,11 +32,11 @@ stream; the server never dials an agent and never opens a remote
 
 | Crate | Binary / role |
 |---|---|
-| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions. No I/O. |
+| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers. No I/O. |
 | `keystone-proto` | Generated from `proto/ingest.proto`. |
 | `keystone-store` | `keystone.sqlite` + `series.redb`. |
-| `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client. |
-| `keystone-server` | `keystone`: UI, ingest, scrape, `/help`. |
+| `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client, optional mDNS browse. |
+| `keystone-server` | `keystone`: UI, ingest, scrape, `/help`, mDNS advertise. |
 
 Do not `sudo cargo`. Prefer `TMPDIR=.smoke/tmp` if `/tmp` is full. Smoke
 data dir in examples is `.smoke`.
@@ -42,7 +44,10 @@ data dir in examples is `.smoke`.
 ## Control flow
 
 1. Agent opens `Ingest.Session`, sends `PushFrame` (heartbeat + samples +
-   token) on an interval.
+   token) on an interval. Packaged `ingest_url = "mdns"` browses
+   `_keystone._tcp.local.` first (server advertises the gRPC port +
+   `scheme=` TXT; never the ingest token). Explicit `http(s)://` skips
+   browse. Rediscover on each reconnect.
 2. Server allowlists samples, upserts the node row, stores series, diffs
    fleet-chip alerts (`apply_node_alerts`), ACKs. Webhook POSTs (if
    configured) are `tokio::spawn`’d and must not block the ACK.

@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 The KeyStone Authors
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Packaged default. Set KEYSTONE_ADMIN_PASSWORD once, or put a hash in
-# auth.password_hash (keystone hash-password). Then:
+# Packaged default. First UI login is admin / changeme (then you must pick
+# a new password). Or set KEYSTONE_ADMIN_PASSWORD / auth.password_hash.
+# Then:
 #   systemctl enable --now keystone-server
 #
 # Listen addresses, data_dir, and username stay here. Retention, ingest

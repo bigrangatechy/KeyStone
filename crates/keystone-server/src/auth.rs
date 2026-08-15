@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use anyhow::Context;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use keystone_store::Metadata;
 
 pub const MIN_PASSWORD_LEN: usize = 8;
+/// Used when `auth.password_hash` and `KEYSTONE_ADMIN_PASSWORD` are both
+/// empty. First login must replace it (`must_change_password`).
+pub const DEFAULT_BOOTSTRAP_PASSWORD: &str = "changeme";
 
 pub fn hash_password(password: &str) -> anyhow::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
@@ -56,14 +58,18 @@ pub fn ensure_admin(meta: &Metadata, username: &str, configured_hash: &str) -> a
         meta.set_user_password(username, configured_hash, false)?;
         return Ok(());
     }
-    let password = std::env::var("KEYSTONE_ADMIN_PASSWORD").context(
-        "no auth.password_hash and KEYSTONE_ADMIN_PASSWORD is unset; cannot create admin user",
-    )?;
+    let password = match std::env::var("KEYSTONE_ADMIN_PASSWORD") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            tracing::warn!(
+                "no auth.password_hash or KEYSTONE_ADMIN_PASSWORD; admin password is `{DEFAULT_BOOTSTRAP_PASSWORD}` until first login"
+            );
+            DEFAULT_BOOTSTRAP_PASSWORD.to_string()
+        }
+    };
     let hash = hash_password(&password)?;
     meta.set_user_password(username, &hash, true)?;
-    tracing::info!(
-        "created admin user `{username}` from KEYSTONE_ADMIN_PASSWORD (must change on first login)"
-    );
+    tracing::info!("created admin user `{username}` (must change password on first login)");
     Ok(())
 }
 

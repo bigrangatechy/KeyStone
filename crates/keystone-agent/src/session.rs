@@ -68,10 +68,34 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
     let runtime = Arc::new(AgentRuntimeState::from_config(&cfg));
     let buffer = DiskBuffer::new(&cfg.buffer_dir)?;
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let endpoint = ingest_endpoint(&cfg)?;
 
     loop {
-        match connect_session(&cfg, &node_id, runtime.clone(), &buffer, endpoint.clone()).await {
+        let ingest_url = match resolve_ingest_url(&cfg).await {
+            Ok(u) => u,
+            Err(e) => {
+                warn!("{e}");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+        let endpoint = match ingest_endpoint(&cfg, &ingest_url) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("ingest endpoint: {e}");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+        match connect_session(
+            &cfg,
+            &ingest_url,
+            &node_id,
+            runtime.clone(),
+            &buffer,
+            endpoint,
+        )
+        .await
+        {
             Ok(()) => info!("ingest session ended, reconnecting"),
             Err(e) => warn!("ingest session error: {e}"),
         }
@@ -79,12 +103,25 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
     }
 }
 
-fn ingest_endpoint(cfg: &AgentConfig) -> anyhow::Result<Endpoint> {
-    let mut endpoint = Endpoint::from_shared(cfg.ingest_url.clone())?
+async fn resolve_ingest_url(cfg: &AgentConfig) -> anyhow::Result<String> {
+    if keystone_core::wants_mdns(&cfg.ingest_url) {
+        let url = crate::mdns::discover_ingest_url().await?;
+        info!("mDNS found ingest at {url}");
+        Ok(url)
+    } else {
+        Ok(cfg.ingest_url.clone())
+    }
+}
+
+fn ingest_endpoint(cfg: &AgentConfig, ingest_url: &str) -> anyhow::Result<Endpoint> {
+    if keystone_core::wants_mdns(ingest_url) {
+        anyhow::bail!("ingest_url is mDNS; resolve to http(s):// first");
+    }
+    let mut endpoint = Endpoint::from_shared(ingest_url.to_string())?
         .connect_timeout(Duration::from_secs(10))
         .keep_alive_timeout(Duration::from_secs(30));
-    if cfg.ingest_url.starts_with("https://") {
-        let domain = ingest_tls_domain(&cfg.ingest_url).map_err(|e| anyhow::anyhow!("{e}"))?;
+    if ingest_url.starts_with("https://") {
+        let domain = ingest_tls_domain(ingest_url).map_err(|e| anyhow::anyhow!("{e}"))?;
         let mut tls = ClientTlsConfig::new().domain_name(domain);
         if cfg.tls_ca_file.trim().is_empty() {
             tls = tls.with_webpki_roots();
@@ -102,6 +139,7 @@ fn ingest_endpoint(cfg: &AgentConfig) -> anyhow::Result<Endpoint> {
 
 async fn connect_session(
     cfg: &AgentConfig,
+    ingest_url: &str,
     node_id: &str,
     runtime: Arc<AgentRuntimeState>,
     buffer: &DiskBuffer,
@@ -113,7 +151,7 @@ async fn connect_session(
     let response = client.session(ReceiverStream::new(rx)).await?;
     let mut inbound = response.into_inner();
 
-    info!("connected to ingest at {}", cfg.ingest_url);
+    info!("connected to ingest at {ingest_url}");
 
     if let Ok(frames) = buffer.drain() {
         for frame in frames {
@@ -560,5 +598,15 @@ mod tests {
         assert_eq!(rt.labels.get("role").map(String::as_str), Some("lab"));
         let clamped = parse_set_runtime(r#"{"interval_secs":99}"#).unwrap();
         assert_eq!(clamped.interval_secs, 60);
+    }
+
+    #[test]
+    fn mdns_sentinel_is_not_a_grpc_endpoint() {
+        let cfg = AgentConfig::default();
+        assert!(
+            ingest_endpoint(&cfg, "mdns").is_err(),
+            "must resolve mDNS to http(s):// before building an Endpoint"
+        );
+        assert!(ingest_endpoint(&cfg, "http://127.0.0.1:9100").is_ok());
     }
 }

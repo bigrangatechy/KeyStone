@@ -5,14 +5,23 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Troubleshooting
 
+## `apt` Notice: `_apt` / Permission denied
+
+The `.deb` is under a home directory (`~/Downloads`) that user `_apt`
+cannot enter. Copy it to `/tmp` and install from there, or ignore the
+Notice if `dpkg -l keystone-server` (or `keystone-agent`) already lists
+the package.
+
 ## Cannot log in
 
 - Username is `[auth] username` in `server.toml` (default `admin`), not the
   Unix account.
-- First start needs `KEYSTONE_ADMIN_PASSWORD` or a filled `password_hash`.
-  Check the server journal: it logs if it hashed the env password.
-- After you set a password, remove the env var so a stale value is not
-  surprising on the next restart.
+- Packaged first start is password `changeme` unless you set
+  `KEYSTONE_ADMIN_PASSWORD` or `password_hash` before the first successful
+  start. After that, the password is whatever you chose on the “Choose a
+  password” page.
+- After you set a bootstrap env password, remove the env var so a stale
+  value is not surprising on the next restart.
 - Authenticator enabled: the second page wants a current 6-digit code or a
   backup code (`XXXX-XXXX`).
 - “too many attempts”: eight failed password or TOTP tries in 15 minutes
@@ -20,10 +29,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 ## Stuck on “Choose a password”
 
-The account was created from `KEYSTONE_ADMIN_PASSWORD`. Pick a new password
-of at least 8 characters that is not the bootstrap one. **Log out** is on
-that page if you need to leave. After you save, the node list and welcome
-tour appear.
+The account was created with the bootstrap password (`changeme`, or
+`KEYSTONE_ADMIN_PASSWORD` if you set it). Pick a new password of at least 8
+characters that is not the bootstrap one. **Log out** is on that page if you
+need to leave. After you save, the node list and welcome tour appear.
 
 ## Lost authenticator
 
@@ -49,15 +58,21 @@ password only, then turn 2FA back on.
 ## Agent stays “awaiting” or never “control connected”
 
 1. `ingest_url` must be the **gRPC** listen address (`grpc_listen`), not
-   `:8080`.
+   `:8080` — or **`mdns`** on the same LAN. `journalctl -u keystone-agent`
+   says `no KeyStone server found via mDNS` if multicast never reaches
+   the UI (other VLAN, AP isolation, firewall dropping **UDP 5353**).
+   Then set `ingest_url = "http://<ui-lan-ip>:9100"`.
 2. `ingest_token` must match **Settings** exactly (and
-   `KEYSTONE_INGEST_TOKEN` on the server if that is set).
+   `KEYSTONE_INGEST_TOKEN` on the server if that is set). Packaged
+   `change-me` is wrong after you generate a token in the UI.
 3. `node_id` must be the id you enrolled, or omit it and use hostname.
-4. Firewall: agents connect **out** to the server. The server does not dial
-   the agent.
+4. Firewall: agents connect **out** to the server on **TCP 9100**. The
+   server does not dial the agent. Allow **UDP 5353** both ways on the
+   LAN if you use mDNS.
 5. `journalctl -u keystone-agent` — TLS/HTTP mix-ups, connection refused,
-   ingest nack.
-6. `journalctl -u keystone-server` — `push rejected` if the token is wrong.
+   ingest nack, mDNS miss.
+6. `journalctl -u keystone-server` — `push rejected` if the token is wrong;
+   `mDNS advertised` on a healthy start.
 
 If the server has ingest TLS: `ingest_url` must be `https://`, and the host
 must match the certificate. Let's Encrypt: no `tls_ca_file`. Self-signed:

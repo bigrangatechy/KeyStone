@@ -19,7 +19,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - `users` — username + Argon2id `password_hash`. Extra columns (all
   `ALTER TABLE` with defaults so existing DBs open):
   `must_change_password` (0/1): set when the admin is created from
-  `KEYSTONE_ADMIN_PASSWORD`, cleared after a successful UI password change.
+  `KEYSTONE_ADMIN_PASSWORD` or the default `changeme`, cleared after a
+  successful UI password change.
   TOTP: `totp_secret`, `totp_pending`, `totp_enabled`, `totp_backup_json`
   (JSON array of Argon2 hashes), `totp_last_step` (replay).
   `set_user_password` updates only hash + `must_change_password`.

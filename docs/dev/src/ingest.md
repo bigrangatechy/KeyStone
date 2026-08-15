@@ -13,11 +13,30 @@ service Ingest {
 }
 ```
 
-NAT-friendly: the agent dials `ingest_url`. Plaintext is HTTP/2 h2c
+NAT-friendly: the agent dials `ingest_url`. `mdns` (or empty) browses
+`_keystone._tcp.local.` for about 8s and uses the first usable LAN address
+(prefers `192.168/16` over docker0). Plaintext is HTTP/2 h2c
 (`http://host:9100`). With `[tls]` on the server and `ingest` true
 (default once certs are set), the same port is TLS (`https://host:9100`).
-The agent sets tonic `ClientTlsConfig` (webpki roots, or `tls_ca_file` for
-a private CA). Helpers: `crates/keystone-server/src/tls.rs`.
+mDNS then advertises `scheme=https`; SNI still needs a name that matches
+the cert, so ingest TLS installs should set an explicit `https://` URL
+(Add node does that). The agent sets tonic `ClientTlsConfig` (webpki
+roots, or `tls_ca_file` for a private CA). Helpers:
+`crates/keystone-server/src/tls.rs`. Server advertise:
+`crates/keystone-server/src/mdns.rs`. Agent browse:
+`crates/keystone-agent/src/mdns.rs`. URL picking (no sockets):
+`crates/keystone-core/src/mdns.rs`.
+
+Tests that follow the operator path (not just string sentinels):
+
+- Add node snippet: `mdns` + Settings token + gRPC `:9100` fallback, never
+  the UI port; ingest TLS fills `https://` instead of `mdns`
+  (`http.rs` tests).
+- Matching token enrolls (Add node then first push, or skip-the-form);
+  wrong token does not; allowlist drops unknown series (`ingest.rs`).
+- Loopback gRPC `Session` ACK + enroll (`ingest.rs`).
+- Advertised TXT is `scheme` only; same-host advertise/browse
+  (`mdns.rs` on server and agent).
 
 ## Agent → server
 
