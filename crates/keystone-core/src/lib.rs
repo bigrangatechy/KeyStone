@@ -9,6 +9,7 @@
 
 pub mod config;
 pub mod docker;
+pub mod fleet;
 pub mod gpu;
 pub mod metrics;
 pub mod net;
@@ -23,6 +24,7 @@ pub use config::{
     AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig, SnmpScrape,
 };
 pub use docker::DockerOp;
+pub use fleet::{fleet_chips, FleetChip};
 pub use metrics::{catalog, is_known_metric, MetricDef, MetricType, Stability};
 pub use node::NodeIdentity;
 pub use rbac::Permission;

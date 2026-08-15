@@ -5,9 +5,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Using the UI
 
-The HTTP UI is the only console. Agents do not serve a web page. Open a
-node for the Netdata-shaped **Overview**; the Docker tabs are the
-Portainer-shaped control plane for that machine.
+The HTTP UI is the only console. Agents do not serve a web page. The home
+page is the Netdata-shaped **fleet** (live chips per host). Open a node for
+that machine’s Overview; the Docker tabs are the Portainer-shaped control
+plane.
 
 ## Sign in
 
@@ -24,8 +25,9 @@ terminate HTTPS itself.
 
 ## Nodes list
 
-The home page lists every enrolled node: display name or hostname, last seen,
-online/connected state, OS, and Docker version when the agent reported one.
+The home page lists every enrolled node with live **CPU, RAM, disk, and
+temperature** chips (the Netdata-shaped fleet view). Click a host for that
+machine’s Overview and Docker tabs.
 
 Statuses you will see:
 
@@ -36,7 +38,11 @@ Statuses you will see:
 | **Seen, not connected** | Heartbeats arrived recently but the session dropped (restart, network blip). |
 | **Offline** | No recent heartbeat. |
 
-Click a row to open that node. **Add node** is the enroll form.
+Click a row to open that node. **Add node** is the enroll form. Chips stay
+blank (`—`) until the agent has pushed samples. Disk is the fullest real
+filesystem (overlay/tmpfs skipped). Temperature is the CPU package when
+the kernel exposes it, otherwise the hottest hwmon reading. The list
+refreshes about once a second.
 
 ## Add node
 

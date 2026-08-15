@@ -21,6 +21,53 @@
     }
   }
 
+  const fleet = document.getElementById("fleet");
+  if (fleet) {
+    function paintFleet(nodes) {
+      const byId = {};
+      (nodes || []).forEach((n) => { byId[n.node_id] = n; });
+      fleet.querySelectorAll("tbody tr[data-node]").forEach((tr) => {
+        const id = tr.getAttribute("data-node");
+        const n = byId[id];
+        if (!n) return;
+        (n.chips || []).forEach((c) => {
+          const el = tr.querySelector('[data-chip="' + c.id + '"]');
+          if (!el) return;
+          el.textContent = c.display || "—";
+          el.className = "chip tone-" + (c.tone || "");
+          if (c.hint) el.setAttribute("title", c.hint);
+          else el.removeAttribute("title");
+        });
+        const st = tr.querySelector("[data-status]");
+        if (st) {
+          st.textContent = n.status || "";
+          st.className = "status status-" + String(n.status || "").replace(/ /g, "-");
+        }
+        const seen = tr.querySelector("[data-seen]");
+        if (seen) seen.textContent = n.last_seen || "";
+      });
+    }
+    async function refreshFleet() {
+      try {
+        const r = await fetch("/api/v1/nodes");
+        if (r.status === 401 || r.status === 403) return "auth";
+        if (!r.ok) return;
+        const j = await r.json();
+        paintFleet(j.nodes);
+      } catch (e) {}
+    }
+    let inflight = false;
+    const timer = setInterval(async () => {
+      if (document.hidden || inflight) return;
+      inflight = true;
+      try {
+        if (await refreshFleet() === "auth") clearInterval(timer);
+      } finally {
+        inflight = false;
+      }
+    }, 1000);
+  }
+
   function parse(host) {
     try {
       return JSON.parse(host.getAttribute("data-json") || "null");

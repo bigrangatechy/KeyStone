@@ -30,8 +30,8 @@ they travel with the node if you ever dump that table.
 
 Two tables:
 
-- `latest` — per node, last sample set (for Overview “now” and Customize
-  sensor discovery).
+- `latest` — per node, last sample set (for Overview “now”, Customize
+  sensor discovery, and fleet chips on the home page).
 - `series` — keys `{node_id}\\0{metric}\\0{labels_key}\\0{timestamp_ms}` →
   f64. `history()` range-scans for sparklines.
 

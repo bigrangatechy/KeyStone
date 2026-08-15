@@ -6,7 +6,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # Dashboards
 
 This is the Netdata-shaped half of KeyStone: live host metrics on one page
-per machine, customisable, without a metrics UI on every box.
+per machine, customisable, without a metrics UI on every box. The **Nodes**
+home page is the fleet scan: CPU, RAM, disk, and temperature chips for
+every enrolled host, refreshed about once a second.
 
 Each node Overview is a grid of cards. The page refreshes from the server at
 the node’s **poll interval** (Settings, default **1 second**, range 1–60).

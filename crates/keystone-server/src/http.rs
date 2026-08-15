@@ -18,6 +18,7 @@ use axum::Router;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
 use keystone_core::docker::DockerOp;
+use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
@@ -62,6 +63,7 @@ pub fn router(state: AppState) -> Router {
         .route("/help", get(help_index))
         .route("/help/{slug}", get(help_section))
         .route("/api/v1/catalog", get(catalog_api))
+        .route("/api/v1/nodes", get(nodes_api))
         .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
@@ -365,66 +367,112 @@ struct NodesTemplate {
     nodes: Vec<NodeRow>,
 }
 
+#[derive(Serialize)]
 struct NodeRow {
     node_id: String,
     hostname: String,
     os: String,
-    agent_version: String,
-    docker_version: String,
-    last_seen: String,
     status: String,
+    last_seen: String,
+    chips: Vec<FleetChip>,
+}
+
+fn node_status(state: &AppState, n: &keystone_store::NodeRecord) -> String {
+    if state.agents.is_connected(&n.node_id) {
+        "connected".into()
+    } else if n.awaiting_agent() {
+        "awaiting agent".into()
+    } else if n.online {
+        "seen".into()
+    } else {
+        "offline".into()
+    }
+}
+
+fn relative_seen(last_seen_unix: i64, awaiting: bool) -> String {
+    if awaiting {
+        return "never".into();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(last_seen_unix);
+    let d = (now - last_seen_unix).max(0);
+    if d < 5 {
+        "just now".into()
+    } else if d < 60 {
+        format!("{d}s ago")
+    } else if d < 3600 {
+        format!("{}m ago", d / 60)
+    } else if d < 86400 {
+        format!("{}h ago", d / 3600)
+    } else {
+        format!("{}d ago", d / 86400)
+    }
+}
+
+fn fleet_row(state: &AppState, n: keystone_store::NodeRecord) -> NodeRow {
+    let awaiting = n.awaiting_agent();
+    let status = node_status(state, &n);
+    let settings = NodeSettings::parse_or_default(
+        state
+            .stores
+            .metadata
+            .node_settings_json(&n.node_id)
+            .ok()
+            .flatten()
+            .as_deref(),
+    );
+    let samples = state
+        .stores
+        .series
+        .latest_samples(&n.node_id)
+        .unwrap_or_default();
+    NodeRow {
+        hostname: settings.display_host(&n.hostname).to_string(),
+        os: if n.os == "awaiting-agent" {
+            String::new()
+        } else {
+            n.os
+        },
+        status,
+        last_seen: relative_seen(n.last_seen_unix, awaiting),
+        chips: fleet_chips(&samples),
+        node_id: n.node_id,
+    }
 }
 
 async fn nodes_page(State(state): State<AppState>) -> impl IntoResponse {
-    let nodes = state.stores.metadata.list_nodes().unwrap_or_default();
-    let rows = nodes
+    let nodes = state
+        .stores
+        .metadata
+        .list_nodes()
+        .unwrap_or_default()
         .into_iter()
-        .map(|n| {
-            let status = if state.agents.is_connected(&n.node_id) {
-                "connected".into()
-            } else if n.awaiting_agent() {
-                "awaiting agent".into()
-            } else if n.online {
-                "seen".into()
-            } else {
-                "offline".into()
-            };
-            let last_seen = if n.awaiting_agent() {
-                "never".into()
-            } else {
-                n.last_seen().to_rfc3339()
-            };
-            NodeRow {
-                node_id: n.node_id.clone(),
-                hostname: {
-                    let settings = NodeSettings::parse_or_default(
-                        state
-                            .stores
-                            .metadata
-                            .node_settings_json(&n.node_id)
-                            .ok()
-                            .flatten()
-                            .as_deref(),
-                    );
-                    settings.display_host(&n.hostname).to_string()
-                },
-                os: if n.os == "awaiting-agent" {
-                    String::new()
-                } else {
-                    n.os
-                },
-                agent_version: n.agent_version,
-                docker_version: n.docker_version.unwrap_or_default(),
-                last_seen,
-                status,
-            }
-        })
+        .map(|n| fleet_row(&state, n))
         .collect();
     Html(
-        NodesTemplate { nodes: rows }
+        NodesTemplate { nodes }
             .render()
             .unwrap_or_else(|e| e.to_string()),
     )
+}
+
+#[derive(Serialize)]
+struct NodesApi {
+    nodes: Vec<NodeRow>,
+}
+
+async fn nodes_api(State(state): State<AppState>) -> Json<NodesApi> {
+    let nodes = state
+        .stores
+        .metadata
+        .list_nodes()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|n| fleet_row(&state, n))
+        .collect();
+    Json(NodesApi { nodes })
 }
 
 #[derive(Template)]
@@ -1437,5 +1485,17 @@ mod tests {
     fn urlencoding_path_keeps_unreserved() {
         assert_eq!(urlencoding_path("abc-_.~XYZ"), "abc-_.~XYZ");
         assert_eq!(urlencoding_path("a b"), "a%20b");
+    }
+
+    #[test]
+    fn relative_seen_buckets() {
+        assert_eq!(relative_seen(0, true), "never");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert_eq!(relative_seen(now, false), "just now");
+        assert_eq!(relative_seen(now - 12, false), "12s ago");
+        assert_eq!(relative_seen(now - 120, false), "2m ago");
     }
 }

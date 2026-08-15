@@ -50,7 +50,9 @@ data dir in examples is `.smoke`.
    The agent runs `DockerOp` and returns `CommandResult`. Logs use
    `StreamChunk` then a result; the HTML logs page is an EventSource onto
    that stream. `cancel` aborts a follow when the browser disconnects.
-5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`.
+5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`. The
+   home page polls `GET /api/v1/nodes` every second for fleet chips
+   (`fleet_chips` in `keystone-core`).
 
 `set_interval` still exists on the agent for older payloads; current servers
 send `set_runtime`.

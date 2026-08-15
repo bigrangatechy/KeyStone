@@ -185,7 +185,18 @@ details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }
   justify-content: space-between; margin: 1rem 0 0.5rem;
 }
 .compose-head h3 { margin: 0; }
-.state-running { color: #3fb950; }
+.chip {
+  display: inline-block; min-width: 2.6rem; font-variant-numeric: tabular-nums;
+  font-weight: 600; font-size: 0.92rem;
+}
+.chip.tone-ok { color: #3fb950; }
+.chip.tone-warn { color: #d29922; }
+.chip.tone-crit { color: var(--danger); }
+.status-connected { color: #3fb950; }
+.status-seen { color: #d29922; }
+.status-offline, .status-awaiting-agent { color: var(--muted); }
+.host-id { font-size: 0.8rem; margin-top: 0.15rem; }
+table.fleet td { vertical-align: middle; }
 .state-exited, .state-dead, .state-created { color: var(--muted); }
 .state-paused, .state-restarting { color: #d29922; }
 pre.logs {

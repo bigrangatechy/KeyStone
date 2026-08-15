@@ -84,3 +84,10 @@ Default ids: `cpu`, `cpu_temp`, `memory`, `load`, `uptime`, `disks`,
 `GET /api/v1/nodes/{id}/dashboard` returns `source` (`default` or `custom`),
 `layout` (the `Dashboard`), and hydrated `widgets` for `app.js`. PUT saves
 a validated layout; DELETE clears it.
+
+The Nodes home page is not a dashboard layout. `fleet_chips` in
+`crates/keystone-core/src/fleet.rs` turns latest samples into four chips
+(CPU ratio, used/total RAM, fullest non-pseudo filesystem, CPU package or
+hottest hwmon). `GET /api/v1/nodes` is that list; `app.js` polls it at 1s.
+Disk skips the same noisy fstypes as the disks bar list. Ratio tones match
+Overview (`ok` / `warn` ≥75% / `crit` ≥90%). Temp tones are 75°C / 90°C.

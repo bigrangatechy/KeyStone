@@ -6,37 +6,34 @@
 <div class="page-head">
   <div>
     <h1>Nodes</h1>
-    <p class="muted">One UI for the whole lab. No seat limit. Add a machine here, then install the agent on it.</p>
+    <p class="muted">Live CPU, RAM, disk, and temperature for the whole lab. Open a host for Overview and Docker.</p>
   </div>
   <a class="btn" href="/nodes/new">Add node</a>
 </div>
-<table>
+<table class="fleet" id="fleet">
   <thead>
     <tr>
       <th>Host</th>
-      <th>ID</th>
-      <th>OS</th>
-      <th>Agent</th>
-      <th>Docker</th>
-      <th>Last seen</th>
+      <th>CPU</th>
+      <th>RAM</th>
+      <th>Disk</th>
+      <th>Temp</th>
       <th>Status</th>
+      <th>Seen</th>
     </tr>
   </thead>
   <tbody>
     {% for n in nodes %}
-    <tr>
-      <td><a href="/nodes/{{ n.node_id }}">{{ n.hostname }}</a></td>
-      <td><code>{{ n.node_id }}</code></td>
-      <td>{{ n.os }}</td>
-      <td>{{ n.agent_version }}</td>
-      <td>{{ n.docker_version }}</td>
-      <td>{{ n.last_seen }}</td>
+    <tr data-node="{{ n.node_id }}">
       <td>
-        {{ n.status }}
-        {% if n.status == "awaiting agent" %}
-        · <a href="/nodes/{{ n.node_id }}/setup">install agent</a>
-        {% endif %}
+        <a href="/nodes/{{ n.node_id }}">{{ n.hostname }}</a>
+        <div class="muted host-id"><code>{{ n.node_id }}</code>{% if !n.os.is_empty() %} · {{ n.os }}{% endif %}</div>
       </td>
+      {% for c in n.chips %}
+      <td><span class="chip tone-{{ c.tone }}" data-chip="{{ c.id }}" title="{{ c.hint }}">{{ c.display }}</span></td>
+      {% endfor %}
+      <td><span class="status status-{{ n.status.replace(" ", "-") }}" data-status>{{ n.status }}</span>{% if n.status == "awaiting agent" %} · <a href="/nodes/{{ n.node_id }}/setup">install</a>{% endif %}</td>
+      <td class="muted" data-seen>{{ n.last_seen }}</td>
     </tr>
     {% endfor %}
   </tbody>
