@@ -138,3 +138,22 @@ fn debs_must_not_depend_on_engine() {
         }
     }
 }
+
+#[test]
+fn etc_keystone_is_readable_by_service_user() {
+    for (name, s) in [("agent", AGENT_POSTINST), ("server", SERVER_POSTINST)] {
+        let active = active_shell(s);
+        assert!(
+            active.contains("chown root:keystone /etc/keystone"),
+            "{name} postinst must make /etc/keystone traversable by group keystone"
+        );
+        assert!(
+            active.contains("chmod 0750 /etc/keystone"),
+            "{name} postinst must set /etc/keystone to 0750"
+        );
+        assert!(
+            !active.contains("chown keystone:keystone /etc/keystone"),
+            "{name} must not give the service user write on /etc/keystone"
+        );
+    }
+}

@@ -18,9 +18,11 @@
 
 <h2>On that machine</h2>
 <p>Package (64-bit Raspberry Pi OS / Debian):</p>
-<pre class="snippet">sudo apt install ./keystone-agent_0.1.0-2_$(dpkg --print-architecture).deb
-sudo install -d -m 0750 /etc/keystone
+<pre class="snippet">sudo apt install ./keystone-agent_0.1.0-3_$(dpkg --print-architecture).deb
+sudo install -d -m 0750 -o root -g keystone /etc/keystone
 # paste the config above into /etc/keystone/agent.toml
+sudo chown root:keystone /etc/keystone/agent.toml
+sudo chmod 640 /etc/keystone/agent.toml
 sudo systemctl enable --now keystone-agent</pre>
 <p>From a source checkout (smoke test, no root). Change <code>buffer_dir</code> to a writable path such as <code>.smoke/agent-buffer</code>:</p>
 <pre class="snippet"># save the config as agent.toml, then:

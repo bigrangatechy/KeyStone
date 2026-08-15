@@ -34,6 +34,28 @@ ks_prepare_state_dir() {
 	chmod 0750 "$dir"
 }
 
+# Config dir: the service user must *read* toml. 0750 root:root hides the
+# file (Path::exists is false) and an older agent then dialed localhost.
+# Own this inode only. Never chown -R.
+ks_prepare_etc_keystone() {
+	dir=/etc/keystone
+	if [ -L "$dir" ]; then
+		echo "keystone-agent: $dir is a symlink; refusing to chown through it" >&2
+		exit 1
+	fi
+	if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+		echo "keystone-agent: $dir exists and is not a directory" >&2
+		exit 1
+	fi
+	mkdir -p "$dir"
+	if [ -L "$dir" ]; then
+		echo "keystone-agent: $dir is a symlink; refusing to chown through it" >&2
+		exit 1
+	fi
+	chown root:keystone /etc/keystone
+	chmod 0750 /etc/keystone
+}
+
 case "$1" in
 configure)
 	if ! getent group keystone >/dev/null; then
@@ -45,6 +67,7 @@ configure)
 	fi
 	ks_prepare_state_dir /var/lib/keystone
 	ks_prepare_state_dir /var/lib/keystone/agent-buffer
+	ks_prepare_etc_keystone
 	if [ -f /etc/keystone/agent.toml ]; then
 		chown root:keystone /etc/keystone/agent.toml
 		chmod 0640 /etc/keystone/agent.toml

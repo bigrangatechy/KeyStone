@@ -44,14 +44,14 @@ Installing an `arm64` file on `amd64` (or the other way around) fails.
 
 ```
 # Copy out of ~/Downloads first if apt complains that _apt cannot read the file
-sudo cp keystone-server_0.1.0-2_amd64.deb keystone-agent_0.1.0-2_amd64.deb /tmp/
+sudo cp keystone-server_0.1.0-3_amd64.deb keystone-agent_0.1.0-3_amd64.deb /tmp/
 
 # The one UI box (optional: agent as well, so this host is in the list)
-sudo apt install /tmp/keystone-server_0.1.0-2_amd64.deb
-sudo apt install /tmp/keystone-agent_0.1.0-2_amd64.deb   # optional on the UI host
+sudo apt install /tmp/keystone-server_0.1.0-3_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-3_amd64.deb   # optional on the UI host
 
 # Every other node: agent only
-sudo apt install /tmp/keystone-agent_0.1.0-2_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-3_amd64.deb
 ```
 
 A **Notice** about `_apt` / `pkgAcquire::Run (13: Permission denied)` means
@@ -119,7 +119,18 @@ sudo systemctl enable --now keystone-agent
 If you skip the form, the packaged agent already uses mDNS. Set
 `ingest_token` to the value on **Settings** (not `change-me` if you
 rotated it) and start the unit. Or edit `/etc/keystone/agent.toml`
-yourself:
+yourself. The `keystone` user must be able to read that file. The
+package sets `/etc/keystone` to `root:keystone` mode `0750`. If you
+create the directory by hand:
+
+```
+sudo install -d -m 0750 -o root -g keystone /etc/keystone
+```
+
+A `0750` directory owned by `root:root` is invisible to the agent (it
+looks like a missing config). `sudo -u keystone cat /etc/keystone/agent.toml`
+must work. The agent **exits** if the file is missing or unreadable; it
+does not fall back to localhost.
 
 ```
 ingest_url = "mdns"
@@ -213,7 +224,7 @@ already generated a token.
 
 Same Debian revision (`0.1.0-1` over itself) looks like “already the
 newest version” and does not replace the binary; use
-`apt install --reinstall ./….deb`. A newer revision (`0.1.0-2`) is a
+`apt install --reinstall ./….deb`. A newer revision (`0.1.0-3`) is a
 normal upgrade.
 
 Do **not** `apt purge` to pick up a new binary: purge deletes

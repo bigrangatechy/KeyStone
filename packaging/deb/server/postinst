@@ -34,6 +34,27 @@ ks_prepare_state_dir() {
 	chmod 0750 "$dir"
 }
 
+# Same as the agent: toml under /etc/keystone must be readable by group
+# keystone. Own this inode only. Never chown -R.
+ks_prepare_etc_keystone() {
+	dir=/etc/keystone
+	if [ -L "$dir" ]; then
+		echo "keystone-server: $dir is a symlink; refusing to chown through it" >&2
+		exit 1
+	fi
+	if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+		echo "keystone-server: $dir exists and is not a directory" >&2
+		exit 1
+	fi
+	mkdir -p "$dir"
+	if [ -L "$dir" ]; then
+		echo "keystone-server: $dir is a symlink; refusing to chown through it" >&2
+		exit 1
+	fi
+	chown root:keystone /etc/keystone
+	chmod 0750 /etc/keystone
+}
+
 case "$1" in
 configure)
 	if ! getent group keystone >/dev/null; then
@@ -44,6 +65,7 @@ configure)
 			--no-create-home --gecos "KeyStone" keystone
 	fi
 	ks_prepare_state_dir /var/lib/keystone
+	ks_prepare_etc_keystone
 	if [ -f /etc/keystone/server.toml ]; then
 		chown root:keystone /etc/keystone/server.toml
 		chmod 0640 /etc/keystone/server.toml

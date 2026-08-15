@@ -29,6 +29,9 @@ Docker’s data root or `/`. Invariants (enforced by
 - `postinst` creates `/var/lib/keystone` (and `agent-buffer`) and `chown`s
   **that directory only**. No `chown -R`. Abort if the path is a symlink
   or is `/`, `/var/lib/docker`, etc.
+- `postinst` also sets `/etc/keystone` to `root:keystone` mode `0750` (the
+  service user must read toml; `0750` `root:root` hides the file). Own
+  that inode only — never `chown -R`.
 - `prerm` / `#DEBHELPER#` stop `keystone-*` only.
 - `postrm purge` deletes named KeyStone files (`keystone.sqlite`,
   `series.redb`) or `/var/lib/keystone/agent-buffer`. Never

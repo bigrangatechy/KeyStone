@@ -70,7 +70,20 @@ password only, then turn 2FA back on.
    server does not dial the agent. Allow **UDP 5353** both ways on the
    LAN if you use mDNS.
 5. `journalctl -u keystone-agent` — TLS/HTTP mix-ups, connection refused,
-   ingest nack, mDNS miss.
+   ingest nack, mDNS miss. **`using defaults (localhost ingest)`** is an
+   old binary: it could not read `/etc/keystone/agent.toml` and dialed
+   `127.0.0.1`. Current packages **exit** instead. Fix ownership:
+
+   ```
+   ls -ld /etc/keystone /etc/keystone/agent.toml
+   sudo install -d -m 0750 -o root -g keystone /etc/keystone
+   sudo chown root:keystone /etc/keystone/agent.toml
+   sudo chmod 640 /etc/keystone/agent.toml
+   sudo -u keystone cat /etc/keystone/agent.toml
+   sudo systemctl restart keystone-agent
+   ```
+
+   `sudo -u keystone cat` must print the file.
 6. `journalctl -u keystone-server` — `push rejected` if the token is wrong;
    `mDNS advertised` on a healthy start.
 
