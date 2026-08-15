@@ -11,10 +11,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 |---|---|---|
 | `keystone-server` | `/usr/bin/keystone` | `keystone-server.service` |
 | `keystone-agent` | `/usr/bin/keystone-agent` | `keystone-agent.service` |
+| (same agent `.deb`) | `/usr/lib/keystone/keystone-sys` | `keystone-sys.socket` + `.service` (**not** enabled by the package) |
 
 They do not conflict. `cargo-deb` metadata is in each crate’s
 `Cargo.toml`. Assets and maintainer scripts: `packaging/deb/server/` and
-`packaging/deb/agent/`.
+`packaging/deb/agent/`. `systemd-units` only auto-enables `keystone-agent`.
+The sys helper units are extra assets; the System tab tells the operator
+to `systemctl enable --now keystone-sys.socket`.
 
 ## Upgrade safety
 
@@ -24,8 +27,9 @@ Docker’s data root or `/`. Invariants (enforced by
 
 - Never `Depends`/`Recommends` `docker.io`, `docker-ce`, `containerd`, or
   `podman`. Socket access is optional (`keystone` in group `docker`).
-- Never `Requires=` / `BindsTo=` / `PartOf=` Docker in the units. The agent
-  may `After=docker.socket` so the socket exists when Engine is installed.
+- Never `Requires=` / `BindsTo=` / `PartOf=` Docker in the units (including
+  `keystone-sys`). The agent may `After=docker.socket` so the socket exists
+  when Engine is installed. The agent unit keeps `NoNewPrivileges=true`.
 - `postinst` creates `/var/lib/keystone` (and `agent-buffer`) and `chown`s
   **that directory only**. No `chown -R`. Abort if the path is a symlink
   or is `/`, `/var/lib/docker`, etc.

@@ -219,6 +219,7 @@
     compose_up: "Up",
     compose_down: "Down",
     compose_pull: "Pull",
+    compose_update: "Update",
     image_remove: "Remove",
     volume_remove: "Remove",
     network_remove: "Remove"
@@ -228,6 +229,7 @@
     container_kill: "Kill this container?",
     container_remove: "Remove this container? This cannot be undone.",
     compose_down: "Compose down this project?",
+    compose_update: "Pull images and recreate this Compose project?",
     image_remove: "Remove this image?",
     image_prune: "Prune unused images on this node?",
     volume_remove: "Remove this volume?",
@@ -397,6 +399,7 @@
           tools.appendChild(actionForm(node, "compose_up", { project: project }));
           tools.appendChild(actionForm(node, "compose_down", { project: project }));
           tools.appendChild(actionForm(node, "compose_pull", { project: project }));
+          tools.appendChild(actionForm(node, "compose_update", { project: project }));
         }
         tools.appendChild(logsLink("/nodes/" + encodeURIComponent(node) + "/compose/" + encodeURIComponent(project) + "/logs"));
         head.appendChild(tools);
@@ -688,6 +691,209 @@
     }
     table.appendChild(body);
     networks.replaceChildren(table);
+  }
+
+  const system = document.getElementById("system");
+  if (system) {
+    paintSystem(system);
+  }
+
+  function paintSystem(host) {
+    const reason = host.getAttribute("data-reason") || "";
+    const node = host.getAttribute("data-node") || "";
+    if (reason === "offline") {
+      host.replaceChildren(el("p", "muted", "Agent is not connected. System commands need a live session."));
+      return;
+    }
+    if (reason === "disabled") {
+      host.replaceChildren(el("p", "muted", "System observe is off. Enable it on the Settings tab, then start keystone-sys.socket on the node."));
+      return;
+    }
+    const data = parse(host) || {};
+    const wrap = document.createElement("div");
+    const helperOn = !!data.helper_running;
+    if (data.helper_error) {
+      wrap.appendChild(el("p", "error", String(data.helper_error)));
+    }
+    if (!helperOn) {
+      wrap.appendChild(el("p", "error", "System helper is not running. On this node:"));
+      const pre = document.createElement("pre");
+      pre.className = "snippet";
+      pre.textContent = "sudo systemctl enable --now keystone-sys.socket";
+      wrap.appendChild(pre);
+      wrap.appendChild(el("p", "muted", "Then reload this tab. The metrics agent stays unprivileged."));
+    }
+    const meta = el("p", "muted");
+    const bits = [];
+    if (data.hostname) bits.push(data.hostname);
+    if (data.kernel) bits.push("kernel " + data.kernel);
+    if (data.backend) bits.push(data.backend);
+    if (data.reboot_required) bits.push("reboot required");
+    meta.textContent = bits.join(" · ") || "No host snapshot yet.";
+    wrap.appendChild(meta);
+
+    const ifaces = Array.isArray(data.interfaces) ? data.interfaces : [];
+    const table = document.createElement("table");
+    table.appendChild(thead(["Interface", "IPv4", ""]));
+    const body = document.createElement("tbody");
+    if (!ifaces.length) {
+      body.appendChild(emptyRow(3, "No IPv4 addresses (or ip is missing)."));
+    } else {
+      ifaces.forEach((iface) => {
+        const tr = document.createElement("tr");
+        tr.appendChild(tdCode(iface.name || ""));
+        const addrs = Array.isArray(iface.ipv4) ? iface.ipv4.join(", ") : "";
+        tr.appendChild(tdText(addrs || (iface.up ? "up" : "down")));
+        tr.appendChild(tdText(iface.up ? "up" : "down"));
+        body.appendChild(tr);
+      });
+    }
+    table.appendChild(body);
+    wrap.appendChild(table);
+
+    const listed = Array.isArray(data.packages);
+    const pkgs = listed ? data.packages : [];
+    wrap.appendChild(el("h3", null, "Pending apt upgrades"));
+    if (!pkgs.length) {
+      wrap.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates (runs apt-get update on the node)."));
+    } else {
+      const pt = document.createElement("table");
+      pt.appendChild(thead(["Package", "From", "To"]));
+      const pb = document.createElement("tbody");
+      pkgs.forEach((p) => {
+        const tr = document.createElement("tr");
+        tr.appendChild(tdCode(p.name || ""));
+        tr.appendChild(tdText(p.from || ""));
+        tr.appendChild(tdText(p.to || ""));
+        pb.appendChild(tr);
+      });
+      pt.appendChild(pb);
+      wrap.appendChild(pt);
+    }
+
+    const tools = el("div", "docker-toolbar");
+    if (helperOn) {
+      const check = document.createElement("button");
+      check.type = "button";
+      check.textContent = "Check for updates";
+      check.addEventListener("click", async () => {
+        check.disabled = true;
+        check.textContent = "Checking…";
+        try {
+          const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/sys/updates");
+          const body = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            window.alert(body.error || "Could not list updates.");
+            return;
+          }
+          data.packages = body.packages || [];
+          host.setAttribute("data-json", JSON.stringify(Object.assign({}, data, { packages: data.packages })));
+          paintSystem(host);
+        } catch (e) {
+          window.alert("Could not list updates.");
+        } finally {
+          check.disabled = false;
+          check.textContent = "Check for updates";
+        }
+      });
+      tools.appendChild(check);
+      if (host.getAttribute("data-manage") === "1") {
+        const apply = document.createElement("a");
+        apply.href = "/nodes/" + encodeURIComponent(node) + "/sys/updates";
+        apply.textContent = "Apply updates";
+        apply.addEventListener("click", (ev) => {
+          if (!window.confirm("Apply pending apt upgrades on this node? This can restart services.")) {
+            ev.preventDefault();
+          }
+        });
+        tools.appendChild(apply);
+      }
+    }
+    wrap.appendChild(tools);
+
+    if (host.getAttribute("data-manage") === "1" && helperOn) {
+      wrap.appendChild(el("h3", null, "IPv4"));
+      wrap.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version."));
+      const net = data.net || {};
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = "/nodes/" + encodeURIComponent(node) + "/sys/net_set";
+      form.className = "stack";
+      form.addEventListener("submit", (ev) => {
+        if (!window.confirm("Change IPv4 on this node? You may lose the agent until you reconnect.")) {
+          ev.preventDefault();
+        }
+      });
+      const iface = document.createElement("select");
+      iface.name = "iface";
+      const ether = ifaces.filter((i) => ethernetIface(i.name || ""));
+      if (!ether.length) {
+        wrap.appendChild(el("p", "muted", "No Ethernet interface to edit (Wi-Fi, docker, and virtual NICs are skipped)."));
+      } else {
+      ether.forEach((i) => {
+        const o = document.createElement("option");
+        o.value = i.name || "";
+        o.textContent = i.name || "";
+        if ((net.iface || "") === i.name) o.selected = true;
+        iface.appendChild(o);
+      });
+      const method = document.createElement("select");
+      method.name = "method";
+      ["dhcp", "static"].forEach((m) => {
+        const o = document.createElement("option");
+        o.value = m;
+        o.textContent = m === "dhcp" ? "DHCP" : "Static";
+        if ((net.method || "dhcp") === m) o.selected = true;
+        method.appendChild(o);
+      });
+      function labeled(name, input) {
+        const lab = document.createElement("label");
+        lab.appendChild(document.createTextNode(name));
+        lab.appendChild(input);
+        return lab;
+      }
+      form.appendChild(labeled("Interface", iface));
+      form.appendChild(labeled("Method", method));
+      const address = document.createElement("input");
+      address.name = "address";
+      address.placeholder = "192.168.0.50";
+      address.value = net.address || "";
+      const prefix = document.createElement("input");
+      prefix.name = "prefix";
+      prefix.type = "number";
+      prefix.min = "1";
+      prefix.max = "32";
+      prefix.value = net.prefix ? String(net.prefix) : "24";
+      const gateway = document.createElement("input");
+      gateway.name = "gateway";
+      gateway.placeholder = "192.168.0.1";
+      gateway.value = net.gateway || "";
+      const dns = document.createElement("input");
+      dns.name = "dns";
+      dns.placeholder = "1.1.1.1";
+      dns.value = Array.isArray(net.dns) ? net.dns.join(" ") : "";
+      form.appendChild(labeled("Address", address));
+      form.appendChild(labeled("Prefix", prefix));
+      form.appendChild(labeled("Gateway", gateway));
+      form.appendChild(labeled("DNS", dns));
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.textContent = "Apply IPv4";
+      form.appendChild(save);
+      wrap.appendChild(form);
+      }
+    }
+    host.replaceChildren(wrap);
+  }
+
+  function ethernetIface(name) {
+    const n = String(name || "").toLowerCase();
+    if (!n || n === "lo" || n.indexOf("lo.") === 0) return false;
+    if (n.indexOf("wl") === 0 || n.indexOf("ww") === 0) return false;
+    if (n.indexOf("docker") === 0 || n.indexOf("br-") === 0 || n.indexOf("veth") === 0) return false;
+    if (n.indexOf("virbr") === 0 || n.indexOf("cni") === 0 || n.indexOf("flannel") === 0) return false;
+    if (n.indexOf("tun") === 0 || n.indexOf("tap") === 0) return false;
+    return true;
   }
 
   function donut(ratio) {

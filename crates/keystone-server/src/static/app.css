@@ -272,6 +272,7 @@ details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }
   justify-content: space-between; margin: 1rem 0 0.5rem;
 }
 .compose-head h3 { margin: 0; }
+#system h3 { margin: 1.25rem 0 0.5rem; font-size: 1rem; }
 .chip {
   display: inline-block; min-width: 2.6rem; font-variant-numeric: tabular-nums;
   font-weight: 600; font-size: 0.92rem;

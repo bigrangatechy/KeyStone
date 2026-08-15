@@ -289,7 +289,8 @@ impl DockerHandle {
             DockerOp::ComposePs
             | DockerOp::ComposeUp
             | DockerOp::ComposeDown
-            | DockerOp::ComposePull => self.compose(op, &payload).await,
+            | DockerOp::ComposePull
+            | DockerOp::ComposeUpdate => self.compose(op, &payload).await,
         }
     }
 
@@ -352,6 +353,24 @@ impl DockerHandle {
             DockerOp::ComposeDown => args.push("down".into()),
             DockerOp::ComposePs => args.push("ps".into()),
             DockerOp::ComposePull => args.push("pull".into()),
+            DockerOp::ComposeUpdate => {
+                let mut pull = args.clone();
+                pull.push("pull".into());
+                let output = Command::new("docker")
+                    .args(&pull)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .await
+                    .context("docker compose pull")?;
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                if !output.status.success() {
+                    anyhow::bail!("docker compose pull failed: {stderr}{stdout}");
+                }
+                args.push("up".into());
+                args.push("-d".into());
+            }
             _ => unreachable!(),
         }
         let output = Command::new("docker")
@@ -659,5 +678,19 @@ mod tests {
         assert!(DockerOp::ComposeLogs.streams());
         assert!(!DockerOp::ContainerList.streams());
         assert!(!DockerOp::ComposeUp.streams());
+        assert!(!DockerOp::ComposeUpdate.streams());
+    }
+
+    #[test]
+    fn compose_update_is_pull_then_up() {
+        let src = include_str!("docker.rs");
+        let idx = src
+            .find("DockerOp::ComposeUpdate => {")
+            .expect("compose_update arm");
+        let arm = &src[idx..src.len().min(idx + 1200)];
+        assert!(arm.contains("\"pull\""), "must pull first");
+        assert!(arm.contains("\"up\""), "then compose up");
+        assert!(!arm.contains("watchtower"));
+        assert!(!arm.contains("apt-get"));
     }
 }

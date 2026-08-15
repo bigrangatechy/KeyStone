@@ -32,10 +32,10 @@ stream; the server never dials an agent and never opens a remote
 
 | Crate | Binary / role |
 |---|---|
-| `keystone-core` | Catalog, `DockerOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers, Docker Hub search/tag mapping (no I/O). |
+| `keystone-core` | Catalog, `DockerOp`, `SysOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers, Docker Hub search/tag mapping (no I/O). |
 | `keystone-proto` | Generated from `proto/ingest.proto`. |
 | `keystone-store` | `keystone.sqlite` + `series.redb`. |
-| `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client, optional mDNS browse. |
+| `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client, optional mDNS browse. Extra bin `keystone-sys` (root helper, socket-activated, off until enabled). |
 | `keystone-server` | `keystone`: UI, ingest, scrape, `/help`, mDNS advertise. |
 
 Do not `sudo cargo`. Prefer `TMPDIR=.smoke/tmp` if `/tmp` is full. Smoke
@@ -53,7 +53,7 @@ data dir in examples is `.smoke`.
    configured) are `tokio::spawn`’d and must not block the ACK.
 3. On first good push for a node id, the server registers the stream in
    `AgentRegistry` and sends `set_runtime` (poll interval, labels, Docker
-   flags, compose paths) from `NodeSettings`.
+   flags, compose paths, `sys_enabled` / `sys_manage`) from `NodeSettings`.
 4. UI Docker POSTs become `Command { op, payload_json }` on that stream.
    The agent runs `DockerOp` and returns `CommandResult`. Logs use
    `StreamChunk` then a result; the HTML logs page is an EventSource onto
@@ -61,6 +61,8 @@ data dir in examples is `.smoke`.
    Image pull is still that path. Docker Hub search is a separate
    cookie-authed GET: the server talks to `hub.docker.com` over HTTPS and
    returns names/tags; it never pulls and never opens `docker.sock`.
+   Host System POSTs are the same gRPC path with `SysOp`; the agent talks
+   to `/run/keystone/sys.sock` only if `keystone-sys.socket` is enabled.
 5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`. The
    home page polls `GET /api/v1/nodes` every second for fleet chips
    (`fleet_chips` in `keystone-core`). Header **Alerts** polls
@@ -76,4 +78,6 @@ send `set_runtime`.
 SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
-browse, Docker Hub login.
+browse, Docker Hub login, System reboot/shutdown from the UI, hostname /
+timezone / users / SSH / firewall editors, Wi-Fi / VLAN / IPv6, Fedora /
+Arch host updates, unattended-upgrades config, Watchtower.

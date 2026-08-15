@@ -8,6 +8,8 @@ const AGENT_POSTINST: &str = include_str!("../../../packaging/deb/agent/postinst
 const AGENT_PRERM: &str = include_str!("../../../packaging/deb/agent/prerm");
 const AGENT_POSTRM: &str = include_str!("../../../packaging/deb/agent/postrm");
 const AGENT_UNIT: &str = include_str!("../../../packaging/deb/agent/keystone-agent.service");
+const SYS_UNIT: &str = include_str!("../../../packaging/deb/agent/keystone-sys.service");
+const SYS_SOCKET: &str = include_str!("../../../packaging/deb/agent/keystone-sys.socket");
 const SERVER_POSTINST: &str = include_str!("../../../packaging/deb/server/postinst");
 const SERVER_PRERM: &str = include_str!("../../../packaging/deb/server/prerm");
 const SERVER_POSTRM: &str = include_str!("../../../packaging/deb/server/postrm");
@@ -93,7 +95,7 @@ fn purge_is_scoped_to_keystone_state() {
 
 #[test]
 fn systemd_units_must_not_bind_docker() {
-    for unit in [AGENT_UNIT, SERVER_UNIT] {
+    for unit in [AGENT_UNIT, SERVER_UNIT, SYS_UNIT, SYS_SOCKET] {
         for line in unit.lines() {
             let t = line.trim();
             if t.starts_with('#') {
@@ -116,6 +118,77 @@ fn systemd_units_must_not_bind_docker() {
     assert!(
         AGENT_UNIT.contains("After=network-online.target docker.socket"),
         "agent may wait for the socket but must not require Engine"
+    );
+}
+
+#[test]
+fn agent_stays_unprivileged() {
+    let active: String = AGENT_UNIT
+        .lines()
+        .filter(|l| !l.trim().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        active.contains("NoNewPrivileges=true"),
+        "metrics agent must stay sandboxed"
+    );
+    assert!(active.contains("ProtectSystem=strict"));
+    assert!(active.contains("-/run/keystone/sys.sock"));
+    assert!(active.contains("User=keystone"));
+}
+
+#[test]
+fn sys_helper_is_opt_in_root_socket() {
+    let service: String = SYS_UNIT
+        .lines()
+        .filter(|l| !l.trim().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let socket: String = SYS_SOCKET
+        .lines()
+        .filter(|l| !l.trim().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(service.contains("User=root"));
+    assert!(service.contains("ExecStart=/usr/lib/keystone/keystone-sys"));
+    assert!(service.contains("Requires=keystone-sys.socket"));
+    assert!(!service.contains("docker.sock"));
+    assert!(socket.contains("ListenStream=/run/keystone/sys.sock"));
+    assert!(socket.contains("SocketMode=0660"));
+    assert!(socket.contains("SocketGroup=keystone"));
+    assert!(socket.contains("Accept=false"));
+    assert!(
+        !active_shell(AGENT_POSTINST).contains("keystone-sys"),
+        "postinst must not enable the sys helper"
+    );
+    let deb = AGENT_CARGO
+        .split("[package.metadata.deb]")
+        .nth(1)
+        .expect("deb metadata");
+    assert!(deb.contains("unit-name = \"keystone-agent\""));
+    let systemd_line = deb
+        .lines()
+        .find(|l| l.contains("systemd-units"))
+        .expect("systemd-units");
+    assert!(
+        !systemd_line.contains("keystone-sys"),
+        "cargo-deb must not auto-enable the sys socket"
+    );
+    assert!(deb.contains("target/release/keystone-sys"));
+}
+
+#[test]
+fn setup_snippet_matches_agent_deb_revision() {
+    let setup = include_str!("../../keystone-server/templates/node_setup.html");
+    let rev = AGENT_CARGO
+        .lines()
+        .find(|l| l.trim().starts_with("revision"))
+        .and_then(|l| l.split('"').nth(1))
+        .expect("agent revision");
+    let needle = format!("keystone-agent_0.1.0-{rev}_");
+    assert!(
+        setup.contains(&needle),
+        "node setup snippet must install {needle}"
     );
 }
 

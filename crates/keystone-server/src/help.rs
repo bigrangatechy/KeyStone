@@ -48,6 +48,7 @@ pub fn sections() -> Vec<HelpSection> {
         section("dashboard", "Dashboards", operator_md!("dashboard.md")),
         section("alerts", "Alerts", operator_md!("alerts.md")),
         section("docker", "Docker", operator_md!("docker.md")),
+        section("system", "System", operator_md!("system.md")),
         section(
             "configuration",
             "Configuration",
@@ -107,5 +108,9 @@ mod tests {
                 s.slug
             );
         }
+        assert!(
+            secs.iter().any(|s| s.slug == "system"),
+            "operator help must include System"
+        );
     }
 }

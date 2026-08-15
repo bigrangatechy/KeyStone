@@ -30,7 +30,7 @@ is deleted and a new session id is issued.
 | GET/POST | `/login/totp` | Second factor. Session required (`pending_2fa`). Authenticator or one-shot backup code. |
 | GET/POST | `/nodes` | List / add node. |
 | GET | `/nodes/new` | Add-node form. |
-| GET | `/nodes/{id}` | Node page (Overview + Docker tabs + Settings). |
+| GET | `/nodes/{id}` | Node page (Overview + Docker tabs + System + Settings). |
 | GET | `/nodes/{id}/setup` | Agent TOML snippet. |
 | POST | `/nodes/{id}/settings` | Save `NodeSettings`; `nudge_runtime` if connected. |
 | GET | `/alerts` | Firing fleet chips (HTML). |
@@ -41,6 +41,9 @@ is deleted and a new session id is issued.
 | POST | `/settings/totp/confirm` | 6-digit code; enables TOTP, shows backup codes once. |
 | POST | `/settings/totp/disable` | Password + TOTP or backup; clears TOTP columns. |
 | POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`. Redirect keeps `?panel=`. Audit log. Streaming ops are 400. |
+| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields. Audit log. Streaming ops redirect to the apply page. |
+| GET | `/nodes/{id}/sys/updates` | HTML follow page for `apt-get upgrade`. |
+| GET | `/nodes/{id}/sys/updates/stream` | SSE for `updates_apply`. Cancel on drop. |
 | GET | `/nodes/{id}/containers/{cid}/logs` | HTML follow page. |
 | GET | `/nodes/{id}/containers/{cid}/logs/stream` | SSE: `{"t":"..."}` then `event: done`. Cancel on drop. |
 | GET | `/nodes/{id}/containers/{cid}/stats` | One-shot JSON stats (not linked from the UI). |
@@ -56,6 +59,9 @@ is deleted and a new session id is issued.
 | GET | `/api/v1/catalog` | `{ "metrics": [ { name, metric_type, unit, help, labels } ] }` from `catalog()`. |
 | GET | `/api/v1/alerts` | `{ "alerts": [ { node_id, hostname, chip, label, severity, display, hint } ] }`. Live firing chips (`warn`/`crit`). Header badge polls this at 2s. |
 | GET | `/api/v1/nodes` | `{ "nodes": [ { node_id, hostname, os, status, last_seen, chips, alert_count } ] }`. `chips` are CPU/RAM/disk/temp (`id`, `label`, `display`, `tone`, optional `hint`). `alert_count` is how many chips are firing. Home page polls this at 1s. |
+| GET | `/api/v1/dockerhub/search` | Query Docker Hub (server-side). Cookie session. |
+| GET | `/api/v1/dockerhub/tags` | Hub tags for a repo. Cookie session. |
+| GET | `/api/v1/nodes/{id}/sys/updates` | `{ packages: [{ name, from, to }] }` from `updates_list` (`apt-get update` + simulate). Cookie session. |
 | GET | `/api/v1/nodes/{id}/dashboard` | `{ source, layout, widgets }` — hydrated for the grid. 404 if unknown node. |
 | PUT | `/api/v1/nodes/{id}/dashboard` | JSON `Dashboard`; `validate()`; 204. |
 | DELETE | `/api/v1/nodes/{id}/dashboard` | Clear custom layout; 204. |

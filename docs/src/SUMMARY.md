@@ -11,6 +11,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - [Dashboards](dashboard.md)
 - [Alerts](alerts.md)
 - [Docker](docker.md)
+- [System](system.md)
 - [Configuration](configuration.md)
 - [Metrics](metrics.md)
 - [Security](security.md)

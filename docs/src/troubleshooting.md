@@ -126,6 +126,18 @@ token does not.
   Hub rate-limits the **server** IP (not each browser). GHCR and private
   registries are not searched; paste the full name if the node can pull it.
 
+## System tab errors
+
+- Observe host is off (Settings).
+- Helper not running: `sudo systemctl enable --now keystone-sys.socket` on
+  **that** node, then reload the tab. The metrics agent is not root.
+- Agent not control-connected (same session as metrics).
+- Manage refused: turn **Allow apt upgrade and IPv4 changes** on and save.
+- `apt-get` failed: read the apply stream; the helper only runs `upgrade`,
+  not `dist-upgrade`. Debian / Ubuntu / Raspberry Pi OS only.
+- Static IPv4 dropped the session: that address is now on the interface.
+  Use a console if you cannot reach the new IP.
+
 ## Token rotate left every node red
 
 Expected until each agent’s config matches. Update `ingest_token` and

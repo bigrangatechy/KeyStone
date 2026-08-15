@@ -40,6 +40,12 @@ pub struct NodeSettings {
     /// Extra labels attached to every heartbeat (`key=value`).
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+    /// Observe host system-admin (apt list, addressing) via the opt-in helper.
+    #[serde(default)]
+    pub sys_enabled: bool,
+    /// Allow applying apt upgrades and setting IPv4.
+    #[serde(default)]
+    pub sys_manage: bool,
 }
 
 fn default_poll_secs() -> u32 {
@@ -58,6 +64,8 @@ impl Default for NodeSettings {
             docker_allow_exec: false,
             compose_paths: Vec::new(),
             labels: BTreeMap::new(),
+            sys_enabled: false,
+            sys_manage: false,
         }
     }
 }
@@ -76,6 +84,10 @@ pub struct AgentRuntime {
     pub docker_allow_exec: bool,
     #[serde(default)]
     pub compose_paths: Vec<String>,
+    #[serde(default)]
+    pub sys_enabled: bool,
+    #[serde(default)]
+    pub sys_manage: bool,
 }
 
 impl NodeSettings {
@@ -114,6 +126,8 @@ impl NodeSettings {
             docker_manage: self.docker_manage,
             docker_allow_exec: self.docker_allow_exec,
             compose_paths: self.compose_paths.clone(),
+            sys_enabled: self.sys_enabled,
+            sys_manage: self.sys_enabled && self.sys_manage,
         }
     }
 
@@ -437,6 +451,24 @@ mod tests {
         let rt: AgentRuntime = serde_json::from_str(&s.agent_runtime_json()).unwrap();
         assert!(rt.docker_enabled);
         assert!(rt.docker_manage);
+        assert!(!rt.sys_enabled);
         assert_eq!(rt.interval_secs, 2);
+    }
+
+    #[test]
+    fn agent_runtime_sys_manage_requires_observe() {
+        let off = NodeSettings {
+            sys_manage: true,
+            ..Default::default()
+        };
+        assert!(!off.agent_runtime().sys_enabled);
+        assert!(!off.agent_runtime().sys_manage);
+        let on = NodeSettings {
+            sys_enabled: true,
+            sys_manage: true,
+            ..Default::default()
+        };
+        assert!(on.agent_runtime().sys_enabled);
+        assert!(on.agent_runtime().sys_manage);
     }
 }

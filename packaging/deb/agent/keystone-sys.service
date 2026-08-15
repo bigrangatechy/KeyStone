@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[Unit]
+Description=KeyStone system-admin helper (root, allowlisted apt/IPv4)
+Documentation=https://git.bigrangatech.com/Ranga/keystone
+Requires=keystone-sys.socket
+After=network-online.target
+# Never Requires=/BindsTo=/PartOf= docker. Off until the operator
+# enables keystone-sys.socket.
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/lib/keystone/keystone-sys
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

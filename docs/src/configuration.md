@@ -71,7 +71,8 @@ token — only for local development. **Generate new ingest token** replaces
 it with a random value; every agent must be updated and restarted (the
 token is read from `agent.toml` at process start).
 
-The ingest token cannot log into the UI and cannot run Docker mutations.
+The ingest token cannot log into the UI and cannot run Docker or System
+mutations.
 
 ### Prometheus scrape
 
@@ -136,6 +137,7 @@ On each node’s **Settings** tab:
 | Network interfaces | One device name per line. Empty = automatic (skip loopback/docker/veth). |
 | Labels | `key=value` per line, attached to the heartbeat. Replaces `agent.toml` labels once connected. |
 | Observe / Manage / Exec | Docker gates. See [Docker](docker.md). |
+| Observe host / Allow apt and IPv4 | System-admin gates. See [System](system.md). Off until you also enable `keystone-sys.socket` on the node. |
 | Compose files | Extra `docker compose -f` paths, one per line. |
 
 Save applies to a connected agent immediately.

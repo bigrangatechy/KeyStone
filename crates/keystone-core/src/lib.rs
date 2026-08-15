@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Shared types for KeyStone: metric catalog, config, RBAC, Docker ops,
-//! Docker Hub search/tag mapping (no HTTP).
+//! Docker Hub search/tag mapping, host sys-admin ops (no HTTP).
 //!
 //! Operator docs live in `docs/src/` (served at `/help`). Internals live in
 //! `docs/dev/`. Coverage tests fail if the developer pages miss a catalog
-//! name, `DockerOp`, or `Permission`.
+//! name, `DockerOp`, `SysOp`, or `Permission`.
 
 pub mod alerts;
 pub mod config;
@@ -21,6 +21,7 @@ pub mod node;
 pub mod rbac;
 pub mod sample;
 pub mod settings;
+pub mod sys;
 pub mod temp;
 pub mod widgets;
 
@@ -39,6 +40,7 @@ pub use node::NodeIdentity;
 pub use rbac::Permission;
 pub use sample::{Label, Sample};
 pub use settings::{AgentRuntime, NodeSettings, ServerSettings};
+pub use sys::{parse_apt_simulate, validate_iface, validate_ipv4, NetSet, SysOp, SYS_SOCKET_PATH};
 pub use widgets::{
     presets, presets_for_samples, Dashboard, WidgetInstance, WidgetKind, WidgetPreset,
 };

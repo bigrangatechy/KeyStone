@@ -22,7 +22,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/keystone -/run/docker.sock -/var/run/docker.sock
+ReadWritePaths=/var/lib/keystone -/run/docker.sock -/var/run/docker.sock -/run/keystone/sys.sock
 
 [Install]
 WantedBy=multi-user.target

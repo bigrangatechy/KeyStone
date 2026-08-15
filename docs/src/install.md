@@ -44,14 +44,14 @@ Installing an `arm64` file on `amd64` (or the other way around) fails.
 
 ```
 # Copy out of ~/Downloads first if apt complains that _apt cannot read the file
-sudo cp keystone-server_0.1.0-4_amd64.deb keystone-agent_0.1.0-3_amd64.deb /tmp/
+sudo cp keystone-server_0.1.0-4_amd64.deb keystone-agent_0.1.0-4_amd64.deb /tmp/
 
 # The one UI box (optional: agent as well, so this host is in the list)
 sudo apt install /tmp/keystone-server_0.1.0-4_amd64.deb
-sudo apt install /tmp/keystone-agent_0.1.0-3_amd64.deb   # optional on the UI host
+sudo apt install /tmp/keystone-agent_0.1.0-4_amd64.deb   # optional on the UI host
 
 # Every other node: agent only
-sudo apt install /tmp/keystone-agent_0.1.0-3_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-4_amd64.deb
 ```
 
 A **Notice** about `_apt` / `pkgAcquire::Run (13: Permission denied)` means

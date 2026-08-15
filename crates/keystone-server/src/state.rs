@@ -157,7 +157,7 @@ impl AgentRegistry {
                 .try_send(cmd)
                 .map_err(|_| anyhow::anyhow!("agent command queue full"))?;
         }
-        match tokio::time::timeout(Duration::from_secs(120), rx).await {
+        match tokio::time::timeout(Duration::from_secs(180), rx).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(_)) => anyhow::bail!("agent dropped command"),
             Err(_) => anyhow::bail!("agent command timed out"),

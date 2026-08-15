@@ -77,6 +77,7 @@ List payloads the UI tables expect:
 | `compose_down` | yes | `docker_manage` | Compose down |
 | `compose_logs` | no | `docker_view` | Compose logs |
 | `compose_pull` | yes | `docker_manage` | Compose pull |
+| `compose_update` | yes | `docker_manage` | Compose pull then up |
 | `image_list` | no | `docker_view` | List images |
 | `image_inspect` | no | `docker_view` | Inspect an image |
 | `image_pull` | yes | `docker_manage` | Pull an image |
@@ -96,7 +97,9 @@ When adding an op: extend the enum, `description`, `mutating`,
 node template / `app.js`, and add the `` `snake_name` `` row here.
 
 Control-plane ops that are **not** `DockerOp`: `set_runtime`,
-`set_interval`, `cancel`. The agent handles those before `handle_command`.
+`set_interval`, `cancel`, and host `SysOp` (`status`, `updates_list`,
+`updates_apply`, `net_set`) — see [Host system admin](system.md). The agent
+handles `set_runtime` / `set_interval` / `cancel` before `handle_command`.
 
 Docker Hub search is not a `DockerOp`. Cookie-authed
 `GET /api/v1/dockerhub/search` and `.../tags` fetch Hub’s public HTTP API

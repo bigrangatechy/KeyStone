@@ -11,6 +11,7 @@ use keystone_core::config::{ingest_tls_domain, AgentConfig, DockerConfig};
 use keystone_core::docker::DockerOp;
 use keystone_core::node::NodeIdentity;
 use keystone_core::sample::{self, Label, Sample};
+use keystone_core::sys::SysOp;
 use keystone_core::{AgentRuntime, NodeSettings};
 use keystone_proto::ingest_client::IngestClient;
 use keystone_proto::{
@@ -32,6 +33,8 @@ struct AgentRuntimeState {
     docker: Mutex<Option<DockerHandle>>,
     labels: Mutex<BTreeMap<String, String>>,
     docker_host: String,
+    sys_enabled: Mutex<bool>,
+    sys_manage: Mutex<bool>,
 }
 
 impl AgentRuntimeState {
@@ -51,6 +54,8 @@ impl AgentRuntimeState {
             docker: Mutex::new(docker),
             labels: Mutex::new(cfg.labels.clone()),
             docker_host: cfg.docker.host.clone(),
+            sys_enabled: Mutex::new(false),
+            sys_manage: Mutex::new(false),
         }
     }
 }
@@ -255,7 +260,10 @@ async fn connect_session(
                             }
                             continue;
                         }
-                        let streaming = DockerOp::from_str(&cmd.op).ok().is_some_and(DockerOp::streams);
+                        let streaming = DockerOp::from_str(&cmd.op)
+                            .ok()
+                            .is_some_and(DockerOp::streams)
+                            || SysOp::from_str(&cmd.op).ok().is_some_and(SysOp::streams);
                         if streaming {
                             spawn_streaming_command(
                                 runtime.clone(),
@@ -354,13 +362,6 @@ async fn run_streaming(
     tx: mpsc::Sender<AgentToServer>,
     request_id: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    let docker = runtime
-        .docker
-        .lock()
-        .await
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("docker is not enabled on this agent"))?;
-    let op = DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
     let payload = if payload_json.is_empty() {
         serde_json::json!({})
     } else {
@@ -386,7 +387,19 @@ async fn run_streaming(
             }
         }
     });
-    let result = docker.execute_streaming(op, payload, chunk_tx).await;
+    let result = if let Ok(sys_op) = SysOp::from_str(op) {
+        run_sys_streaming(runtime, sys_op, payload, chunk_tx).await
+    } else {
+        let docker = runtime
+            .docker
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("docker is not enabled on this agent"))?;
+        let docker_op =
+            DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
+        docker.execute_streaming(docker_op, payload, chunk_tx).await
+    };
     let _ = forward.await;
     let _ = tx
         .send(AgentToServer {
@@ -398,6 +411,21 @@ async fn run_streaming(
         })
         .await;
     result
+}
+
+async fn run_sys_streaming(
+    runtime: &AgentRuntimeState,
+    op: SysOp,
+    payload: serde_json::Value,
+    chunk_tx: mpsc::Sender<Vec<u8>>,
+) -> anyhow::Result<serde_json::Value> {
+    if !*runtime.sys_enabled.lock().await {
+        anyhow::bail!("system observe is off on this node");
+    }
+    if op.mutating() && !*runtime.sys_manage.lock().await {
+        anyhow::bail!("system manage is disabled on this agent");
+    }
+    crate::sys::stream(op, payload, chunk_tx).await
 }
 
 fn handle_ack(ack: &Ack) {
@@ -477,6 +505,12 @@ async fn apply_runtime(
             *docker = None;
         }
     }
+    {
+        let mut enabled = runtime.sys_enabled.lock().await;
+        *enabled = rt.sys_enabled;
+        let mut manage = runtime.sys_manage.lock().await;
+        *manage = rt.sys_enabled && rt.sys_manage;
+    }
     Ok(serde_json::to_value(&rt)?)
 }
 
@@ -485,17 +519,61 @@ async fn handle_command(
     op: &str,
     payload_json: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    let docker = runtime.docker.lock().await;
-    let Some(docker) = docker.as_ref() else {
-        anyhow::bail!("docker is not enabled on this agent");
-    };
-    let op = DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
     let payload = if payload_json.is_empty() {
         serde_json::json!({})
     } else {
         serde_json::from_str(payload_json).context("payload json")?
     };
+    if let Ok(sys_op) = SysOp::from_str(op) {
+        return handle_sys(runtime, sys_op, payload).await;
+    }
+    let docker = runtime.docker.lock().await;
+    let Some(docker) = docker.as_ref() else {
+        anyhow::bail!("docker is not enabled on this agent");
+    };
+    let op = DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
     docker.execute(op, payload).await
+}
+
+async fn handle_sys(
+    runtime: &AgentRuntimeState,
+    op: SysOp,
+    payload: serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    if !*runtime.sys_enabled.lock().await {
+        anyhow::bail!("system observe is off on this node");
+    }
+    if op.mutating() && !*runtime.sys_manage.lock().await {
+        anyhow::bail!("system manage is disabled on this agent");
+    }
+    match op {
+        SysOp::Status => {
+            let mut local = crate::sys::local_status().await;
+            if crate::sys::socket_present() {
+                match crate::sys::call(SysOp::Status, serde_json::json!({})).await {
+                    Ok(helper) => {
+                        if let Some(obj) = local.as_object_mut() {
+                            if let Some(h) = helper.as_object() {
+                                for (k, v) in h {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                            obj.insert("helper_running".into(), serde_json::json!(true));
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(obj) = local.as_object_mut() {
+                            obj.insert("helper_error".into(), serde_json::json!(e.to_string()));
+                            obj.insert("helper_running".into(), serde_json::json!(false));
+                        }
+                    }
+                }
+            }
+            Ok(local)
+        }
+        SysOp::UpdatesList | SysOp::NetSet => crate::sys::call(op, payload).await,
+        SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
+    }
 }
 
 async fn build_push(
@@ -596,8 +674,54 @@ mod tests {
         assert!(rt.docker_enabled);
         assert!(rt.docker_manage);
         assert_eq!(rt.labels.get("role").map(String::as_str), Some("lab"));
+        assert!(!rt.sys_enabled);
         let clamped = parse_set_runtime(r#"{"interval_secs":99}"#).unwrap();
         assert_eq!(clamped.interval_secs, 60);
+    }
+
+    #[tokio::test]
+    async fn sys_observe_off_refuses() {
+        let runtime = AgentRuntimeState {
+            docker: Mutex::new(None),
+            labels: Mutex::new(BTreeMap::new()),
+            docker_host: String::new(),
+            sys_enabled: Mutex::new(false),
+            sys_manage: Mutex::new(false),
+        };
+        let err = handle_sys(&runtime, SysOp::Status, serde_json::json!({}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("observe"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn sys_manage_off_refuses_mutating() {
+        let runtime = AgentRuntimeState {
+            docker: Mutex::new(None),
+            labels: Mutex::new(BTreeMap::new()),
+            docker_host: String::new(),
+            sys_enabled: Mutex::new(true),
+            sys_manage: Mutex::new(false),
+        };
+        let err = handle_sys(&runtime, SysOp::NetSet, serde_json::json!({}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("manage"), "{err}");
+    }
+
+    #[test]
+    fn sys_ops_are_not_docker_ops() {
+        for op in ["status", "updates_list", "updates_apply", "net_set"] {
+            assert!(
+                DockerOp::from_str(op).is_err(),
+                "sys op {op} must not parse as DockerOp"
+            );
+        }
+        assert!(DockerOp::from_str("updates_apply").is_err());
+        assert!(SysOp::from_str("compose_update").is_err());
+        assert!(SysOp::from_str("compose_pull").is_err());
     }
 
     #[test]

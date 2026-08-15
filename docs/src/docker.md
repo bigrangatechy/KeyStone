@@ -22,7 +22,7 @@ On the node **Settings** tab:
 1. **Observe Docker** — list containers, Compose projects, images, volumes,
    and networks; follow logs. No start/stop.
 2. **Allow mutations** — start, stop, restart, kill, remove; Compose
-   up/down/pull; image pull/prune/remove; volume and network create/remove.
+   up/down/pull/**Update**; image pull/prune/remove; volume and network create/remove.
    Destructive actions ask for confirmation. The pull/create forms take a
    plain name, not JSON. Image pull can also be filled from a Docker Hub
    search on that same form.
@@ -53,8 +53,10 @@ when mutations are off.
   restart / kill / remove.
 - **Compose** — projects discovered from `com.docker.compose.project`
   labels, with a service table per project. **Logs** follows
-  `docker compose logs`. With Manage: up / down / pull. **Compose files**
-  on Settings are extra `-f` paths when a command does not name a file.
+  `docker compose logs`. With Manage: up / down / pull / **Update** (pull
+  then up — use this for a Cloudflare Tunnel stack, not the System tab).
+  **Compose files** on Settings are extra `-f` paths when a command does
+  not name a file.
 - **Images** — tags, short id, size. With Manage: pull by name, search
   Docker Hub to fill that name, prune unused, remove.
 - **Volumes** and **Networks** — list; create/remove with Manage.

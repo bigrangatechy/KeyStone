@@ -7,6 +7,8 @@ pub mod collect;
 pub mod docker;
 pub mod mdns;
 pub mod session;
+pub mod sys;
+pub mod sys_helper;
 
 pub use cli::AgentCli;
 

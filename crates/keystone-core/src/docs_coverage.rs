@@ -4,11 +4,13 @@
 use crate::docker::DockerOp;
 use crate::metrics::catalog;
 use crate::rbac::Permission;
+use crate::sys::SysOp;
 use crate::widgets::WidgetKind;
 use strum::IntoEnumIterator;
 
 const DEV_METRICS: &str = include_str!("../../../docs/dev/src/metrics.md");
 const DEV_DOCKER: &str = include_str!("../../../docs/dev/src/docker.md");
+const DEV_SYSTEM: &str = include_str!("../../../docs/dev/src/system.md");
 const DEV_PERMISSIONS: &str = include_str!("../../../docs/dev/src/permissions.md");
 const DEV_WIDGETS: &str = include_str!("../../../docs/dev/src/widgets.md");
 
@@ -30,6 +32,17 @@ fn developer_docker_doc_lists_ops() {
         assert!(
             DEV_DOCKER.contains(&needle),
             "docs/dev/src/docker.md missing {needle}"
+        );
+    }
+}
+
+#[test]
+fn developer_system_doc_lists_ops() {
+    for op in SysOp::iter() {
+        let needle = format!("`{}`", op.as_str());
+        assert!(
+            DEV_SYSTEM.contains(&needle),
+            "docs/dev/src/system.md missing {needle}"
         );
     }
 }

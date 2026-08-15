@@ -22,6 +22,7 @@
   <button type="button" data-tab="images">Images</button>
   <button type="button" data-tab="volumes">Volumes</button>
   <button type="button" data-tab="networks">Networks</button>
+  <button type="button" data-tab="system">System</button>
   <button type="button" data-tab="settings">Settings</button>
 </nav>
 
@@ -95,6 +96,14 @@
   {% endif %}
   <div id="networks" data-json="{{ networks_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>
+<section class="tab-panel" data-panel="system">
+  <h2>System</h2>
+  <p class="muted">Host apt and IPv4 for this machine — not Docker. The agent stays unprivileged; enable the root helper socket first.</p>
+  {% if !sys_error.is_empty() %}
+  <p class="error">System: {{ sys_error }}</p>
+  {% endif %}
+  <div id="system" data-json="{{ sys_json }}" data-node="{{ node_id }}" data-manage="{% if sys_manage %}1{% else %}0{% endif %}" data-reason="{{ sys_reason }}" data-enabled="{% if sys_enabled %}1{% else %}0{% endif %}"></div>
+</section>
 <section class="tab-panel" data-panel="settings">
   <h2>Node settings</h2>
   <p class="muted">These apply to this node. A connected agent picks up poll interval, Docker flags, labels, and compose paths at runtime; <code>agent.toml</code> on the machine is only bootstrap (ingest URL, token, node id, buffer directory, optional Docker socket).</p>
@@ -127,6 +136,12 @@
         <textarea name="compose_paths" rows="3" placeholder="/home/user/stack/compose.yaml">{{ compose_paths_text }}</textarea>
         <span class="muted">Passed as <code>docker compose -f</code> when a command does not specify a file. The engine socket stays in <code>agent.toml</code> (<code>docker.host</code>).</span>
       </label>
+    </fieldset>
+    <fieldset>
+      <legend>System admin</legend>
+      <label class="check"><input type="checkbox" name="sys_enabled" value="on"{% if sys_enabled %} checked{% endif %}> Observe host updates and addressing</label>
+      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade and IPv4 changes (root helper)</label>
+      <span class="muted">Off by default. On the node: <code>sudo systemctl enable --now keystone-sys.socket</code>. The metrics agent does not become root.</span>
     </fieldset>
     <button type="submit">Save settings</button>
   </form>

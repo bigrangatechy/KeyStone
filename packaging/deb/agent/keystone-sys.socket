@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+[Unit]
+Description=KeyStone system-admin helper socket
+Documentation=https://git.bigrangatech.com/Ranga/keystone
+# Do not enable this unit from the package. The System tab shows:
+#   sudo systemctl enable --now keystone-sys.socket
+
+[Socket]
+ListenStream=/run/keystone/sys.sock
+SocketUser=root
+SocketGroup=keystone
+SocketMode=0660
+DirectoryMode=0750
+RuntimeDirectory=keystone
+RuntimeDirectoryPreserve=yes
+Accept=false
+
+[Install]
+WantedBy=sockets.target

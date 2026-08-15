@@ -39,6 +39,7 @@ pub enum DockerOp {
     ComposeDown,
     ComposeLogs,
     ComposePull,
+    ComposeUpdate,
     ImageList,
     ImageInspect,
     ImagePull,
@@ -78,6 +79,7 @@ impl DockerOp {
             Self::ComposeDown => "Compose down",
             Self::ComposeLogs => "Compose logs",
             Self::ComposePull => "Compose pull",
+            Self::ComposeUpdate => "Compose pull then up",
             Self::ImageList => "List images",
             Self::ImageInspect => "Inspect an image",
             Self::ImagePull => "Pull an image",
@@ -106,6 +108,7 @@ impl DockerOp {
                 | Self::ComposeUp
                 | Self::ComposeDown
                 | Self::ComposePull
+                | Self::ComposeUpdate
                 | Self::ImagePull
                 | Self::ImagePrune
                 | Self::ImageRemove
@@ -127,5 +130,25 @@ impl DockerOp {
     /// Agent sends `StreamChunk`s then a `CommandResult` (logs).
     pub fn streams(self) -> bool {
         matches!(self, Self::ContainerLogs | Self::ComposeLogs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compose_update_is_mutating_pull_then_up() {
+        assert_eq!(DockerOp::ComposeUpdate.as_str(), "compose_update");
+        assert!(DockerOp::ComposeUpdate.mutating());
+        assert_eq!(
+            DockerOp::ComposeUpdate.permission(),
+            Permission::DockerManage
+        );
+        assert!(!DockerOp::ComposeUpdate.streams());
+        assert_eq!(
+            DockerOp::ComposeUpdate.description(),
+            "Compose pull then up"
+        );
     }
 }

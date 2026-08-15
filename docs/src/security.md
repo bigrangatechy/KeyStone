@@ -9,18 +9,20 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 - The **server** holds admin sessions, the ingest token, metric history, and
   the audit log. Anyone who can write `data_dir` or log in as the admin owns
-  the lab view and can send Docker commands to connected agents that allow
-  them.
+the lab view and can send Docker commands to connected agents that allow
+them. The same session can apply apt upgrades and change IPv4 when System
+Manage and the opt-in root helper are on.
 - Each **agent** runs as a system user. With Docker Observe enabled it can
   use the engine socket — that is root-equivalent on **that** host.
 - The **ingest token** proves an agent is allowed to push. It does **not**
-  grant UI login and cannot start, stop, or exec containers.
+  grant UI login and cannot start, stop, or exec containers, apply apt
+  upgrades, or change IPv4.
 
 ## UI account
 
 This version is one local admin (Argon2id). There is no SSO and no extra
-roles: the signed-in user can view every node, and can manage Docker on a
-node to the extent that node’s Settings allow.
+roles: the signed-in user can view every node, and can manage Docker or
+host System on a node to the extent that node’s Settings allow.
 
 When the admin row is first created (empty `password_hash`), the password
 is `KEYSTONE_ADMIN_PASSWORD` if set, otherwise **`changeme`**. The next
@@ -153,6 +155,19 @@ HTTP API, cookie session). That lookup is not a Docker Engine call and
 does not use the ingest token. Pull still runs on the agent. Hub
 rate-limits unauthenticated search per IP — if it fails, type the image
 name. There is no Hub login in this version.
+
+## System (host apt and IPv4)
+
+The metrics agent stays unprivileged (`NoNewPrivileges`, `ProtectSystem`).
+Host apt and addressing go through an **opt-in** root helper
+(`keystone-sys`) on `/run/keystone/sys.sock`. The package does not enable
+that socket. Compromised `keystone` user **plus** an enabled socket **plus**
+System Manage is host root for the allowlist (same class as Docker Manage).
+Keep the allowlist tiny; do not start the helper on nodes that should only
+report metrics.
+
+Changing IPv4 can lock you out of SSH and drop the agent session. Keep a
+console. Mutations are audit-logged. The ingest token cannot call them.
 
 ## Metrics allowlist
 

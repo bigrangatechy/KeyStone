@@ -52,11 +52,13 @@ off).
 | `network_devices` | NIC allowlist for network widgets; empty = automatic. |
 | `poll_secs` | 1–60, agent push + Overview poll. |
 | `docker_enabled`, `docker_manage`, `docker_allow_exec` | Agent policy. |
+| `sys_enabled`, `sys_manage` | Host system-admin observe / apply (opt-in `keystone-sys` socket). Default off. |
 | `compose_paths` | Extra `-f` files. |
 | `labels` | Heartbeat labels; replace TOML labels once connected. |
 
 `agent_runtime()` is the payload for `set_runtime`. Add-node “runs Docker”
-sets `docker_enabled` on the new row.
+sets `docker_enabled` on the new row. `sys_manage` is sent only when
+`sys_enabled` is also on.
 
 ## `AgentConfig` / `ServerConfig`
 

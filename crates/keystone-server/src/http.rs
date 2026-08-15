@@ -20,6 +20,7 @@ use futures_util::Stream;
 use keystone_core::docker::DockerOp;
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
+use keystone_core::sys::SysOp;
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
 use keystone_proto::StreamChunk;
@@ -79,6 +80,9 @@ pub fn router(state: AppState) -> Router {
         .route("/settings/totp/confirm", post(totp_confirm_post))
         .route("/settings/totp/disable", post(totp_disable_post))
         .route("/nodes/{id}/docker/{op}", post(docker_action))
+        .route("/nodes/{id}/sys/{op}", post(sys_action))
+        .route("/nodes/{id}/sys/updates", get(sys_updates_page))
+        .route("/nodes/{id}/sys/updates/stream", get(sys_updates_sse))
         .route(
             "/nodes/{id}/containers/{cid}/logs",
             get(container_logs_page),
@@ -103,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/nodes", get(nodes_api))
         .route("/api/v1/dockerhub/search", get(crate::dockerhub::search))
         .route("/api/v1/dockerhub/tags", get(crate::dockerhub::tags))
+        .route("/api/v1/nodes/{id}/sys/updates", get(sys_updates_api))
         .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
@@ -1366,6 +1371,11 @@ struct NodeTemplate {
     docker_allow_exec: bool,
     compose_paths_text: String,
     settings_saved: bool,
+    sys_enabled: bool,
+    sys_manage: bool,
+    sys_reason: String,
+    sys_json: String,
+    sys_error: String,
 }
 
 #[derive(Deserialize)]
@@ -1464,6 +1474,19 @@ async fn node_page(
     let mut images_json = "[]".into();
     let mut volumes_json = "[]".into();
     let mut networks_json = "[]".into();
+    let mut sys_error = String::new();
+    let mut sys_reason = String::new();
+    let mut sys_json = "{}".into();
+    if !connected {
+        sys_reason = "offline".into();
+    } else if !settings.sys_enabled {
+        sys_reason = "disabled".into();
+    } else {
+        match call_json_op(&state, &id, SysOp::Status.as_str(), "{}").await {
+            Ok(body) => sys_json = body,
+            Err(e) => sys_error = e.to_string(),
+        }
+    }
     if !connected {
         docker_reason = "offline".into();
     } else if !settings.docker_enabled {
@@ -1541,6 +1564,11 @@ async fn node_page(
             docker_allow_exec: settings.docker_allow_exec,
             compose_paths_text: settings.compose_paths.join("\n"),
             settings_saved: q.saved.as_deref() == Some("1"),
+            sys_enabled: settings.sys_enabled,
+            sys_manage: settings.sys_manage,
+            sys_reason,
+            sys_json,
+            sys_error,
         }
         .render()
         .unwrap_or_else(|e| e.to_string()),
@@ -1566,6 +1594,10 @@ struct NodeSettingsForm {
     docker_allow_exec: String,
     #[serde(default)]
     compose_paths: String,
+    #[serde(default)]
+    sys_enabled: String,
+    #[serde(default)]
+    sys_manage: String,
 }
 
 fn form_flag(s: &str) -> bool {
@@ -1594,6 +1626,8 @@ async fn node_settings_post(
         docker_allow_exec: docker_enabled && form_flag(&form.docker_allow_exec),
         compose_paths: NodeSettings::parse_lines(&form.compose_paths),
         labels: NodeSettings::parse_labels(&form.labels),
+        sys_enabled: form_flag(&form.sys_enabled),
+        sys_manage: form_flag(&form.sys_enabled) && form_flag(&form.sys_manage),
     };
     let encoded = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
     let _ = state
@@ -1630,10 +1664,16 @@ async fn call_json(
     op: DockerOp,
     payload: &str,
 ) -> anyhow::Result<String> {
-    let result = state
-        .agents
-        .call(node_id, op.as_str(), payload.to_string())
-        .await?;
+    call_json_op(state, node_id, op.as_str(), payload).await
+}
+
+async fn call_json_op(
+    state: &AppState,
+    node_id: &str,
+    op: &str,
+    payload: &str,
+) -> anyhow::Result<String> {
+    let result = state.agents.call(node_id, op, payload.to_string()).await?;
     if !result.ok {
         anyhow::bail!("{}", result.error);
     }
@@ -1698,7 +1738,8 @@ fn panel_for_op(op: DockerOp) -> &'static str {
         | DockerOp::ComposeUp
         | DockerOp::ComposeDown
         | DockerOp::ComposeLogs
-        | DockerOp::ComposePull => "compose",
+        | DockerOp::ComposePull
+        | DockerOp::ComposeUpdate => "compose",
         _ => "containers",
     }
 }
@@ -1758,12 +1799,189 @@ async fn docker_action(
     Redirect::to(&dest).into_response()
 }
 
+#[derive(Deserialize)]
+struct SysForm {
+    payload: Option<String>,
+    iface: Option<String>,
+    method: Option<String>,
+    address: Option<String>,
+    prefix: Option<String>,
+    gateway: Option<String>,
+    dns: Option<String>,
+    #[serde(default)]
+    redirect: String,
+}
+
+fn sys_form_payload(form: &SysForm) -> String {
+    if let Some(p) = &form.payload {
+        let t = p.trim();
+        if t.starts_with('{') {
+            return t.to_string();
+        }
+    }
+    let mut map = serde_json::Map::new();
+    if let Some(iface) = &form.iface {
+        map.insert("iface".into(), serde_json::json!(iface.trim()));
+    }
+    let method = form
+        .method
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("dhcp");
+    map.insert("method".into(), serde_json::json!(method));
+    if let Some(a) = &form.address {
+        map.insert("address".into(), serde_json::json!(a.trim()));
+    }
+    if let Some(p) = &form.prefix {
+        let n: u8 = p.trim().parse().unwrap_or(0);
+        map.insert("prefix".into(), serde_json::json!(n));
+    }
+    if let Some(g) = &form.gateway {
+        map.insert("gateway".into(), serde_json::json!(g.trim()));
+    }
+    if let Some(d) = &form.dns {
+        let dns: Vec<String> = d
+            .split([',', ' ', '\n'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        map.insert("dns".into(), serde_json::json!(dns));
+    }
+    serde_json::Value::Object(map).to_string()
+}
+
+async fn sys_action(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path((id, op)): Path<(String, String)>,
+    Form(form): Form<SysForm>,
+) -> Response {
+    let username = jar
+        .get(SESSION_COOKIE)
+        .and_then(|c| {
+            state
+                .stores
+                .metadata
+                .get_session(c.value())
+                .ok()
+                .flatten()
+                .map(|s| s.username)
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let parsed = match op.parse::<SysOp>() {
+        Ok(o) => o,
+        Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
+    };
+    if parsed.streams() {
+        return Redirect::to(&format!("/nodes/{id}/sys/updates")).into_response();
+    }
+    let payload = sys_form_payload(&form);
+    let target = payload.clone();
+    let result = state.agents.call(&id, parsed.as_str(), payload).await;
+    let (ok, detail) = match &result {
+        Ok(r) => (
+            r.ok,
+            if r.ok {
+                r.payload_json.clone()
+            } else {
+                r.error.clone()
+            },
+        ),
+        Err(e) => (false, e.to_string()),
+    };
+    let _ = state
+        .stores
+        .metadata
+        .audit(&username, &id, parsed.as_str(), &target, ok, &detail);
+    let dest = if form.redirect.is_empty() {
+        format!("/nodes/{id}?panel=system")
+    } else {
+        form.redirect
+    };
+    Redirect::to(&dest).into_response()
+}
+
+async fn sys_updates_page(Path(id): Path<String>) -> impl IntoResponse {
+    Html(
+        LogsTemplate {
+            title: "System updates".into(),
+            node_id: id.clone(),
+            subtitle: "apt-get upgrade".into(),
+            hint: "Streaming apt-get upgrade. Leave this page to stop following (the upgrade keeps running on the node).".into(),
+            back_href: format!("/nodes/{id}?panel=system"),
+            stream_url: format!("/nodes/{}/sys/updates/stream", urlencoding_path(&id)),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn sys_updates_sse(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Response {
+    let username = jar
+        .get(SESSION_COOKIE)
+        .and_then(|c| {
+            state
+                .stores
+                .metadata
+                .get_session(c.value())
+                .ok()
+                .flatten()
+                .map(|s| s.username)
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let _ = state
+        .stores
+        .metadata
+        .audit(&username, &id, "updates_apply", "{}", true, "started");
+    logs_sse_op(state, id, SysOp::UpdatesApply.as_str(), "{}".into())
+}
+
+async fn sys_updates_api(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match call_json_op(&state, &id, SysOp::UpdatesList.as_str(), "{}").await {
+        Ok(body) => {
+            let val: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::json!({ "packages": [] }));
+            axum::Json(val).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn logs_sse_op(state: AppState, node_id: String, op: &str, payload: String) -> Response {
+    let (request_id, rx) = match state.agents.stream(&node_id, op, payload) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    };
+    let stream = LogSse {
+        rx,
+        cancel: Some(StreamCancel {
+            agents: state.agents.clone(),
+            node_id,
+            request_id,
+        }),
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
 #[derive(Template)]
 #[template(path = "logs.html")]
 struct LogsTemplate {
     title: String,
     node_id: String,
     subtitle: String,
+    hint: String,
     back_href: String,
     stream_url: String,
 }
@@ -1774,6 +1992,7 @@ async fn container_logs_page(Path((id, cid)): Path<(String, String)>) -> impl In
             title: "Container logs".into(),
             node_id: id.clone(),
             subtitle: cid.clone(),
+            hint: "Live follow, last 200 lines. Leave this page to stop.".into(),
             back_href: format!("/nodes/{id}?panel=containers"),
             stream_url: format!(
                 "/nodes/{}/containers/{}/logs/stream?follow=1",
@@ -1792,6 +2011,7 @@ async fn compose_logs_page(Path((id, project)): Path<(String, String)>) -> impl 
             title: "Compose logs".into(),
             node_id: id.clone(),
             subtitle: project.clone(),
+            hint: "Live follow, last 200 lines. Leave this page to stop.".into(),
             back_href: format!("/nodes/{id}?panel=compose"),
             stream_url: format!(
                 "/nodes/{}/compose/{}/logs/stream?follow=1",
@@ -1859,21 +2079,7 @@ async fn compose_logs_sse(
 }
 
 fn logs_sse(state: AppState, node_id: String, op: DockerOp, payload: String) -> Response {
-    let (request_id, rx) = match state.agents.stream(&node_id, op.as_str(), payload) {
-        Ok(v) => v,
-        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
-    };
-    let stream = LogSse {
-        rx,
-        cancel: Some(StreamCancel {
-            agents: state.agents.clone(),
-            node_id,
-            request_id,
-        }),
-    };
-    Sse::new(stream)
-        .keep_alive(KeepAlive::default())
-        .into_response()
+    logs_sse_op(state, node_id, op.as_str(), payload)
 }
 
 struct StreamCancel {
@@ -2130,6 +2336,7 @@ mod tests {
         assert_eq!(panel_for_op(DockerOp::VolumeCreate), "volumes");
         assert_eq!(panel_for_op(DockerOp::NetworkRemove), "networks");
         assert_eq!(panel_for_op(DockerOp::ComposeDown), "compose");
+        assert_eq!(panel_for_op(DockerOp::ComposeUpdate), "compose");
         assert_eq!(panel_for_op(DockerOp::ContainerStart), "containers");
     }
 
@@ -2195,6 +2402,52 @@ mod tests {
             !head[authed_end..].contains("/api/v1/dockerhub"),
             "Hub lookup must not be on the public router"
         );
+    }
+
+    #[test]
+    fn sys_routes_are_behind_the_session_cookie() {
+        let src = include_str!("http.rs");
+        let head = src.split("#[cfg(test)]").next().expect("router source");
+        let authed_end = head.find(".layer(").expect("session layer");
+        let post = head.find("/nodes/{id}/sys/{op}").expect("sys POST");
+        let apply = head.find("/nodes/{id}/sys/updates").expect("sys apply");
+        let api = head
+            .find("/api/v1/nodes/{id}/sys/updates")
+            .expect("sys updates API");
+        assert!(post < authed_end);
+        assert!(apply < authed_end);
+        assert!(api < authed_end);
+        let public = head[authed_end..]
+            .split("async fn health()")
+            .next()
+            .expect("public router");
+        assert!(
+            !public.contains("/nodes/{id}/sys"),
+            "sys routes must not be on the public router"
+        );
+        assert!(
+            !public.contains("/api/v1/nodes/{id}/sys"),
+            "sys JSON must not be on the public router"
+        );
+    }
+
+    #[test]
+    fn sys_form_payload_static_ipv4() {
+        let form = SysForm {
+            payload: None,
+            iface: Some("eth0".into()),
+            method: Some("static".into()),
+            address: Some("192.168.0.50".into()),
+            prefix: Some("24".into()),
+            gateway: Some("192.168.0.1".into()),
+            dns: Some("1.1.1.1 8.8.8.8".into()),
+            redirect: String::new(),
+        };
+        let p = sys_form_payload(&form);
+        assert!(p.contains("\"iface\":\"eth0\""));
+        assert!(p.contains("\"method\":\"static\""));
+        assert!(p.contains("192.168.0.50"));
+        assert!(!p.contains(';'));
     }
 
     #[test]

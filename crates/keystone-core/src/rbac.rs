@@ -30,6 +30,10 @@ pub enum Permission {
     DockerManage,
     /// `docker exec` into a container (off by default on the agent).
     DockerExec,
+    /// View host system-admin snapshot (apt list, addresses).
+    SysView,
+    /// Apply apt upgrades and set IPv4 (opt-in root helper).
+    SysManage,
 }
 
 impl Permission {
@@ -45,6 +49,8 @@ impl Permission {
                 "Start/stop/remove containers, Compose, images, volumes, and networks"
             }
             Self::DockerExec => "Execute a process inside a container (root-equivalent)",
+            Self::SysView => "View host updates and addressing on a node",
+            Self::SysManage => "Apply apt upgrades and set IPv4 on a node",
         }
     }
 
@@ -55,6 +61,8 @@ impl Permission {
             Self::DockerView,
             Self::DockerManage,
             Self::DockerExec,
+            Self::SysView,
+            Self::SysManage,
         ]
     }
 }
