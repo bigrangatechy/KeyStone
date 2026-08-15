@@ -2,23 +2,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use std::collections::HashMap;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use askama::Template;
 use axum::body::Body;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use futures_util::Stream;
 use keystone_core::docker::DockerOp;
 use keystone_core::metrics::catalog;
-use keystone_core::rbac::Permission;
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
+use keystone_proto::StreamChunk;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 use crate::auth;
 use crate::help;
@@ -37,10 +42,22 @@ pub fn router(state: AppState) -> Router {
         .route("/settings", get(settings_page).post(settings_post))
         .route("/settings/rotate-token", post(settings_rotate_token))
         .route("/nodes/{id}/docker/{op}", post(docker_action))
-        .route("/nodes/{id}/containers/{cid}/logs", get(container_logs_sse))
+        .route(
+            "/nodes/{id}/containers/{cid}/logs",
+            get(container_logs_page),
+        )
+        .route(
+            "/nodes/{id}/containers/{cid}/logs/stream",
+            get(container_logs_sse),
+        )
         .route(
             "/nodes/{id}/containers/{cid}/stats",
-            get(container_stats_sse),
+            get(container_stats_json),
+        )
+        .route("/nodes/{id}/compose/{project}/logs", get(compose_logs_page))
+        .route(
+            "/nodes/{id}/compose/{project}/logs/stream",
+            get(compose_logs_sse),
         )
         .route("/help", get(help_index))
         .route("/help/{slug}", get(help_section))
@@ -633,6 +650,7 @@ struct NodeTemplate {
     volumes_json: String,
     networks_json: String,
     docker_error: String,
+    docker_reason: String,
     widgets_json: String,
     layout_json: String,
     presets_json: String,
@@ -738,13 +756,19 @@ async fn node_page(
         })
         .collect();
     let connected = state.agents.is_connected(&id);
+    let settings = node_settings(&state, &id);
     let mut docker_error = String::new();
+    let mut docker_reason = String::new();
     let mut containers_json = "[]".into();
     let mut compose_json = "{}".into();
     let mut images_json = "[]".into();
-    let mut volumes_json = "{}".into();
+    let mut volumes_json = "[]".into();
     let mut networks_json = "[]".into();
-    if connected {
+    if !connected {
+        docker_reason = "offline".into();
+    } else if !settings.docker_enabled {
+        docker_reason = "disabled".into();
+    } else {
         match fetch_docker_bundle(&state, &id).await {
             Ok(bundle) => {
                 containers_json = bundle.0;
@@ -767,7 +791,6 @@ async fn node_page(
     } else {
         node.os
     };
-    let settings = node_settings(&state, &id);
     let mut nics: Vec<String> = samples
         .iter()
         .filter_map(|s| {
@@ -802,6 +825,7 @@ async fn node_page(
             volumes_json,
             networks_json,
             docker_error,
+            docker_reason,
             widgets_json,
             layout_json,
             presets_json,
@@ -893,7 +917,7 @@ async fn fetch_docker_bundle(
         .unwrap_or_else(|_| "[]".into());
     let v = call_json(state, id, DockerOp::VolumeList, "{}")
         .await
-        .unwrap_or_else(|_| "{}".into());
+        .unwrap_or_else(|_| "[]".into());
     let n = call_json(state, id, DockerOp::NetworkList, "{}")
         .await
         .unwrap_or_else(|_| "[]".into());
@@ -919,8 +943,64 @@ async fn call_json(
 #[derive(Deserialize)]
 struct DockerForm {
     payload: Option<String>,
+    name: Option<String>,
+    id: Option<String>,
+    project: Option<String>,
     #[serde(default)]
     redirect: String,
+}
+
+fn docker_form_payload(form: &DockerForm) -> String {
+    if let Some(p) = &form.payload {
+        let t = p.trim();
+        if t.starts_with('{') {
+            return t.to_string();
+        }
+        if !t.is_empty() && form.name.is_none() {
+            return serde_json::json!({ "name": t }).to_string();
+        }
+    }
+    let mut map = serde_json::Map::new();
+    if let Some(n) = &form.name {
+        if !n.trim().is_empty() {
+            map.insert("name".into(), serde_json::json!(n.trim()));
+        }
+    }
+    if let Some(id) = &form.id {
+        if !id.trim().is_empty() {
+            map.insert("id".into(), serde_json::json!(id.trim()));
+        }
+    }
+    if let Some(p) = &form.project {
+        if !p.trim().is_empty() {
+            map.insert("project".into(), serde_json::json!(p.trim()));
+        }
+    }
+    serde_json::Value::Object(map).to_string()
+}
+
+fn panel_for_op(op: DockerOp) -> &'static str {
+    match op {
+        DockerOp::ImageList
+        | DockerOp::ImageInspect
+        | DockerOp::ImagePull
+        | DockerOp::ImagePrune
+        | DockerOp::ImageRemove => "images",
+        DockerOp::VolumeList
+        | DockerOp::VolumeInspect
+        | DockerOp::VolumeCreate
+        | DockerOp::VolumeRemove => "volumes",
+        DockerOp::NetworkList
+        | DockerOp::NetworkInspect
+        | DockerOp::NetworkCreate
+        | DockerOp::NetworkRemove => "networks",
+        DockerOp::ComposePs
+        | DockerOp::ComposeUp
+        | DockerOp::ComposeDown
+        | DockerOp::ComposeLogs
+        | DockerOp::ComposePull => "compose",
+        _ => "containers",
+    }
 }
 
 async fn docker_action(
@@ -945,8 +1025,14 @@ async fn docker_action(
         Ok(o) => o,
         Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
     };
-    let _perm: Permission = parsed.permission();
-    let payload = form.payload.unwrap_or_else(|| "{}".into());
+    if parsed.streams() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "logs are streamed from the logs page",
+        )
+            .into_response();
+    }
+    let payload = docker_form_payload(&form);
     let target = payload.clone();
     let result = state.agents.call(&id, parsed.as_str(), payload).await;
     let (ok, detail) = match &result {
@@ -965,38 +1051,174 @@ async fn docker_action(
         .metadata
         .audit(&username, &id, parsed.as_str(), &target, ok, &detail);
     let dest = if form.redirect.is_empty() {
-        format!("/nodes/{id}")
+        format!("/nodes/{id}?panel={}", panel_for_op(parsed))
     } else {
         form.redirect
     };
     Redirect::to(&dest).into_response()
 }
 
-async fn container_logs_sse(
-    State(state): State<AppState>,
-    Path((id, cid)): Path<(String, String)>,
-) -> Response {
-    let payload = serde_json::json!({"id": cid, "tail": "200"}).to_string();
-    match state
-        .agents
-        .call(&id, DockerOp::ContainerLogs.as_str(), payload)
-        .await
-    {
-        Ok(r) if r.ok => {
-            let body = format!("data: {}\n\n", r.payload_json.replace('\n', "\\n"));
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/event-stream")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .body(Body::from(body))
-                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+#[derive(Template)]
+#[template(path = "logs.html")]
+struct LogsTemplate {
+    title: String,
+    node_id: String,
+    subtitle: String,
+    back_href: String,
+    stream_url: String,
+}
+
+async fn container_logs_page(Path((id, cid)): Path<(String, String)>) -> impl IntoResponse {
+    Html(
+        LogsTemplate {
+            title: "Container logs".into(),
+            node_id: id.clone(),
+            subtitle: cid.clone(),
+            back_href: format!("/nodes/{id}?panel=containers"),
+            stream_url: format!(
+                "/nodes/{}/containers/{}/logs/stream?follow=1",
+                urlencoding_path(&id),
+                urlencoding_path(&cid)
+            ),
         }
-        Ok(r) => (StatusCode::BAD_GATEWAY, r.error).into_response(),
-        Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn compose_logs_page(Path((id, project)): Path<(String, String)>) -> impl IntoResponse {
+    Html(
+        LogsTemplate {
+            title: "Compose logs".into(),
+            node_id: id.clone(),
+            subtitle: project.clone(),
+            back_href: format!("/nodes/{id}?panel=compose"),
+            stream_url: format!(
+                "/nodes/{}/compose/{}/logs/stream?follow=1",
+                urlencoding_path(&id),
+                urlencoding_path(&project)
+            ),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+fn urlencoding_path(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+#[derive(Deserialize)]
+struct FollowQuery {
+    follow: Option<String>,
+}
+
+fn follow_from_query(q: &FollowQuery) -> bool {
+    match q.follow.as_deref().map(str::trim) {
+        None | Some("") | Some("1") | Some("true") | Some("yes") => true,
+        Some("0") | Some("false") | Some("no") => false,
+        _ => true,
     }
 }
 
-async fn container_stats_sse(
+async fn container_logs_sse(
+    State(state): State<AppState>,
+    Path((id, cid)): Path<(String, String)>,
+    Query(q): Query<FollowQuery>,
+) -> Response {
+    let payload = serde_json::json!({
+        "id": cid,
+        "tail": "200",
+        "follow": follow_from_query(&q),
+    })
+    .to_string();
+    logs_sse(state, id, DockerOp::ContainerLogs, payload)
+}
+
+async fn compose_logs_sse(
+    State(state): State<AppState>,
+    Path((id, project)): Path<(String, String)>,
+    Query(q): Query<FollowQuery>,
+) -> Response {
+    let payload = serde_json::json!({
+        "project": project,
+        "tail": "200",
+        "follow": follow_from_query(&q),
+    })
+    .to_string();
+    logs_sse(state, id, DockerOp::ComposeLogs, payload)
+}
+
+fn logs_sse(state: AppState, node_id: String, op: DockerOp, payload: String) -> Response {
+    let (request_id, rx) = match state.agents.stream(&node_id, op.as_str(), payload) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    };
+    let stream = LogSse {
+        rx,
+        cancel: Some(StreamCancel {
+            agents: state.agents.clone(),
+            node_id,
+            request_id,
+        }),
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+struct StreamCancel {
+    agents: crate::state::AgentRegistry,
+    node_id: String,
+    request_id: String,
+}
+
+impl Drop for StreamCancel {
+    fn drop(&mut self) {
+        self.agents.cancel_stream(&self.node_id, &self.request_id);
+    }
+}
+
+struct LogSse {
+    rx: mpsc::Receiver<StreamChunk>,
+    cancel: Option<StreamCancel>,
+}
+
+impl Stream for LogSse {
+    type Item = Result<Event, std::convert::Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match Pin::new(&mut self.rx).poll_recv(cx) {
+                Poll::Ready(Some(chunk)) => {
+                    if chunk.eof {
+                        self.cancel.take();
+                        return Poll::Ready(Some(Ok(Event::default().event("done").data("eof"))));
+                    }
+                    if chunk.data.is_empty() {
+                        continue;
+                    }
+                    let t = String::from_utf8_lossy(&chunk.data).into_owned();
+                    let data = serde_json::json!({ "t": t }).to_string();
+                    return Poll::Ready(Some(Ok(Event::default().data(data))));
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+async fn container_stats_json(
     State(state): State<AppState>,
     Path((id, cid)): Path<(String, String)>,
 ) -> Response {
@@ -1007,13 +1229,9 @@ async fn container_stats_sse(
         .await
     {
         Ok(r) if r.ok => {
-            let body = format!("data: {}\n\n", r.payload_json);
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/event-stream")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .body(Body::from(body))
-                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            let val: serde_json::Value =
+                serde_json::from_str(&r.payload_json).unwrap_or(serde_json::Value::Null);
+            Json(val).into_response()
         }
         Ok(r) => (StatusCode::BAD_GATEWAY, r.error).into_response(),
         Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
@@ -1176,5 +1394,48 @@ mod tests {
         assert_eq!(slug_node_id("Pi Hole", "").unwrap(), "pi-hole");
         assert_eq!(slug_node_id("pi-hole", "Custom_ID").unwrap(), "custom_id");
         assert!(slug_node_id("   ", "").is_err());
+    }
+
+    #[test]
+    fn docker_form_payload_prefers_json_then_fields() {
+        let json = DockerForm {
+            payload: Some(r#"{"name":"nginx"}"#.into()),
+            name: None,
+            id: None,
+            project: None,
+            redirect: String::new(),
+        };
+        assert_eq!(docker_form_payload(&json), r#"{"name":"nginx"}"#);
+        let named = DockerForm {
+            payload: None,
+            name: Some(" data ".into()),
+            id: None,
+            project: None,
+            redirect: String::new(),
+        };
+        assert_eq!(docker_form_payload(&named), r#"{"name":"data"}"#);
+        let id = DockerForm {
+            payload: None,
+            name: None,
+            id: Some("abc123".into()),
+            project: None,
+            redirect: String::new(),
+        };
+        assert_eq!(docker_form_payload(&id), r#"{"id":"abc123"}"#);
+    }
+
+    #[test]
+    fn panel_for_op_groups_resources() {
+        assert_eq!(panel_for_op(DockerOp::ImagePull), "images");
+        assert_eq!(panel_for_op(DockerOp::VolumeCreate), "volumes");
+        assert_eq!(panel_for_op(DockerOp::NetworkRemove), "networks");
+        assert_eq!(panel_for_op(DockerOp::ComposeDown), "compose");
+        assert_eq!(panel_for_op(DockerOp::ContainerStart), "containers");
+    }
+
+    #[test]
+    fn urlencoding_path_keeps_unreserved() {
+        assert_eq!(urlencoding_path("abc-_.~XYZ"), "abc-_.~XYZ");
+        assert_eq!(urlencoding_path("a b"), "a%20b");
     }
 }

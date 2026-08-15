@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use keystone_core::config::ServerConfig;
 use keystone_core::{NodeSettings, ServerSettings};
-use keystone_proto::Command;
+use keystone_proto::{Command, StreamChunk};
 use keystone_store::Stores;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -30,6 +30,7 @@ pub struct AgentRegistry {
 struct ConnectedAgent {
     cmd_tx: CommandTx,
     pending: HashMap<String, oneshot::Sender<keystone_proto::CommandResult>>,
+    streams: HashMap<String, mpsc::Sender<StreamChunk>>,
 }
 
 impl AgentRegistry {
@@ -39,6 +40,7 @@ impl AgentRegistry {
             ConnectedAgent {
                 cmd_tx,
                 pending: HashMap::new(),
+                streams: HashMap::new(),
             },
         );
     }
@@ -74,6 +76,61 @@ impl AgentRegistry {
                 let _ = tx.send(result);
             }
         }
+    }
+
+    pub fn push_chunk(&self, node_id: &str, chunk: StreamChunk) {
+        let mut inner = self.inner.lock();
+        if let Some(agent) = inner.get_mut(node_id) {
+            let eof = chunk.eof;
+            let id = chunk.request_id.clone();
+            if let Some(tx) = agent.streams.get(&id) {
+                let _ = tx.try_send(chunk);
+            }
+            if eof {
+                agent.streams.remove(&id);
+            }
+        }
+    }
+
+    pub fn cancel_stream(&self, node_id: &str, request_id: &str) {
+        let mut inner = self.inner.lock();
+        if let Some(agent) = inner.get_mut(node_id) {
+            agent.streams.remove(request_id);
+            let cmd = Command {
+                request_id: Uuid::new_v4().to_string(),
+                op: "cancel".into(),
+                payload_json: serde_json::json!({ "request_id": request_id }).to_string(),
+            };
+            let _ = agent.cmd_tx.try_send(cmd);
+        }
+    }
+
+    /// Follow-style ops: chunks arrive on the returned receiver until eof or cancel.
+    pub fn stream(
+        &self,
+        node_id: &str,
+        op: &str,
+        payload_json: String,
+    ) -> anyhow::Result<(String, mpsc::Receiver<StreamChunk>)> {
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, rx) = mpsc::channel(256);
+        let cmd = Command {
+            request_id: request_id.clone(),
+            op: op.to_string(),
+            payload_json,
+        };
+        {
+            let mut inner = self.inner.lock();
+            let agent = inner
+                .get_mut(node_id)
+                .ok_or_else(|| anyhow::anyhow!("agent {node_id} is not connected"))?;
+            agent.streams.insert(request_id.clone(), tx);
+            agent
+                .cmd_tx
+                .try_send(cmd)
+                .map_err(|_| anyhow::anyhow!("agent command queue full"))?;
+        }
+        Ok((request_id, rx))
     }
 
     pub async fn call(

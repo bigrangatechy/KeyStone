@@ -31,9 +31,12 @@ Axum router in `crates/keystone-server/src/http.rs`. Cookie
 | POST | `/nodes/{id}/settings` | Save `NodeSettings`; `nudge_runtime` if connected. |
 | GET/POST | `/settings` | `ServerSettings` + password change. |
 | POST | `/settings/rotate-token` | Random ingest token (no-op if env override). |
-| POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON. Audit log. |
-| GET | `/nodes/{id}/containers/{cid}/logs` | SSE-ish payload of log text. |
-| GET | `/nodes/{id}/containers/{cid}/stats` | Live stats. |
+| POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`. Redirect keeps `?panel=`. Audit log. Streaming ops are 400. |
+| GET | `/nodes/{id}/containers/{cid}/logs` | HTML follow page. |
+| GET | `/nodes/{id}/containers/{cid}/logs/stream` | SSE: `{"t":"..."}` then `event: done`. Cancel on drop. |
+| GET | `/nodes/{id}/containers/{cid}/stats` | One-shot JSON stats (not linked from the UI). |
+| GET | `/nodes/{id}/compose/{project}/logs` | HTML follow page. |
+| GET | `/nodes/{id}/compose/{project}/logs/stream` | SSE, same as container logs. |
 | GET | `/help`, `/help/{slug}` | Operator markdown compiled in (`help.rs`). |
 | POST | `/logout` | |
 

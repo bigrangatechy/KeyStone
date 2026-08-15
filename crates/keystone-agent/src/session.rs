@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,10 +15,11 @@ use keystone_core::{AgentRuntime, NodeSettings};
 use keystone_proto::ingest_client::IngestClient;
 use keystone_proto::{
     agent_to_server, server_to_agent, Ack, AgentToServer, CommandResult, Heartbeat, PushFrame,
-    ServerToAgent,
+    ServerToAgent, StreamChunk,
 };
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::task::AbortHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 use tracing::{info, warn};
@@ -71,7 +72,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
         .keep_alive_timeout(Duration::from_secs(30));
 
     loop {
-        match connect_session(&cfg, &node_id, &runtime, &buffer, endpoint.clone()).await {
+        match connect_session(&cfg, &node_id, runtime.clone(), &buffer, endpoint.clone()).await {
             Ok(()) => info!("ingest session ended, reconnecting"),
             Err(e) => warn!("ingest session error: {e}"),
         }
@@ -82,13 +83,13 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
 async fn connect_session(
     cfg: &AgentConfig,
     node_id: &str,
-    runtime: &AgentRuntimeState,
+    runtime: Arc<AgentRuntimeState>,
     buffer: &DiskBuffer,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
     let channel = endpoint.connect().await.context("connect ingest")?;
     let mut client = IngestClient::new(channel);
-    let (tx, rx) = mpsc::channel::<AgentToServer>(64);
+    let (tx, rx) = mpsc::channel::<AgentToServer>(256);
     let response = client.session(ReceiverStream::new(rx)).await?;
     let mut inbound = response.into_inner();
 
@@ -106,6 +107,8 @@ async fn connect_session(
 
     let push_tx = tx.clone();
     let node_id_owned = node_id.to_string();
+    let cancels: Arc<std::sync::Mutex<HashMap<String, AbortHandle>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
 
     let mut interval = tokio::time::interval(Duration::from_secs(cfg.interval_secs.max(1)));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -136,32 +139,84 @@ async fn connect_session(
                         handle_ack(&ack);
                     }
                     Ok(Some(ServerToAgent { body: Some(server_to_agent::Body::Command(cmd)) })) => {
-                        let result = if cmd.op == "set_interval" {
-                            match parse_set_interval(&cmd.payload_json) {
+                        if cmd.op == "cancel" {
+                            let target = cancel_target(&cmd.payload_json);
+                            if let Some(handle) = cancels
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .remove(&target)
+                            {
+                                handle.abort();
+                            }
+                            if tx.send(AgentToServer {
+                                body: Some(agent_to_server::Body::Result(CommandResult {
+                                    request_id: cmd.request_id,
+                                    ok: true,
+                                    payload_json: "{}".into(),
+                                    error: String::new(),
+                                })),
+                            }).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        if cmd.op == "set_interval" {
+                            let body = match parse_set_interval(&cmd.payload_json) {
                                 Ok(secs) => {
                                     apply_interval(&mut interval, secs);
-                                    Ok(serde_json::json!({ "interval_secs": secs }))
+                                    CommandResult {
+                                        request_id: cmd.request_id,
+                                        ok: true,
+                                        payload_json: serde_json::json!({ "interval_secs": secs }).to_string(),
+                                        error: String::new(),
+                                    }
                                 }
-                                Err(e) => Err(e),
+                                Err(e) => command_err(cmd.request_id, e),
+                            };
+                            if tx.send(AgentToServer {
+                                body: Some(agent_to_server::Body::Result(body)),
+                            }).await.is_err() {
+                                break;
                             }
-                        } else if cmd.op == "set_runtime" {
-                            apply_runtime(runtime, &mut interval, &cmd.payload_json).await
-                        } else {
-                            handle_command(runtime, &cmd.op, &cmd.payload_json).await
-                        };
-                        let body = match result {
+                            continue;
+                        }
+                        if cmd.op == "set_runtime" {
+                            let body = match apply_runtime(&runtime, &mut interval, &cmd.payload_json).await {
+                                Ok(v) => CommandResult {
+                                    request_id: cmd.request_id,
+                                    ok: true,
+                                    payload_json: v.to_string(),
+                                    error: String::new(),
+                                },
+                                Err(e) => command_err(cmd.request_id, e),
+                            };
+                            if tx.send(AgentToServer {
+                                body: Some(agent_to_server::Body::Result(body)),
+                            }).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        let streaming = DockerOp::from_str(&cmd.op).ok().is_some_and(DockerOp::streams);
+                        if streaming {
+                            spawn_streaming_command(
+                                runtime.clone(),
+                                tx.clone(),
+                                cancels.clone(),
+                                cmd.request_id,
+                                cmd.op,
+                                cmd.payload_json,
+                            );
+                            continue;
+                        }
+                        let body = match handle_command(&runtime, &cmd.op, &cmd.payload_json).await {
                             Ok(payload) => CommandResult {
                                 request_id: cmd.request_id,
                                 ok: true,
                                 payload_json: payload.to_string(),
                                 error: String::new(),
                             },
-                            Err(e) => CommandResult {
-                                request_id: cmd.request_id,
-                                ok: false,
-                                payload_json: String::new(),
-                                error: e.to_string(),
-                            },
+                            Err(e) => command_err(cmd.request_id, e),
                         };
                         if tx.send(AgentToServer {
                             body: Some(agent_to_server::Body::Result(body)),
@@ -179,6 +234,112 @@ async fn connect_session(
         }
     }
     Ok(())
+}
+
+fn command_err(request_id: String, e: impl std::fmt::Display) -> CommandResult {
+    CommandResult {
+        request_id,
+        ok: false,
+        payload_json: String::new(),
+        error: e.to_string(),
+    }
+}
+
+fn cancel_target(payload_json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()
+        .and_then(|v| v.get("request_id")?.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn spawn_streaming_command(
+    runtime: Arc<AgentRuntimeState>,
+    tx: mpsc::Sender<AgentToServer>,
+    cancels: Arc<std::sync::Mutex<HashMap<String, AbortHandle>>>,
+    request_id: String,
+    op: String,
+    payload_json: String,
+) {
+    let rid = request_id.clone();
+    let cancels_done = cancels.clone();
+    let handle = tokio::spawn(async move {
+        let result = run_streaming(&runtime, &op, &payload_json, tx.clone(), &request_id).await;
+        let body = match result {
+            Ok(payload) => CommandResult {
+                request_id: request_id.clone(),
+                ok: true,
+                payload_json: payload.to_string(),
+                error: String::new(),
+            },
+            Err(e) => command_err(request_id.clone(), e),
+        };
+        let _ = tx
+            .send(AgentToServer {
+                body: Some(agent_to_server::Body::Result(body)),
+            })
+            .await;
+        cancels_done
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&request_id);
+    });
+    cancels
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(rid, handle.abort_handle());
+}
+
+async fn run_streaming(
+    runtime: &AgentRuntimeState,
+    op: &str,
+    payload_json: &str,
+    tx: mpsc::Sender<AgentToServer>,
+    request_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let docker = runtime
+        .docker
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("docker is not enabled on this agent"))?;
+    let op = DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
+    let payload = if payload_json.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(payload_json).context("payload json")?
+    };
+    let (chunk_tx, mut chunk_rx) = mpsc::channel::<Vec<u8>>(128);
+    let tx_chunks = tx.clone();
+    let rid = request_id.to_string();
+    let forward = tokio::spawn(async move {
+        while let Some(data) = chunk_rx.recv().await {
+            if tx_chunks
+                .send(AgentToServer {
+                    body: Some(agent_to_server::Body::Chunk(StreamChunk {
+                        request_id: rid.clone(),
+                        data,
+                        eof: false,
+                    })),
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let result = docker.execute_streaming(op, payload, chunk_tx).await;
+    let _ = forward.await;
+    let _ = tx
+        .send(AgentToServer {
+            body: Some(agent_to_server::Body::Chunk(StreamChunk {
+                request_id: request_id.to_string(),
+                data: Vec::new(),
+                eof: true,
+            })),
+        })
+        .await;
+    result
 }
 
 fn handle_ack(ack: &Ack) {

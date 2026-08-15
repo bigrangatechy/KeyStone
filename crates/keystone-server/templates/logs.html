@@ -1,0 +1,14 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}{{ title }} — {{ subtitle }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="muted"><a href="{{ back_href }}">← Back</a></p>
+    <h1>{{ title }}</h1>
+    <p class="muted"><code>{{ node_id }}</code> · {{ subtitle }} · live follow, last 200 lines. Leave this page to stop.</p>
+  </div>
+</section>
+<pre class="logs" id="log-view" data-stream="{{ stream_url }}"></pre>
+{% endblock %}

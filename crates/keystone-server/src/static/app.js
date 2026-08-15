@@ -21,12 +21,99 @@
     }
   }
 
-  function parse(el) {
+  function parse(host) {
     try {
-      return JSON.parse(el.getAttribute("data-json") || "null");
+      return JSON.parse(host.getAttribute("data-json") || "null");
     } catch (e) {
       return null;
     }
+  }
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function tdText(text) {
+    const n = document.createElement("td");
+    n.textContent = text == null ? "" : String(text);
+    return n;
+  }
+
+  function tdCode(text) {
+    const n = document.createElement("td");
+    const c = document.createElement("code");
+    c.textContent = text == null ? "" : String(text);
+    n.appendChild(c);
+    return n;
+  }
+
+  function thead(labels) {
+    const head = document.createElement("thead");
+    const tr = document.createElement("tr");
+    labels.forEach((label) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      tr.appendChild(th);
+    });
+    head.appendChild(tr);
+    return head;
+  }
+
+  function formatBytes(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x) || x < 0) return "";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let v = x;
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i += 1;
+    }
+    return (i === 0 ? String(Math.round(v)) : v.toFixed(1)) + " " + units[i];
+  }
+
+  const OP_LABELS = {
+    container_start: "Start",
+    container_stop: "Stop",
+    container_restart: "Restart",
+    container_kill: "Kill",
+    container_remove: "Remove",
+    compose_up: "Up",
+    compose_down: "Down",
+    compose_pull: "Pull",
+    image_remove: "Remove",
+    volume_remove: "Remove",
+    network_remove: "Remove"
+  };
+
+  const CONFIRM = {
+    container_kill: "Kill this container?",
+    container_remove: "Remove this container? This cannot be undone.",
+    compose_down: "Compose down this project?",
+    image_remove: "Remove this image?",
+    image_prune: "Prune unused images on this node?",
+    volume_remove: "Remove this volume?",
+    network_remove: "Remove this network?"
+  };
+
+  function manageOn(host) {
+    return host.getAttribute("data-manage") === "1";
+  }
+
+  function dockerBlocked(host) {
+    const reason = host.getAttribute("data-reason") || "";
+    if (reason === "offline") {
+      host.replaceChildren(el("p", "muted", "Agent is not connected. Docker commands need a live session."));
+      return true;
+    }
+    if (reason === "disabled") {
+      host.replaceChildren(el("p", "muted", "Observe Docker is off. Enable it on the Settings tab."));
+      return true;
+    }
+    return false;
   }
 
   function actionForm(node, op, payload) {
@@ -41,153 +128,256 @@
     f.appendChild(i);
     const b = document.createElement("button");
     b.type = "submit";
-    b.textContent = op.replace("container_", "").replace("image_", "").replace("volume_", "").replace("network_", "").replace("compose_", "");
+    b.textContent = OP_LABELS[op] || op;
+    if (CONFIRM[op]) b.className = "danger";
     f.appendChild(b);
+    const msg = CONFIRM[op];
+    if (msg) {
+      f.addEventListener("submit", (ev) => {
+        if (!window.confirm(msg)) ev.preventDefault();
+      });
+    }
     return f;
   }
 
-  function renderContainers(el) {
-    const data = parse(el);
-    const node = el.getAttribute("data-node");
-    if (!Array.isArray(data)) {
-      el.textContent = el.getAttribute("data-json") || "n/a";
-      return;
-    }
-    const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>Name</th><th>Image</th><th>State</th><th>Project</th><th></th></tr></thead>";
-    const body = document.createElement("tbody");
-    data.forEach((c) => {
-      const tr = document.createElement("tr");
-      const name = (c.names && c.names[0]) ? c.names[0].replace(/^\//, "") : c.id;
-      const id = c.id_full || c.id;
-      tr.innerHTML = "<td>" + name + "<br><code>" + (c.id || "") + "</code></td><td>" +
-        (c.image || "") + "</td><td>" + (c.state || "") + " " + (c.status || "") +
-        "</td><td>" + (c.compose_project || "") + "</td>";
-      const td = document.createElement("td");
-      ["container_start", "container_stop", "container_restart", "container_kill", "container_remove"].forEach((op) => {
-        td.appendChild(actionForm(node, op, { id: id }));
-      });
-      const logs = document.createElement("a");
-      logs.href = "/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id) + "/logs";
-      logs.textContent = "logs";
-      td.appendChild(logs);
-      const stats = document.createElement("a");
-      stats.href = "/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id) + "/stats";
-      stats.textContent = " stats";
-      td.appendChild(stats);
-      tr.appendChild(td);
-      body.appendChild(tr);
-    });
-    table.appendChild(body);
-    el.replaceChildren(table);
+  function actionsCell(children) {
+    const td = document.createElement("td");
+    td.className = "actions";
+    children.forEach((n) => td.appendChild(n));
+    return td;
   }
 
-  function renderGeneric(el, rowsFn) {
-    const data = parse(el);
-    const node = el.getAttribute("data-node");
-    el.replaceChildren(rowsFn(data, node) || document.createTextNode(JSON.stringify(data, null, 2)));
+  function logsLink(href) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.textContent = "Logs";
+    return a;
+  }
+
+  function stateCell(state, status) {
+    const td = document.createElement("td");
+    const s = (state || "").toLowerCase();
+    const span = el("span", "state state-" + (s || "unknown"), (state || "") + (status ? " · " + status : ""));
+    td.appendChild(span);
+    return td;
+  }
+
+  function emptyRow(cols, text) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = cols;
+    td.className = "muted";
+    td.textContent = text;
+    tr.appendChild(td);
+    return tr;
+  }
+
+  document.querySelectorAll("form[data-confirm]").forEach((f) => {
+    f.addEventListener("submit", (ev) => {
+      if (!window.confirm(f.getAttribute("data-confirm"))) ev.preventDefault();
+    });
+  });
+
+  const logView = document.getElementById("log-view");
+  if (logView) {
+    const url = logView.getAttribute("data-stream");
+    if (url) {
+      const es = new EventSource(url);
+      function appendLog(text) {
+        logView.textContent += text;
+        if (logView.textContent.length > 400000) {
+          logView.textContent = logView.textContent.slice(-300000);
+        }
+        logView.scrollTop = logView.scrollHeight;
+      }
+      es.onmessage = (e) => {
+        try {
+          const j = JSON.parse(e.data);
+          appendLog(j.t || "");
+        } catch (_) {
+          appendLog(e.data);
+        }
+      };
+      es.addEventListener("done", () => {
+        es.close();
+        appendLog("\n— end —\n");
+      });
+      window.addEventListener("beforeunload", () => es.close());
+    }
   }
 
   const containers = document.getElementById("containers");
-  if (containers) renderContainers(containers);
+  if (containers && !dockerBlocked(containers)) {
+    const data = parse(containers);
+    const node = containers.getAttribute("data-node");
+    const table = document.createElement("table");
+    table.appendChild(thead(["Name", "Image", "State", "Project", ""]));
+    const body = document.createElement("tbody");
+    if (!Array.isArray(data) || !data.length) {
+      body.appendChild(emptyRow(5, "No containers."));
+    } else {
+      data.forEach((c) => {
+        const tr = document.createElement("tr");
+        const name = (c.names && c.names[0]) ? c.names[0].replace(/^\//, "") : (c.id || "");
+        const id = c.id_full || c.id || "";
+        const nameTd = document.createElement("td");
+        nameTd.appendChild(document.createTextNode(name));
+        nameTd.appendChild(document.createElement("br"));
+        const code = document.createElement("code");
+        code.textContent = c.id || "";
+        nameTd.appendChild(code);
+        tr.appendChild(nameTd);
+        tr.appendChild(tdText(c.image || ""));
+        tr.appendChild(stateCell(c.state, c.status));
+        tr.appendChild(tdText(c.compose_project || ""));
+        const acts = [];
+        if (manageOn(containers)) {
+          ["container_start", "container_stop", "container_restart", "container_kill", "container_remove"].forEach((op) => {
+            acts.push(actionForm(node, op, { id: id }));
+          });
+        }
+        acts.push(logsLink("/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id) + "/logs"));
+        tr.appendChild(actionsCell(acts));
+        body.appendChild(tr);
+      });
+    }
+    table.appendChild(body);
+    containers.replaceChildren(table);
+  }
 
   const compose = document.getElementById("compose");
-  if (compose) {
+  if (compose && !dockerBlocked(compose)) {
     const data = parse(compose);
     const node = compose.getAttribute("data-node");
     const wrap = document.createElement("div");
-    if (data && typeof data === "object") {
-      Object.keys(data).forEach((project) => {
-        const h = document.createElement("h3");
-        h.textContent = project;
-        wrap.appendChild(h);
-        wrap.appendChild(actionForm(node, "compose_up", { project: project }));
-        wrap.appendChild(actionForm(node, "compose_down", { project: project }));
-        wrap.appendChild(actionForm(node, "compose_pull", { project: project }));
-        const pre = document.createElement("pre");
-        pre.textContent = JSON.stringify(data[project], null, 2);
-        wrap.appendChild(pre);
-      });
+    const projects = (data && typeof data === "object" && !Array.isArray(data)) ? Object.keys(data) : [];
+    if (!projects.length) {
+      wrap.appendChild(el("p", "muted", "No Compose projects. Set Compose files on Settings, or start a stack that sets com.docker.compose.project."));
     } else {
-      wrap.textContent = compose.getAttribute("data-json") || "";
+      projects.forEach((project) => {
+        const head = el("div", "compose-head");
+        head.appendChild(el("h3", null, project));
+        const tools = el("div", "actions");
+        if (manageOn(compose)) {
+          tools.appendChild(actionForm(node, "compose_up", { project: project }));
+          tools.appendChild(actionForm(node, "compose_down", { project: project }));
+          tools.appendChild(actionForm(node, "compose_pull", { project: project }));
+        }
+        tools.appendChild(logsLink("/nodes/" + encodeURIComponent(node) + "/compose/" + encodeURIComponent(project) + "/logs"));
+        head.appendChild(tools);
+        wrap.appendChild(head);
+        const table = document.createElement("table");
+        table.appendChild(thead(["Service", "Name", "Image", "State"]));
+        const body = document.createElement("tbody");
+        const services = Array.isArray(data[project]) ? data[project] : [];
+        if (!services.length) {
+          body.appendChild(emptyRow(4, "No services."));
+        } else {
+          services.forEach((s) => {
+            const tr = document.createElement("tr");
+            tr.appendChild(tdText(s.service || ""));
+            tr.appendChild(tdText(s.name || ""));
+            tr.appendChild(tdText(s.image || ""));
+            tr.appendChild(stateCell(s.state, s.status));
+            body.appendChild(tr);
+          });
+        }
+        table.appendChild(body);
+        wrap.appendChild(table);
+      });
     }
     compose.replaceChildren(wrap);
   }
 
   const images = document.getElementById("images");
-  if (images) {
+  if (images && !dockerBlocked(images)) {
     const data = parse(images);
     const node = images.getAttribute("data-node");
-    if (Array.isArray(data)) {
-      const table = document.createElement("table");
-      table.innerHTML = "<thead><tr><th>Tags</th><th>ID</th><th>Size</th><th></th></tr></thead>";
-      const body = document.createElement("tbody");
-      data.forEach((img) => {
+    const table = document.createElement("table");
+    table.appendChild(thead(["Tags", "ID", "Size", ""]));
+    const body = document.createElement("tbody");
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      body.appendChild(emptyRow(4, "No images."));
+    } else {
+      rows.forEach((img) => {
         const tr = document.createElement("tr");
-        const tags = (img.repo_tags || img.RepoTags || []).join(", ");
-        const id = img.id || img.Id || "";
-        tr.innerHTML = "<td>" + tags + "</td><td><code>" + String(id).slice(0, 19) + "</code></td><td>" +
-          (img.size || img.Size || "") + "</td>";
-        const td = document.createElement("td");
-        td.appendChild(actionForm(node, "image_remove", { name: tags.split(",")[0] || id }));
-        tr.appendChild(td);
+        const tags = img.tags || img.repo_tags || [];
+        const tagText = Array.isArray(tags) ? tags.join(", ") : "";
+        const id = img.id_short || img.id || "";
+        tr.appendChild(tdText(tagText || "<none>"));
+        tr.appendChild(tdCode(id));
+        tr.appendChild(tdText(formatBytes(img.size)));
+        const acts = [];
+        if (manageOn(images)) {
+          const name = (Array.isArray(tags) && tags[0]) ? tags[0] : (img.id || "");
+          acts.push(actionForm(node, "image_remove", { name: name }));
+        }
+        tr.appendChild(actionsCell(acts));
         body.appendChild(tr);
       });
-      table.appendChild(body);
-      images.replaceChildren(table);
     }
+    table.appendChild(body);
+    images.replaceChildren(table);
   }
 
   const volumes = document.getElementById("volumes");
-  if (volumes) {
+  if (volumes && !dockerBlocked(volumes)) {
     const data = parse(volumes);
     const node = volumes.getAttribute("data-node");
-    const list = (data && data.volumes) || (data && data.Volumes) || [];
     const table = document.createElement("table");
-    table.innerHTML = "<thead><tr><th>Name</th><th>Driver</th><th></th></tr></thead>";
+    table.appendChild(thead(["Name", "Driver", "Mountpoint", ""]));
     const body = document.createElement("tbody");
-    (Array.isArray(list) ? list : []).forEach((v) => {
-      const tr = document.createElement("tr");
-      const name = v.name || v.Name || "";
-      tr.innerHTML = "<td>" + name + "</td><td>" + (v.driver || v.Driver || "") + "</td>";
-      const td = document.createElement("td");
-      td.appendChild(actionForm(node, "volume_remove", { name: name }));
-      tr.appendChild(td);
-      body.appendChild(tr);
-    });
+    const list = Array.isArray(data) ? data : ((data && data.volumes) || []);
+    if (!list.length) {
+      body.appendChild(emptyRow(4, "No volumes."));
+    } else {
+      list.forEach((v) => {
+        const tr = document.createElement("tr");
+        const name = v.name || "";
+        tr.appendChild(tdText(name));
+        tr.appendChild(tdText(v.driver || ""));
+        tr.appendChild(tdCode(v.mountpoint || ""));
+        const acts = [];
+        if (manageOn(volumes)) {
+          acts.push(actionForm(node, "volume_remove", { name: name }));
+        }
+        tr.appendChild(actionsCell(acts));
+        body.appendChild(tr);
+      });
+    }
     table.appendChild(body);
     volumes.replaceChildren(table);
   }
 
   const networks = document.getElementById("networks");
-  if (networks) {
+  if (networks && !dockerBlocked(networks)) {
     const data = parse(networks);
     const node = networks.getAttribute("data-node");
-    if (Array.isArray(data)) {
-      const table = document.createElement("table");
-      table.innerHTML = "<thead><tr><th>Name</th><th>ID</th><th>Driver</th><th></th></tr></thead>";
-      const body = document.createElement("tbody");
-      data.forEach((n) => {
+    const table = document.createElement("table");
+    table.appendChild(thead(["Name", "ID", "Driver", "Scope", ""]));
+    const body = document.createElement("tbody");
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      body.appendChild(emptyRow(5, "No networks."));
+    } else {
+      rows.forEach((n) => {
         const tr = document.createElement("tr");
-        const id = n.id || n.Id || "";
-        const name = n.name || n.Name || "";
-        tr.innerHTML = "<td>" + name + "</td><td><code>" + String(id).slice(0, 12) + "</code></td><td>" +
-          (n.driver || n.Driver || "") + "</td>";
-        const td = document.createElement("td");
-        td.appendChild(actionForm(node, "network_remove", { id: id }));
-        tr.appendChild(td);
+        const id = n.id || "";
+        tr.appendChild(tdText(n.name || ""));
+        tr.appendChild(tdCode(n.id_short || id.slice(0, 12)));
+        tr.appendChild(tdText(n.driver || ""));
+        tr.appendChild(tdText(n.scope || ""));
+        const acts = [];
+        if (manageOn(networks)) {
+          acts.push(actionForm(node, "network_remove", { id: id }));
+        }
+        tr.appendChild(actionsCell(acts));
         body.appendChild(tr);
       });
-      table.appendChild(body);
-      networks.replaceChildren(table);
     }
-  }
-
-  function el(tag, cls, text) {
-    const n = document.createElement(tag);
-    if (cls) n.className = cls;
-    if (text != null) n.textContent = text;
-    return n;
+    table.appendChild(body);
+    networks.replaceChildren(table);
   }
 
   function donut(ratio) {

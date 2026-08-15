@@ -16,10 +16,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
 | `docker_exec` | Execute a process inside a container (root-equivalent) |
 
 `Permission::admin_all()` is every variant. This slice has a single local
-admin; cookie auth means the signed-in user is treated as that role. Agent
-`DockerOp::permission()` is the intended mapping for a future UI that hides
-buttons. Enforcement that already exists: agent `manage` / `allow_exec`
-flags, and “must be logged in” on Docker POST.
+admin; cookie auth means the signed-in user is treated as that role.
+`DockerOp::permission()` is the mapping. The node UI hides Manage chrome
+from `NodeSettings.docker_manage` (not from a per-user role). Enforcement
+that already exists: agent `manage` / `allow_exec` flags, and “must be
+logged in” on Docker POST.
 
 When you add a variant, give it `description()`, include it in `admin_all`
 if the admin should have it, and add `` `snake_name` `` to this table.

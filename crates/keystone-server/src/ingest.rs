@@ -89,7 +89,11 @@ impl Ingest for IngestSvc {
                                     state.agents.complete(id, result);
                                 }
                             }
-                            Some(Ok(AgentToServer { body: Some(agent_to_server::Body::Chunk(_)) })) => {}
+                            Some(Ok(AgentToServer { body: Some(agent_to_server::Body::Chunk(chunk)) })) => {
+                                if let Some(id) = &node_id {
+                                    state.agents.push_chunk(id, chunk);
+                                }
+                            }
                             Some(Ok(_)) => {}
                             Some(Err(e)) => {
                                 warn!("agent stream error: {e}");

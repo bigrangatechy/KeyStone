@@ -58,7 +58,8 @@ Tabs:
 
 - **Overview** — widget dashboard. See [Dashboards](dashboard.md).
 - **Containers / Compose / Images / Volumes / Networks** — Docker Engine on
-  *this* node. Empty or an error until Observe Docker is on and the agent
+  *this* node. Tables for lists; **Logs** follows that container or Compose
+  project. Empty or an explanation until Observe Docker is on and the agent
   can use the socket. See [Docker](docker.md).
 - **Settings** — display name, notes, poll interval, NICs, labels, Docker
   flags, Compose paths. See [Configuration](configuration.md).

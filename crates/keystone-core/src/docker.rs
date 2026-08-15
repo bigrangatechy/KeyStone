@@ -123,4 +123,9 @@ impl DockerOp {
             _ => Permission::DockerView,
         }
     }
+
+    /// Agent sends `StreamChunk`s then a `CommandResult` (logs).
+    pub fn streams(self) -> bool {
+        matches!(self, Self::ContainerLogs | Self::ComposeLogs)
+    }
 }

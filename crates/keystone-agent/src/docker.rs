@@ -188,28 +188,8 @@ impl DockerHandle {
                     .await?;
                 Ok(json!({"ok": true}))
             }
-            DockerOp::ContainerLogs => {
-                let id = str_field(&payload, "id")?;
-                let tail = payload
-                    .get("tail")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("200");
-                let mut stream = self.docker.logs(
-                    id,
-                    Some(LogsOptions::<String> {
-                        stdout: true,
-                        stderr: true,
-                        tail: tail.to_string(),
-                        ..Default::default()
-                    }),
-                );
-                let mut text = String::new();
-                while let Some(chunk) = stream.next().await {
-                    if let Ok(output) = chunk {
-                        text.push_str(&output.to_string());
-                    }
-                }
-                Ok(json!({"logs": text}))
+            DockerOp::ContainerLogs | DockerOp::ComposeLogs => {
+                Err(anyhow!("{} must be streamed (StreamChunk)", op.as_str()))
             }
             DockerOp::ContainerStats => {
                 let id = str_field(&payload, "id")?;
@@ -226,16 +206,7 @@ impl DockerHandle {
             DockerOp::ContainerExec => Err(anyhow!(
                 "interactive exec is not exposed over this RPC; enable a future streaming exec"
             )),
-            DockerOp::ImageList => {
-                let images = self
-                    .docker
-                    .list_images(Some(ListImagesOptions::<String> {
-                        all: true,
-                        ..Default::default()
-                    }))
-                    .await?;
-                Ok(serde_json::to_value(images)?)
-            }
+            DockerOp::ImageList => self.image_list().await,
             DockerOp::ImageInspect => {
                 let name = str_field(&payload, "name")?;
                 let info = self.docker.inspect_image(name).await?;
@@ -271,13 +242,7 @@ impl DockerHandle {
                     .await?;
                 Ok(serde_json::to_value(r)?)
             }
-            DockerOp::VolumeList => {
-                let vols = self
-                    .docker
-                    .list_volumes(None::<ListVolumesOptions<String>>)
-                    .await?;
-                Ok(serde_json::to_value(vols)?)
-            }
+            DockerOp::VolumeList => self.volume_list().await,
             DockerOp::VolumeInspect => {
                 let name = str_field(&payload, "name")?;
                 let v = self.docker.inspect_volume(name).await?;
@@ -299,13 +264,7 @@ impl DockerHandle {
                 self.docker.remove_volume(name, None).await?;
                 Ok(json!({"ok": true}))
             }
-            DockerOp::NetworkList => {
-                let nets = self
-                    .docker
-                    .list_networks(None::<ListNetworksOptions<String>>)
-                    .await?;
-                Ok(serde_json::to_value(nets)?)
-            }
+            DockerOp::NetworkList => self.network_list().await,
             DockerOp::NetworkInspect => {
                 let id = str_field(&payload, "id")?;
                 let n = self.docker.inspect_network::<String>(id, None).await?;
@@ -330,7 +289,6 @@ impl DockerHandle {
             DockerOp::ComposePs
             | DockerOp::ComposeUp
             | DockerOp::ComposeDown
-            | DockerOp::ComposeLogs
             | DockerOp::ComposePull => self.compose(op, &payload).await,
         }
     }
@@ -393,11 +351,6 @@ impl DockerHandle {
             }
             DockerOp::ComposeDown => args.push("down".into()),
             DockerOp::ComposePs => args.push("ps".into()),
-            DockerOp::ComposeLogs => {
-                args.push("logs".into());
-                args.push("--tail".into());
-                args.push("200".into());
-            }
             DockerOp::ComposePull => args.push("pull".into()),
             _ => unreachable!(),
         }
@@ -433,15 +386,196 @@ impl DockerHandle {
             if !project_filter.is_empty() && project != project_filter {
                 continue;
             }
+            let id = c.id.clone().unwrap_or_default();
+            let name = c
+                .names
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches('/')
+                .to_string();
             projects.entry(project).or_default().push(json!({
-                "id": c.id,
-                "names": c.names,
+                "id": id.clone(),
+                "id_short": short_id(&id),
+                "name": name,
                 "image": c.image,
                 "state": c.state,
+                "status": c.status,
                 "service": labels.get("com.docker.compose.service"),
             }));
         }
         Ok(json!(projects))
+    }
+
+    pub async fn execute_streaming(
+        &self,
+        op: DockerOp,
+        payload: Value,
+        chunk_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    ) -> anyhow::Result<Value> {
+        let policy = self.policy();
+        if op.mutating() && !policy.manage {
+            anyhow::bail!("docker.manage is disabled on this agent");
+        }
+        match op {
+            DockerOp::ContainerLogs => self.stream_container_logs(&payload, chunk_tx).await,
+            DockerOp::ComposeLogs => self.stream_compose_logs(&payload, chunk_tx).await,
+            other => anyhow::bail!("{} is not a streaming op", other.as_str()),
+        }
+    }
+
+    async fn stream_container_logs(
+        &self,
+        payload: &Value,
+        chunk_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    ) -> anyhow::Result<Value> {
+        let id = str_field(payload, "id")?;
+        let tail = tail_arg(payload);
+        let follow = follow_arg(payload);
+        let mut stream = self.docker.logs(
+            id,
+            Some(LogsOptions::<String> {
+                stdout: true,
+                stderr: true,
+                follow,
+                tail,
+                ..Default::default()
+            }),
+        );
+        while let Some(item) = stream.next().await {
+            let output = item?;
+            if chunk_tx
+                .send(output.to_string().into_bytes())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        Ok(json!({"ok": true}))
+    }
+
+    async fn stream_compose_logs(
+        &self,
+        payload: &Value,
+        chunk_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    ) -> anyhow::Result<Value> {
+        let project = payload
+            .get("project")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let file = payload.get("file").and_then(|v| v.as_str());
+        let paths = self.policy().compose_paths;
+        let mut args = vec!["compose".to_string()];
+        if let Some(f) = file {
+            args.push("-f".into());
+            args.push(f.into());
+        } else if let Some(f) = paths.first() {
+            args.push("-f".into());
+            args.push(f.clone());
+        }
+        if !project.is_empty() {
+            args.push("-p".into());
+            args.push(project.into());
+        }
+        args.push("logs".into());
+        args.push("--tail".into());
+        args.push(tail_arg(payload));
+        if follow_arg(payload) {
+            args.push("-f".into());
+        }
+        let mut child = Command::new("docker")
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("docker compose logs")?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("compose logs stdout"))?;
+        let mut buf = vec![0u8; 4096];
+        loop {
+            let n = tokio::io::AsyncReadExt::read(&mut stdout, &mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            if chunk_tx.send(buf[..n].to_vec()).await.is_err() {
+                break;
+            }
+        }
+        let status = child.wait().await?;
+        if !status.success() && !follow_arg(payload) {
+            anyhow::bail!("docker compose logs exited {}", status);
+        }
+        Ok(json!({"ok": true}))
+    }
+
+    async fn image_list(&self) -> anyhow::Result<Value> {
+        let images = self
+            .docker
+            .list_images(Some(ListImagesOptions::<String> {
+                all: true,
+                ..Default::default()
+            }))
+            .await?;
+        let rows: Vec<Value> = images
+            .into_iter()
+            .map(|img| {
+                let id = img.id.clone();
+                json!({
+                    "id": id,
+                    "id_short": short_id(&id),
+                    "tags": img.repo_tags,
+                    "size": img.size,
+                })
+            })
+            .collect();
+        Ok(json!(rows))
+    }
+
+    async fn volume_list(&self) -> anyhow::Result<Value> {
+        let vols = self
+            .docker
+            .list_volumes(None::<ListVolumesOptions<String>>)
+            .await?;
+        let rows: Vec<Value> = vols
+            .volumes
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| {
+                json!({
+                    "name": v.name,
+                    "driver": v.driver,
+                    "mountpoint": v.mountpoint,
+                })
+            })
+            .collect();
+        Ok(json!(rows))
+    }
+
+    async fn network_list(&self) -> anyhow::Result<Value> {
+        let nets = self
+            .docker
+            .list_networks(None::<ListNetworksOptions<String>>)
+            .await?;
+        let rows: Vec<Value> = nets
+            .into_iter()
+            .map(|n| {
+                let id = n.id.clone().unwrap_or_default();
+                json!({
+                    "id": id,
+                    "id_short": short_id(&id),
+                    "name": n.name.unwrap_or_default(),
+                    "driver": n.driver.unwrap_or_default(),
+                    "scope": n.scope.unwrap_or_default(),
+                })
+            })
+            .collect();
+        Ok(json!(rows))
     }
 }
 
@@ -451,6 +585,30 @@ fn str_field<'a>(payload: &'a Value, key: &str) -> anyhow::Result<&'a str> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("missing field {key}"))
+}
+
+fn short_id(id: &str) -> String {
+    let s = id.trim_start_matches("sha256:");
+    s.chars().take(12).collect()
+}
+
+fn tail_arg(payload: &Value) -> String {
+    payload
+        .get("tail")
+        .and_then(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "200".into())
+}
+
+fn follow_arg(payload: &Value) -> bool {
+    payload
+        .get("follow")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
 }
 
 fn cpu_ratio(stats: &bollard::container::Stats) -> f64 {
@@ -474,4 +632,32 @@ fn cpu_ratio(stats: &bollard::container::Stats) -> f64 {
             .map(|v| v.len() as u64))
         .unwrap_or(1) as f64;
     (delta / sys_delta) * ncpu
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_id_strips_sha256_prefix() {
+        assert_eq!(short_id("sha256:0123456789abcdef"), "0123456789ab");
+        assert_eq!(short_id("abcdef0123456789"), "abcdef012345");
+    }
+
+    #[test]
+    fn tail_and_follow_defaults() {
+        let empty = json!({});
+        assert_eq!(tail_arg(&empty), "200");
+        assert!(follow_arg(&empty));
+        assert_eq!(tail_arg(&json!({"tail": 50})), "50");
+        assert!(!follow_arg(&json!({"follow": false})));
+    }
+
+    #[test]
+    fn streaming_ops_are_logs_only() {
+        assert!(DockerOp::ContainerLogs.streams());
+        assert!(DockerOp::ComposeLogs.streams());
+        assert!(!DockerOp::ContainerList.streams());
+        assert!(!DockerOp::ComposeUp.streams());
+    }
 }

@@ -47,8 +47,9 @@ data dir in examples is `.smoke`.
    `AgentRegistry` and sends `set_runtime` (poll interval, labels, Docker
    flags, compose paths) from `NodeSettings`.
 4. UI Docker POSTs become `Command { op, payload_json }` on that stream.
-   The agent runs `DockerOp`, returns `CommandResult`. Logs/stats can use
-   `StreamChunk` (current UI often waits for a single result payload).
+   The agent runs `DockerOp` and returns `CommandResult`. Logs use
+   `StreamChunk` then a result; the HTML logs page is an EventSource onto
+   that stream. `cancel` aborts a follow when the browser disconnects.
 5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`.
 
 `set_interval` still exists on the agent for older payloads; current servers

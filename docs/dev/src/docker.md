@@ -24,12 +24,39 @@ The server never opens `docker.sock`. `keystone-agent` uses bollard (and
 `docker.host` stays in `agent.toml`. Socket access is root-equivalent.
 
 UI POST `/nodes/{id}/docker/{op}` requires a cookie session. The ingest
-token cannot call it. Mutations are written to `audit`.
+token cannot call it. Mutations are written to `audit`. Streaming ops
+(`container_logs`, `compose_logs`) are not POSTed; they use SSE (below).
 
 `Permission` mapping: `container_exec` → `docker_exec`; other mutating ops
-→ `docker_manage`; the rest → `docker_view`. This slice does not yet hide
-UI chrome per permission; the signed-in admin has all of them. The agent
-gates still apply.
+→ `docker_manage`; the rest → `docker_view`. The signed-in admin has all of
+them. The node page hides Manage buttons and pull/create toolbars when
+`docker_manage` is off, and skips listing when the agent is offline or
+Observe is off. The agent gates still apply.
+
+## Streaming logs
+
+`DockerOp::streams()` is `container_logs` and `compose_logs`. The agent
+sends `StreamChunk` (`data`, then `eof`) followed by `CommandResult`.
+`op == "cancel"` with `{"request_id":"..."}` aborts the task.
+
+HTTP:
+
+- `GET /nodes/{id}/containers/{cid}/logs` — HTML follow page
+- `GET /nodes/{id}/containers/{cid}/logs/stream?follow=1` — SSE
+- `GET /nodes/{id}/compose/{project}/logs` and `.../logs/stream` — same for
+  Compose
+
+SSE events: JSON `{"t":"<text>"}` as default `message`; `event: done` on
+eof. Dropping the SSE connection cancels the agent stream. `container_stats`
+is a one-shot JSON GET, not wired in the UI.
+
+List payloads the UI tables expect:
+
+- containers: `[{id, id_full, names, image, state, status, compose_project}]`
+- compose ps: `{ "<project>": [{id, id_short, name, image, state, status, service}] }`
+- images: `[{id, id_short, tags, size}]`
+- volumes: `[{name, driver, mountpoint}]`
+- networks: `[{id, id_short, name, driver, scope}]`
 
 ## Operations
 
@@ -69,4 +96,4 @@ When adding an op: extend the enum, `description`, `mutating`,
 node template / `app.js`, and add the `` `snake_name` `` row here.
 
 Control-plane ops that are **not** `DockerOp`: `set_runtime`,
-`set_interval`. The agent handles those before `handle_command`.
+`set_interval`, `cancel`. The agent handles those before `handle_command`.

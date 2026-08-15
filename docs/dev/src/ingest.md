@@ -43,13 +43,15 @@ A new `node_id` on a good push is enrolled automatically.
 - `ack` — `ok` / `error` for a push
 - `command` — `request_id`, `op`, `payload_json`
 
-`op` is either a `DockerOp` string or `set_runtime` /
-`set_interval`. `set_runtime` payload is `AgentRuntime` JSON
+`op` is either a `DockerOp` string, `set_runtime` / `set_interval`, or
+`cancel`. `cancel` payload is `{"request_id":"<id>"}` and aborts a
+streaming logs task. `set_runtime` payload is `AgentRuntime` JSON
 (`interval_secs`, `labels`, `docker_enabled`, `docker_manage`,
 `docker_allow_exec`, `compose_paths`). Interval is clamped 1–60.
 
-`AgentRegistry` maps `node_id` → command channel + pending oneshots.
-Disconnect marks the node not-connected and fails in-flight calls.
+`AgentRegistry` maps `node_id` → command channel + pending oneshots +
+in-flight log streams. Disconnect marks the node not-connected and fails
+in-flight calls. Chunks are forwarded by `request_id` until `eof`.
 
 ## Buffer
 

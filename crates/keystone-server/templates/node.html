@@ -48,39 +48,50 @@
 
 <section class="tab-panel" data-panel="containers">
   <h2>Containers</h2>
-  <div id="containers" data-json="{{ containers_json }}" data-node="{{ node_id }}"></div>
+  <div id="containers" data-json="{{ containers_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>
 <section class="tab-panel" data-panel="compose">
   <h2>Compose</h2>
-  <div id="compose" data-json="{{ compose_json }}" data-node="{{ node_id }}"></div>
+  <div id="compose" data-json="{{ compose_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>
 <section class="tab-panel" data-panel="images">
   <h2>Images</h2>
-  <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_pull">
-    <input name="payload" placeholder='{"name":"nginx:latest"}' size="40">
-    <button type="submit">Pull</button>
-  </form>
-  <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_prune">
-    <input type="hidden" name="payload" value="{}">
-    <button type="submit">Prune unused</button>
-  </form>
-  <div id="images" data-json="{{ images_json }}" data-node="{{ node_id }}"></div>
+  {% if docker_manage && docker_reason.is_empty() %}
+  <div class="docker-toolbar">
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_pull">
+      <input name="name" placeholder="nginx:latest" size="32" required>
+      <button type="submit">Pull</button>
+    </form>
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_prune" data-confirm="Prune unused images on this node?">
+      <button type="submit" class="danger">Prune unused</button>
+    </form>
+  </div>
+  {% endif %}
+  <div id="images" data-json="{{ images_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>
 <section class="tab-panel" data-panel="volumes">
   <h2>Volumes</h2>
-  <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/volume_create">
-    <input name="payload" placeholder='{"name":"data"}' size="30">
-    <button type="submit">Create</button>
-  </form>
-  <div id="volumes" data-json="{{ volumes_json }}" data-node="{{ node_id }}"></div>
+  {% if docker_manage && docker_reason.is_empty() %}
+  <div class="docker-toolbar">
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/volume_create">
+      <input name="name" placeholder="data" size="24" required>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+  {% endif %}
+  <div id="volumes" data-json="{{ volumes_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>
 <section class="tab-panel" data-panel="networks">
   <h2>Networks</h2>
-  <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/network_create">
-    <input name="payload" placeholder='{"name":"appnet"}' size="30">
-    <button type="submit">Create</button>
-  </form>
-  <div id="networks" data-json="{{ networks_json }}" data-node="{{ node_id }}"></div>
+  {% if docker_manage && docker_reason.is_empty() %}
+  <div class="docker-toolbar">
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/network_create">
+      <input name="name" placeholder="appnet" size="24" required>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+  {% endif %}
+  <div id="networks" data-json="{{ networks_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
 </section>
 <section class="tab-panel" data-panel="settings">
   <h2>Node settings</h2>

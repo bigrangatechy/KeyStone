@@ -54,6 +54,8 @@ token does not.
   `unix:///run/user/1000/docker.sock` for rootless) and restart the agent.
 - Manage/Exec refused with a message that the flag is disabled: turn the
   checkbox on and save; a connected agent applies it without restart.
+- Logs page stays empty: the agent must be **control connected**. Leave the
+  page to cancel follow. Exec is not in the UI yet.
 
 ## Token rotate left every node red
 
