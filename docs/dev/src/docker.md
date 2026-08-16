@@ -44,16 +44,24 @@ also spawned off the ingest `select!` loop. Awaiting them there meant the
 agent stopped reading Commands while one list (or a hung helper) ran, so
 the node page hit **Docker: agent command timed out**. Host collect and
 per-container `stats` stay off that loop too; `stats` runs in parallel
-with a short cap so it cannot monopolise `docker.sock`.
+with a short cap so it cannot monopolise `docker.sock`. While a node-page
+list is in flight the agent skips `docker stats` and `engine_version`, and
+those list RPCs themselves have a 6s budget so a hung Engine still replies
+before the server's 8s wait. System `status` runs `ip` and the helper
+together, each capped, instead of in series. Buffered pushes drain on a
+side task so reconnect does not block Command reads.
 
 The server ingest loop must keep reading `CommandResult`s while it writes
 Commands. Blocking on the gRPC sink reset the session (**agent dropped
 command**) or stalled Result reads (**agent command timed out**). Acks and
-Commands are try-queued to a side writer. The agent also spawns
+Commands are try-queued to a side writer; Commands are preferred over a
+burst of Pushes. The agent also spawns
 `set_runtime` so a Docker socket connect after reconnect cannot block
 `container_list`. A replaced ingest session keeps in-flight waits and
 replays those Commands on the new channel so the UI does not show
-**agent dropped command**.
+**agent dropped command**. The node page runs `container_list` first, then
+the other Docker tables with the remaining 8s, in parallel with System
+`status`.
 
 HTTP:
 

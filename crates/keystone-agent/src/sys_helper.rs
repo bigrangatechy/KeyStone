@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Command;
+use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 pub async fn run() -> anyhow::Result<()> {
@@ -158,9 +159,13 @@ fn reboot_required() -> bool {
 }
 
 async fn ip_addrs() -> Value {
-    let output = Command::new("ip").args(["-j", "-4", "addr"]).output().await;
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("ip").args(["-j", "-4", "addr"]).output(),
+    )
+    .await;
     match output {
-        Ok(o) if o.status.success() => {
+        Ok(Ok(o)) if o.status.success() => {
             serde_json::to_value(parse_ip_addr_json(&String::from_utf8_lossy(&o.stdout)))
                 .unwrap_or(json!([]))
         }

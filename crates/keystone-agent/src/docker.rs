@@ -297,7 +297,6 @@ impl DockerHandle {
                     "image": c.image,
                     "state": c.state,
                     "status": c.status,
-                    "labels": labels,
                     "compose_project": compose_project,
                 })
             })
@@ -679,6 +678,23 @@ fn cpu_ratio(stats: &bollard::container::Stats) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn container_list_omits_full_label_maps() {
+        let src = include_str!("docker.rs");
+        let fn_src = src
+            .split("async fn container_list")
+            .nth(1)
+            .expect("container_list");
+        assert!(
+            fn_src.contains("compose_project"),
+            "Containers tab still needs the compose project"
+        );
+        assert!(
+            !fn_src.contains("\"labels\": labels"),
+            "full label maps on every container blow the ingest Result past the page wait"
+        );
+    }
 
     #[test]
     fn short_id_strips_sha256_prefix() {

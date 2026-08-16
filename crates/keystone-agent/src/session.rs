@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,8 +34,13 @@ struct AgentRuntimeState {
     docker: Mutex<Option<DockerHandle>>,
     labels: Mutex<BTreeMap<String, String>>,
     docker_host: String,
+    docker_version: Mutex<Option<String>>,
     sys_enabled: Mutex<bool>,
     sys_manage: Mutex<bool>,
+    /// Node-page lists (Docker + System status). push_tick skips
+    /// `docker stats` while this is non-zero so those RPCs can finish
+    /// inside the server's 8s budget.
+    list_inflight: AtomicUsize,
 }
 
 impl AgentRuntimeState {
@@ -55,8 +60,10 @@ impl AgentRuntimeState {
             docker: Mutex::new(docker),
             labels: Mutex::new(cfg.labels.clone()),
             docker_host: cfg.docker.host.clone(),
+            docker_version: Mutex::new(None),
             sys_enabled: Mutex::new(false),
             sys_manage: Mutex::new(false),
+            list_inflight: AtomicUsize::new(0),
         }
     }
 }
@@ -153,14 +160,17 @@ async fn push_tick(
     let mut samples = collect_host(cfg);
     let docker = runtime.docker.lock().await.clone();
     if let Some(d) = docker.as_ref() {
-        samples.extend(d.collect_container_metrics().await);
+        if runtime.list_inflight.load(Ordering::SeqCst) == 0 {
+            samples.extend(d.collect_container_metrics().await);
+        }
     }
     let (kept, dropped) = sample::allowlist(samples);
     if dropped > 0 {
         warn!("dropped {dropped} unknown metrics");
     }
     let labels = runtime.labels.lock().await.clone();
-    let frame = build_push(cfg, node_id, docker.as_ref(), &labels, &kept).await;
+    let docker_version = cached_engine_version(runtime, docker.as_ref()).await;
+    let frame = build_push(cfg, node_id, docker_version, &labels, &kept);
     if push_tx
         .send(AgentToServer {
             body: Some(agent_to_server::Body::Push(frame.clone())),
@@ -190,13 +200,20 @@ async fn connect_session(
     info!("connected to ingest at {ingest_url}");
 
     if let Ok(frames) = buffer.drain() {
-        for frame in frames {
-            let _ = tx
-                .send(AgentToServer {
-                    body: Some(agent_to_server::Body::Push(frame)),
-                })
-                .await;
-        }
+        let buf_tx = tx.clone();
+        tokio::spawn(async move {
+            for frame in frames {
+                if buf_tx
+                    .send(AgentToServer {
+                        body: Some(agent_to_server::Body::Push(frame)),
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
     }
 
     let push_tx = tx.clone();
@@ -356,6 +373,17 @@ fn cancel_target(payload_json: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Ops the node page waits 8s for. Must reply sooner than that even if
+/// Docker or `ip` is slow, otherwise the UI shows agent command timed out.
+fn is_page_list_op(op: &str) -> bool {
+    matches!(
+        op,
+        "container_list" | "compose_ps" | "image_list" | "volume_list" | "network_list" | "status"
+    )
+}
+
+const PAGE_RPC_BUDGET: Duration = Duration::from_secs(6);
+
 fn spawn_rpc_command(
     runtime: Arc<AgentRuntimeState>,
     tx: mpsc::Sender<AgentToServer>,
@@ -364,7 +392,30 @@ fn spawn_rpc_command(
     payload_json: String,
 ) {
     tokio::spawn(async move {
-        let body = match handle_command(&runtime, &op, &payload_json).await {
+        let page_list = is_page_list_op(&op);
+        if page_list {
+            runtime.list_inflight.fetch_add(1, Ordering::SeqCst);
+        }
+        let result = if page_list {
+            match tokio::time::timeout(
+                PAGE_RPC_BUDGET,
+                handle_command(&runtime, &op, &payload_json),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => {
+                    warn!("{op} exceeded {PAGE_RPC_BUDGET:?} on the agent");
+                    Err(anyhow::anyhow!("{op} timed out on the agent"))
+                }
+            }
+        } else {
+            handle_command(&runtime, &op, &payload_json).await
+        };
+        if page_list {
+            runtime.list_inflight.fetch_sub(1, Ordering::SeqCst);
+        }
+        let body = match result {
             Ok(payload) => CommandResult {
                 request_id: request_id.clone(),
                 ok: true,
@@ -582,6 +633,7 @@ async fn apply_runtime_state(
                     if docker.is_none() {
                         info!("docker enabled from Settings");
                         *docker = Some(handle);
+                        *runtime.docker_version.lock().await = None;
                     } else if let Some(h) = docker.as_ref() {
                         h.set_policy(
                             rt.docker_manage,
@@ -600,6 +652,7 @@ async fn apply_runtime_state(
         if docker.is_some() {
             info!("docker disabled from Settings");
             *docker = None;
+            *runtime.docker_version.lock().await = None;
         }
     }
     {
@@ -645,26 +698,32 @@ async fn handle_sys(
     }
     match op {
         SysOp::Status => {
-            let mut local = crate::sys::local_status().await;
-            if crate::sys::socket_present() {
-                match crate::sys::call(SysOp::Status, serde_json::json!({})).await {
-                    Ok(helper) => {
-                        if let Some(obj) = local.as_object_mut() {
-                            if let Some(h) = helper.as_object() {
-                                for (k, v) in h {
-                                    obj.insert(k.clone(), v.clone());
-                                }
+            let helper_fut = async {
+                if crate::sys::socket_present() {
+                    Some(crate::sys::call(SysOp::Status, serde_json::json!({})).await)
+                } else {
+                    None
+                }
+            };
+            let (mut local, helper) = tokio::join!(crate::sys::local_status(), helper_fut);
+            match helper {
+                Some(Ok(helper)) => {
+                    if let Some(obj) = local.as_object_mut() {
+                        if let Some(h) = helper.as_object() {
+                            for (k, v) in h {
+                                obj.insert(k.clone(), v.clone());
                             }
-                            obj.insert("helper_running".into(), serde_json::json!(true));
                         }
-                    }
-                    Err(e) => {
-                        if let Some(obj) = local.as_object_mut() {
-                            obj.insert("helper_error".into(), serde_json::json!(e.to_string()));
-                            obj.insert("helper_running".into(), serde_json::json!(false));
-                        }
+                        obj.insert("helper_running".into(), serde_json::json!(true));
                     }
                 }
+                Some(Err(e)) => {
+                    if let Some(obj) = local.as_object_mut() {
+                        obj.insert("helper_error".into(), serde_json::json!(e.to_string()));
+                        obj.insert("helper_running".into(), serde_json::json!(false));
+                    }
+                }
+                None => {}
             }
             Ok(local)
         }
@@ -673,10 +732,31 @@ async fn handle_sys(
     }
 }
 
-async fn build_push(
+async fn cached_engine_version(
+    runtime: &AgentRuntimeState,
+    docker: Option<&DockerHandle>,
+) -> String {
+    {
+        let cached = runtime.docker_version.lock().await;
+        if let Some(v) = cached.as_ref() {
+            return v.clone();
+        }
+    }
+    if runtime.list_inflight.load(Ordering::SeqCst) > 0 {
+        return String::new();
+    }
+    let Some(d) = docker else {
+        return String::new();
+    };
+    let v = d.engine_version().await.unwrap_or_default();
+    *runtime.docker_version.lock().await = Some(v.clone());
+    v
+}
+
+fn build_push(
     cfg: &AgentConfig,
     node_id: &str,
-    docker: Option<&DockerHandle>,
+    docker_version: String,
     labels: &BTreeMap<String, String>,
     samples: &[Sample],
 ) -> PushFrame {
@@ -684,10 +764,6 @@ async fn build_push(
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| node_id.to_string());
-    let docker_version = match docker {
-        Some(d) => d.engine_version().await.unwrap_or_default(),
-        None => String::new(),
-    };
     let labels: Vec<keystone_proto::Label> = labels
         .iter()
         .map(|(k, v)| keystone_proto::Label {
@@ -782,8 +858,10 @@ mod tests {
             docker: Mutex::new(None),
             labels: Mutex::new(BTreeMap::new()),
             docker_host: String::new(),
+            docker_version: Mutex::new(None),
             sys_enabled: Mutex::new(false),
             sys_manage: Mutex::new(false),
+            list_inflight: AtomicUsize::new(0),
         };
         let err = handle_sys(&runtime, SysOp::Status, serde_json::json!({}))
             .await
@@ -798,8 +876,10 @@ mod tests {
             docker: Mutex::new(None),
             labels: Mutex::new(BTreeMap::new()),
             docker_host: String::new(),
+            docker_version: Mutex::new(None),
             sys_enabled: Mutex::new(true),
             sys_manage: Mutex::new(false),
+            list_inflight: AtomicUsize::new(0),
         };
         let err = handle_sys(&runtime, SysOp::NetSet, serde_json::json!({}))
             .await
@@ -877,6 +957,49 @@ mod tests {
         assert!(
             !loop_src.contains("Ok(Some(_)) | Ok(None) => break"),
             "an empty ServerToAgent must not tear down the ingest session"
+        );
+    }
+
+    #[test]
+    fn buffer_drain_does_not_block_command_reads() {
+        let src = include_str!("session.rs");
+        let fn_src = src
+            .split("async fn connect_session")
+            .nth(1)
+            .expect("connect_session")
+            .split("fn command_err")
+            .next()
+            .expect("loop body");
+        let drain_at = fn_src
+            .find("buffer.drain()")
+            .expect("drain buffered pushes");
+        let inbound_at = fn_src
+            .find("inbound.message()")
+            .expect("must read Commands");
+        let between = &fn_src[drain_at..inbound_at];
+        assert!(
+            between.contains("tokio::spawn"),
+            "replaying the disk buffer must not await Push sends before inbound.message()"
+        );
+    }
+
+    #[test]
+    fn page_list_rpcs_budget_beats_the_node_page_wait() {
+        assert!(
+            PAGE_RPC_BUDGET <= Duration::from_secs(6),
+            "agent must reply to node-page lists before the server's 8s wait"
+        );
+        assert!(is_page_list_op("container_list"));
+        assert!(is_page_list_op("status"));
+        assert!(!is_page_list_op("image_pull"));
+        let src = include_str!("session.rs");
+        assert!(
+            src.contains("list_inflight"),
+            "docker stats must yield the socket while the node page lists run"
+        );
+        assert!(
+            src.contains("tokio::join!(crate::sys::local_status()"),
+            "System status must not run ip then the helper in series past 8s"
         );
     }
 }

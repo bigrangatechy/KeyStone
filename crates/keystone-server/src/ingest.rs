@@ -36,11 +36,12 @@ impl Ingest for IngestSvc {
     ) -> Result<Response<Self::SessionStream>, Status> {
         let mut inbound = request.into_inner();
         let (out_tx, out_rx) = mpsc::channel::<Result<ServerToAgent, Status>>(128);
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(128);
         // Commands/Acks must not share the select with inbound. Awaiting
         // gRPC write here meant we stopped reading Results; pipelined
         // Docker/System lists then saw every oneshot dropped.
         let (to_agent_tx, mut to_agent_rx) = mpsc::channel::<ServerToAgent>(128);
+        let (writer_dead_tx, mut writer_dead_rx) = tokio::sync::oneshot::channel::<()>();
         let state = self.state.clone();
 
         tokio::spawn(async move {
@@ -49,6 +50,7 @@ impl Ingest for IngestSvc {
                     break;
                 }
             }
+            let _ = writer_dead_tx.send(());
         });
 
         tokio::spawn(async move {
@@ -56,6 +58,20 @@ impl Ingest for IngestSvc {
             let mut session_gen: Option<u64> = None;
             loop {
                 tokio::select! {
+                    biased;
+                    _ = &mut writer_dead_rx => break,
+                    cmd = cmd_rx.recv() => {
+                        match cmd {
+                            Some(command) => {
+                                if !queue_to_agent(&to_agent_tx, ServerToAgent {
+                                    body: Some(server_to_agent::Body::Command(command)),
+                                }) {
+                                    break;
+                                }
+                            }
+                            None => break,
+                        }
+                    }
                     msg = inbound.next() => {
                         match msg {
                             Some(Ok(AgentToServer { body: Some(agent_to_server::Body::Push(frame)) })) => {
@@ -85,6 +101,13 @@ impl Ingest for IngestSvc {
                                         if !queue_to_agent(&to_agent_tx, ack(true, String::new())) {
                                             break;
                                         }
+                                        while let Ok(command) = cmd_rx.try_recv() {
+                                            if !queue_to_agent(&to_agent_tx, ServerToAgent {
+                                                body: Some(server_to_agent::Body::Command(command)),
+                                            }) {
+                                                break;
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         warn!("push rejected: {e}");
@@ -108,18 +131,6 @@ impl Ingest for IngestSvc {
                             Some(Err(e)) => {
                                 warn!("agent stream error: {e}");
                                 break;
-                            }
-                            None => break,
-                        }
-                    }
-                    cmd = cmd_rx.recv() => {
-                        match cmd {
-                            Some(command) => {
-                                if !queue_to_agent(&to_agent_tx, ServerToAgent {
-                                    body: Some(server_to_agent::Body::Command(command)),
-                                }) {
-                                    break;
-                                }
                             }
                             None => break,
                         }
@@ -420,5 +431,110 @@ mod tests {
             src.contains("queue_to_agent") && src.contains("try_send"),
             "inbound select must not await Ack/Command enqueue"
         );
+        assert!(
+            src.contains("biased"),
+            "Commands must win over a burst of Pushes so the node page does not wait 8s"
+        );
+        assert!(
+            src.contains("writer_dead"),
+            "a dead gRPC sink must drop the session instead of queueing Commands into the void"
+        );
+        assert!(
+            src.contains("try_recv"),
+            "replayed Commands after connect must flush before the next Push"
+        );
+    }
+
+    #[tokio::test]
+    async fn grpc_session_roundtrips_a_command() {
+        let (dir, state) = scratch("lab-token");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming = TcpListenerStream::new(listener);
+        let serve_state = state.clone();
+        let server = tokio::spawn(async move {
+            Server::builder()
+                .add_service(service(serve_state))
+                .serve_with_incoming(incoming)
+                .await
+        });
+        let mut client = None;
+        for _ in 0..50 {
+            if let Ok(c) = IngestClient::connect(format!("http://{addr}")).await {
+                client = Some(c);
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        let mut client = client.expect("dial ingest");
+        let (tx, rx) = mpsc::channel(8);
+        let mut inbound = client
+            .session(ReceiverStream::new(rx))
+            .await
+            .expect("session")
+            .into_inner();
+        tx.send(AgentToServer {
+            body: Some(agent_to_server::Body::Push(push(
+                "grpc-cmd",
+                "lab-token",
+                vec![cpu_sample()],
+            ))),
+        })
+        .await
+        .unwrap();
+        let ack = inbound.next().await.expect("ack").expect("ok status");
+        match ack.body {
+            Some(server_to_agent::Body::Ack(ack)) => assert!(ack.ok, "{}", ack.error),
+            other => panic!("expected ack, got {other:?}"),
+        }
+        let wait = tokio::spawn({
+            let state = state.clone();
+            async move {
+                state
+                    .agents
+                    .call_timeout(
+                        "grpc-cmd",
+                        "container_list",
+                        "{}".into(),
+                        Duration::from_secs(2),
+                    )
+                    .await
+            }
+        });
+        let started = std::time::Instant::now();
+        loop {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "command must reach the agent well inside the page wait"
+            );
+            let msg = tokio::time::timeout(Duration::from_secs(2), inbound.next())
+                .await
+                .expect("command within 2s")
+                .expect("stream")
+                .expect("ok status");
+            let Some(server_to_agent::Body::Command(cmd)) = msg.body else {
+                continue;
+            };
+            tx.send(AgentToServer {
+                body: Some(agent_to_server::Body::Result(
+                    keystone_proto::CommandResult {
+                        request_id: cmd.request_id,
+                        ok: true,
+                        payload_json: "[]".into(),
+                        error: String::new(),
+                    },
+                )),
+            })
+            .await
+            .unwrap();
+            if cmd.op == "container_list" {
+                break;
+            }
+        }
+        let result = wait.await.expect("join").expect("oneshot");
+        assert!(result.ok, "{}", result.error);
+        drop(tx);
+        server.abort();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

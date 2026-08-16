@@ -24,7 +24,7 @@ pub fn socket_present() -> bool {
 
 fn call_budget(op: SysOp) -> Duration {
     match op {
-        SysOp::Status => Duration::from_secs(5),
+        SysOp::Status => Duration::from_secs(3),
         SysOp::NetSet => Duration::from_secs(20),
         SysOp::UpdatesList | SysOp::UpdatesApply => Duration::from_secs(120),
     }
@@ -128,9 +128,13 @@ pub async fn local_status() -> Value {
 }
 
 async fn local_addrs() -> Value {
-    let output = Command::new("ip").args(["-j", "-4", "addr"]).output().await;
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("ip").args(["-j", "-4", "addr"]).output(),
+    )
+    .await;
     match output {
-        Ok(o) if o.status.success() => {
+        Ok(Ok(o)) if o.status.success() => {
             serde_json::to_value(parse_ip_addr_json(&String::from_utf8_lossy(&o.stdout)))
                 .unwrap_or(json!([]))
         }
@@ -182,7 +186,10 @@ mod tests {
 
     #[test]
     fn status_call_budget_is_shorter_than_node_page_timeout() {
-        assert!(call_budget(SysOp::Status) <= Duration::from_secs(8));
+        assert!(
+            call_budget(SysOp::Status) <= Duration::from_secs(3),
+            "status helper must finish in parallel with local_status inside 8s"
+        );
         assert!(call_budget(SysOp::UpdatesList) >= Duration::from_secs(60));
     }
 }

@@ -119,11 +119,13 @@ token does not.
   **agent dropped command** means the wait was cancelled because the session
   reset (often while sending several lists at once). Current servers write
   Commands on a side task so Results still complete; install
-  `keystone-server` 0.1.0-12 or newer. Restarting the helper will not
+  `keystone-server` 0.1.0-13 or newer. Restarting the helper will not
   unstick Docker lists. Current agents run Docker/System RPCs off the ingest
-  loop so a slow helper or `docker stats` cannot eat the 8s page budget.
-  After reconnect the server sends `set_runtime`; that Docker socket connect
-  must not block reading lists. Use agent 0.1.0-9+ and server 0.1.0-12+.
+  loop so a slow helper or `docker stats` cannot eat the 8s page budget,
+  skip per-container stats while those lists run, and reply to page RPCs
+  within 6s. After reconnect the server sends `set_runtime`; that Docker
+  socket connect must not block reading lists. Use agent 0.1.0-10+ and
+  server 0.1.0-13+.
 - `keystone` user not in `docker` group — `Permission denied` on the
   socket. Log out/in is not enough for a systemd service: restart
   `keystone-agent` after `usermod -aG docker keystone`.
