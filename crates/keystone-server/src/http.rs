@@ -135,6 +135,7 @@ pub fn router(state: AppState) -> Router {
         .route("/login", get(login_page).post(login_post))
         .route("/static/app.css", get(css))
         .route("/static/app.js", get(js))
+        .route("/static/logo.svg", get(logo))
         .merge(authed)
         .with_state(state)
 }
@@ -154,6 +155,13 @@ async fn js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("static/app.js"),
+    )
+}
+
+async fn logo() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml")],
+        include_bytes!("static/logo.svg").as_slice(),
     )
 }
 
@@ -2702,6 +2710,32 @@ mod tests {
             "crit chips must stay coloured after audit CSS"
         );
         assert!(css.contains(".audit-detail"));
+    }
+
+    #[test]
+    fn logo_is_public_and_in_chrome() {
+        let src = include_str!("http.rs");
+        let head = src.split("#[cfg(test)]").next().expect("router source");
+        let authed_end = head.find(".layer(").expect("session layer");
+        let logo = head.find("/static/logo.svg").expect("logo route");
+        assert!(
+            logo > authed_end,
+            "logo must be public so login can show it"
+        );
+        let bytes = include_bytes!("static/logo.svg");
+        assert!(bytes.len() > 1024, "logo file is missing or empty");
+        assert!(
+            bytes.starts_with(b"<?xml") || bytes.windows(4).any(|w| w == b"<svg"),
+            "logo must be SVG"
+        );
+        let layout = include_str!("../templates/layout.html");
+        assert!(layout.contains("/static/logo.svg"));
+        assert!(layout.contains("a class=\"brand\""));
+        let login = include_str!("../templates/login.html");
+        assert!(login.contains("/static/logo.svg"));
+        let css = include_str!("static/app.css");
+        assert!(css.contains(".brand img"));
+        assert!(css.contains(".login-mark"));
     }
 
     #[test]

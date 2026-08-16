@@ -6,10 +6,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KeyStone login</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-body">
   <form class="login" method="post" action="/login">
+    <img class="login-mark" src="/static/logo.svg" width="72" height="72" alt="">
     <h1>KeyStone</h1>
     <p class="muted">First sign-in is <code>{{ username }}</code> / <code>changeme</code> unless you set a password at install. You will be asked to choose a new one.</p>
     {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}

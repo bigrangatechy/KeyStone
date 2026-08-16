@@ -6,11 +6,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Authenticator — KeyStone</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-body">
   <div>
     <form class="login" method="post" action="/login/totp">
+      <img class="login-mark" src="/static/logo.svg" width="72" height="72" alt="">
       <h1>Authenticator</h1>
       <p class="muted">Enter the 6-digit code from your authenticator app, or a backup code.</p>
       {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
