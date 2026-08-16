@@ -49,6 +49,7 @@ pub fn sections() -> Vec<HelpSection> {
         section("alerts", "Alerts", operator_md!("alerts.md")),
         section("docker", "Docker", operator_md!("docker.md")),
         section("system", "System", operator_md!("system.md")),
+        section("audit", "Audit", operator_md!("audit.md")),
         section(
             "configuration",
             "Configuration",
@@ -111,6 +112,23 @@ mod tests {
         assert!(
             secs.iter().any(|s| s.slug == "system"),
             "operator help must include System"
+        );
+        assert!(
+            secs.iter().any(|s| s.slug == "audit"),
+            "operator help must include Audit"
+        );
+        let audit = secs.iter().find(|s| s.slug == "audit").unwrap();
+        assert!(
+            audit.markdown.contains("ingest token"),
+            "Audit help must say the ingest token cannot write the log"
+        );
+        assert!(
+            audit.markdown.contains("retention"),
+            "Audit help must say Settings retention does not prune the table"
+        );
+        assert!(
+            audit.markdown.contains("200"),
+            "Audit help must match the page row cap"
         );
     }
 }

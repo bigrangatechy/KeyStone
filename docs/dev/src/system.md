@@ -30,3 +30,6 @@ on the ingest loop. Tests must not run live `apt-get`.
 | `updates_list` | no | `sys_view` | List pending apt upgrades |
 | `updates_apply` | yes | `sys_manage` | Apply apt upgrades (streamed) |
 | `net_set` | yes | `sys_manage` | Set IPv4 DHCP or static on one interface |
+
+Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
+token cannot call these routes.

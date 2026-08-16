@@ -1,0 +1,41 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}Audit — KeyStone{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Audit</h1>
+    <p class="muted">Docker and System mutations from this UI. Newest first, last {{ limit }} rows. The ingest token cannot write here. Retention on Settings does not prune this table.</p>
+  </div>
+</div>
+<table class="alerts" id="audit"{% if rows.is_empty() %} hidden{% endif %}>
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Who</th>
+      <th>Node</th>
+      <th>Op</th>
+      <th>Target</th>
+      <th></th>
+      <th>Detail</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><span class="muted" title="{{ r.at_rfc3339 }}">{{ r.when }}</span></td>
+      <td><code>{{ r.username }}</code></td>
+      <td>
+        <a href="/nodes/{{ r.node_id }}">{{ r.node_id }}</a>
+      </td>
+      <td><code>{{ r.op }}</code></td>
+      <td class="muted">{{ r.target }}</td>
+      <td><span class="chip {% if r.ok %}tone-ok{% else %}tone-crit{% endif %}">{% if r.ok %}ok{% else %}fail{% endif %}</span></td>
+      <td class="muted audit-detail">{{ r.detail }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted" id="audit-empty"{% if !rows.is_empty() %} hidden{% endif %}>No mutations yet. Start, stop, Compose Update, apt apply, and IPv4 changes land here.</p>
+{% endblock %}

@@ -51,5 +51,5 @@ Changing the address can drop the agent session (and SSH). Keep a console.
 Wi-Fi, VLANs, and IPv6 are not in this version.
 
 Anyone who can sign in to the UI and who turned Manage on can change that
-host. Same class of trust as Docker Manage. Mutations are audit-logged.
-The ingest token cannot call these actions.
+host. Same class of trust as Docker Manage. Mutations are written to
+[Audit](audit.md). The ingest token cannot call these actions.

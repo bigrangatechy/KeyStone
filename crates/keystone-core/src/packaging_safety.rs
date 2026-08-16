@@ -229,6 +229,31 @@ fn install_docs_match_deb_revisions() {
 }
 
 #[test]
+fn debs_are_not_hosted_in_this_git_tree() {
+    let gitignore = include_str!("../../../.gitignore");
+    assert!(
+        gitignore.lines().any(|l| l.trim() == "*.deb"),
+        ".gitignore must ignore .deb files so they are not committed here"
+    );
+    let install = include_str!("../../../docs/src/install.md");
+    let packaging = include_str!("../../../docs/dev/src/packaging.md");
+    let readme = include_str!("../../../README.md");
+    const PACKAGES: &str =
+        "https://git.bigrangatech.com/Ranga/bigrangatechs-debs/-/tree/main/KeyStone";
+    for (name, text) in [
+        ("docs/src/install.md", install),
+        ("docs/dev/src/packaging.md", packaging),
+        ("README.md", readme),
+    ] {
+        assert!(
+            text.contains("Git LFS"),
+            "{name} must say not to enable Git LFS for packages"
+        );
+        assert!(text.contains(PACKAGES), "{name} must link to {PACKAGES}");
+    }
+}
+
+#[test]
 fn debs_must_not_depend_on_engine() {
     for cargo in [AGENT_CARGO, SERVER_CARGO] {
         let deb = cargo

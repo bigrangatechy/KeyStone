@@ -24,8 +24,9 @@ The server never opens `docker.sock`. `keystone-agent` uses bollard (and
 `docker.host` stays in `agent.toml`. Socket access is root-equivalent.
 
 UI POST `/nodes/{id}/docker/{op}` requires a cookie session. The ingest
-token cannot call it. Mutations are written to `audit`. Streaming ops
-(`container_logs`, `compose_logs`) are not POSTed; they use SSE (below).
+token cannot call it. Mutations are written to `audit` (header `GET /audit`).
+Streaming ops (`container_logs`, `compose_logs`) are not POSTed; they use
+SSE (below).
 
 `Permission` mapping: `container_exec` → `docker_exec`; other mutating ops
 → `docker_manage`; the rest → `docker_view`. The signed-in admin has all of

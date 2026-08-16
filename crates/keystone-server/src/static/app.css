@@ -298,6 +298,10 @@ details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }
 .chip.tone-ok { color: #3fb950; }
 .chip.tone-warn { color: #d29922; }
 .chip.tone-crit { color: var(--danger); }
+.audit-detail {
+  max-width: 22rem;
+  overflow-wrap: anywhere;
+}
 .status-connected { color: #3fb950; }
 .status-seen { color: #d29922; }
 .status-offline, .status-awaiting-agent { color: var(--muted); }

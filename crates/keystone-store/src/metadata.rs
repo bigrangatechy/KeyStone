@@ -400,6 +400,7 @@ impl Metadata {
     }
 
     pub fn recent_audit(&self, limit: i64) -> anyhow::Result<Vec<AuditEvent>> {
+        let limit = limit.clamp(1, 500);
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, at_unix, username, node_id, op, target, ok, detail
@@ -593,6 +594,25 @@ mod tests {
             .unwrap();
         let sess = db.get_session("sid").unwrap().unwrap();
         assert!(sess.pending_2fa);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recent_audit_is_newest_first() {
+        let dir = std::env::temp_dir().join(format!("ks-audit-{}", uuid_like()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Metadata::open(&dir.join("t.sqlite")).unwrap();
+        db.audit("admin", "ranga", "container_start", "abc", true, "ok")
+            .unwrap();
+        db.audit("admin", "ranga", "container_stop", "abc", false, "timeout")
+            .unwrap();
+        let log = db.recent_audit(10).unwrap();
+        assert_eq!(log[0].op, "container_stop");
+        assert!(!log[0].ok);
+        assert_eq!(log[0].detail, "timeout");
+        assert_eq!(log[1].op, "container_start");
+        assert!(log[1].ok);
+        assert_eq!(db.recent_audit(1).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

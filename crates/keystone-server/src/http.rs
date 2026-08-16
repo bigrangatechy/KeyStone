@@ -71,6 +71,7 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}/setup", get(node_setup_page))
         .route("/nodes/{id}/settings", post(node_settings_post))
         .route("/alerts", get(alerts_page))
+        .route("/audit", get(audit_page))
         .route("/password", get(password_page).post(password_post))
         .route("/login/totp", get(totp_login_page).post(totp_login_post))
         .route("/settings", get(settings_page).post(settings_post))
@@ -1054,6 +1055,64 @@ async fn alerts_api(State(state): State<AppState>) -> Json<AlertsApi> {
     Json(AlertsApi {
         alerts: firing_rows(&state),
     })
+}
+
+const AUDIT_PAGE_LIMIT: i64 = 200;
+
+#[derive(Template)]
+#[template(path = "audit.html")]
+struct AuditTemplate {
+    rows: Vec<AuditRow>,
+    limit: i64,
+}
+
+struct AuditRow {
+    when: String,
+    at_rfc3339: String,
+    username: String,
+    node_id: String,
+    op: String,
+    target: String,
+    ok: bool,
+    detail: String,
+}
+
+fn unix_rfc3339(at_unix: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(at_unix, 0)
+        .map(|t| t.to_rfc3339())
+        .unwrap_or_else(|| at_unix.to_string())
+}
+
+async fn audit_page(State(state): State<AppState>) -> impl IntoResponse {
+    let rows = state
+        .stores
+        .metadata
+        .recent_audit(AUDIT_PAGE_LIMIT)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| AuditRow {
+            when: relative_seen(e.at_unix, false),
+            at_rfc3339: unix_rfc3339(e.at_unix),
+            username: e.username,
+            node_id: e.node_id,
+            op: e.op,
+            target: if e.target.is_empty() {
+                "—".into()
+            } else {
+                e.target
+            },
+            ok: e.ok,
+            detail: e.detail,
+        })
+        .collect();
+    Html(
+        AuditTemplate {
+            rows,
+            limit: AUDIT_PAGE_LIMIT,
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
 }
 
 async fn nodes_page(State(state): State<AppState>) -> impl IntoResponse {
@@ -2504,6 +2563,12 @@ mod tests {
             usage < authed_end,
             "container usage must require a UI session"
         );
+        let audit = head.find("\"/audit\"").expect("audit page");
+        assert!(audit < authed_end, "audit log must require a UI session");
+        assert!(
+            !head[authed_end..].contains("\"/audit\""),
+            "audit must not be on the public router"
+        );
     }
 
     #[test]
@@ -2587,6 +2652,20 @@ mod tests {
         assert!(
             js.contains("container-usage"),
             "Containers tab must poll /api/v1/nodes/{{id}}/container-usage"
+        );
+        let layout = include_str!("../templates/layout.html");
+        assert!(
+            layout.contains("href=\"/audit\""),
+            "header must link to the mutation audit log"
+        );
+        let audit = include_str!("../templates/audit.html");
+        assert!(
+            audit.contains("No mutations yet"),
+            "empty audit copy must say where rows come from"
+        );
+        assert!(
+            js.contains("nav a[href='/audit']"),
+            "welcome tour must point at header Audit"
         );
         let css = include_str!("static/app.css");
         assert!(

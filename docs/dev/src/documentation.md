@@ -15,8 +15,8 @@ Two audiences, two trees. Neither is generated from Rust types.
 `crates/keystone-server/src/help.rs` embeds operator chapters. Adding a
 user-facing page means: write `docs/src/*.md`, add it to `docs/src/SUMMARY.md`,
 and add a `HelpSection` in `help.rs` if it should appear in the UI. The
-Alerts and System chapters are examples of pages that must be in all three
-places.
+Alerts, System, and Audit chapters are examples of pages that must be in
+all three places.
 
 Developer pages are mdBook only. Completeness tests (not generators) live
 in `keystone-core`:

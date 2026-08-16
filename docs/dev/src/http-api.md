@@ -34,6 +34,7 @@ is deleted and a new session id is issued.
 | GET | `/nodes/{id}/setup` | Agent TOML snippet. |
 | POST | `/nodes/{id}/settings` | Save `NodeSettings`; `nudge_runtime` if connected. |
 | GET | `/alerts` | Firing fleet chips (HTML). |
+| GET | `/audit` | Mutation log (HTML). Newest first, last 200 rows from SQLite `audit`. Cookie session. Retention does not prune this table. The ingest token cannot write it. |
 | GET/POST | `/settings` | `ServerSettings` + password change. `?err=totp` / `totp-on` for authenticator form failures. |
 | POST | `/settings/rotate-token` | Random ingest token (no-op if env override). |
 | POST | `/settings/totp/start` | Password; writes `totp_pending`. Redirect `/settings/totp`. |

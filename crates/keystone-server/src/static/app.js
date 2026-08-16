@@ -1431,6 +1431,11 @@
         body: "Warn and crit chips (75% / 90%, 75°C / 90°C) land here. Optional webhook is on Settings."
       },
       {
+        sel: "nav a[href='/audit']",
+        title: "Audit",
+        body: "Start, stop, Compose Update, apt apply, and IPv4 changes from this UI. The ingest token cannot write here."
+      },
+      {
         sel: "nav a[href='/settings']",
         title: "Settings",
         body: "Retention, ingest token, scrape jobs, alert webhook, password, and authenticator 2FA. Turn on 2FA before exposing this UI through a tunnel."

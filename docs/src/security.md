@@ -143,9 +143,10 @@ Manage off unless you want the UI to change that engine. Leave Exec off
 unless you need a shell in a container — it is a further gate on top of
 Manage.
 
-Mutating calls require a logged-in browser session. They are audit-logged.
-The agent still refuses mutations and exec when the corresponding Settings
-flags are false, even if the UI were buggy.
+Mutating calls require a logged-in browser session. They are written to
+header **Audit** (last 200 rows). Settings retention does not prune that
+table. See [Audit](audit.md). The agent still refuses mutations and exec
+when the corresponding Settings flags are false, even if the UI were buggy.
 
 Do not point `docker.host` at another machine’s engine. KeyStone’s model is
 local socket on the agent host.
@@ -167,7 +168,8 @@ Keep the allowlist tiny; do not start the helper on nodes that should only
 report metrics.
 
 Changing IPv4 can lock you out of SSH and drop the agent session. Keep a
-console. Mutations are audit-logged. The ingest token cannot call them.
+console. Mutations are written to [Audit](audit.md). The ingest token
+cannot call them.
 
 ## Metrics allowlist
 

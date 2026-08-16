@@ -10,3 +10,4 @@
 /docs/dev/book
 /public
 /.smoke
+*.deb

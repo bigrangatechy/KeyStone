@@ -35,8 +35,11 @@ Two Debian packages. That is the easy path: **one UI**, agents everywhere else.
 | `keystone-server` | One box (the dashboard) | `keystone-server.service` |
 | `keystone-agent` | Every box you want in the UI, including the server host if you want it monitored | `keystone-agent.service` |
 
-They do not conflict. CI builds `amd64` and `arm64` (Pi 4/5). See
-[docs/src/install.md](docs/src/install.md).
+They do not conflict. CI builds `amd64` and `arm64` (Pi 4/5). Download
+packages from [KeyStone on
+bigrangatechs-debs](https://git.bigrangatech.com/Ranga/bigrangatechs-debs/-/tree/main/KeyStone).
+This git tree does not store `.deb` files (a GitHub mirror must not enable
+Git LFS for them). See [docs/src/install.md](docs/src/install.md).
 
 ```
 # Match dpkg --print-architecture (amd64 on typical Ubuntu, arm64 on a 64-bit Pi)

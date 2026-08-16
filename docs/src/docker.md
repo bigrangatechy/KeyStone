@@ -64,8 +64,8 @@ when mutations are off.
 - **Volumes** and **Networks** — list; create/remove with Manage.
 
 Mutations require a **logged-in UI session**. The ingest token used by
-agents cannot call these actions. Every mutation is written to the audit
-log (who, node, operation, target, success).
+agents cannot call these actions. Every mutation is written to
+[Audit](audit.md) (who, node, operation, target, success).
 
 Leave a logs page to stop follow: the browser disconnects, the server
 cancels the agent stream. There is no interactive exec/PTY in this UI.

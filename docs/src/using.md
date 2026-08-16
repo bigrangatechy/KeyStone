@@ -20,7 +20,7 @@ password **`changeme`** (or `KEYSTONE_ADMIN_PASSWORD` if you set it).
 The first sign-in asks you to **choose a new password** (at least 8
 characters, not the bootstrap one). You cannot use the rest of the UI until
 that is saved. After that, a short **welcome tour** points at Nodes, Alerts,
-Settings, and Add node. Skip it anytime; replay it from Settings.
+Audit, Settings, and Add node. Skip it anytime; replay it from Settings.
 
 If you enabled an **authenticator** on Settings, sign-in asks for a 6-digit
 code (or a backup code) after the password. See [Security](security.md).
@@ -103,5 +103,6 @@ The header **Settings** link is the server, not a node: retention, ingest
 token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password,
 authenticator 2FA (and **Replay welcome tour**). Listen addresses and the
 admin username stay in `server.toml`. Header **Alerts** is the live firing
-list; see [Alerts](alerts.md). The home page reminds you to enable 2FA if
-it is still off.
+list; see [Alerts](alerts.md). Header **Audit** is Docker and System
+mutations from this UI (newest first); see [Audit](audit.md). The home page
+reminds you to enable 2FA if it is still off.

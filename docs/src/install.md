@@ -40,6 +40,15 @@ dpkg --print-architecture
 Installing an `arm64` file on `amd64` (or the other way around) fails.
 `apt` may say `Unsupported file` instead of a clear architecture error.
 
+Download the `.deb` files from the [KeyStone packages
+folder](https://git.bigrangatech.com/Ranga/bigrangatechs-debs/-/tree/main/KeyStone)
+(`Ranga/bigrangatechs-debs` on this GitLab). This source repository does
+not store them. Do not enable Git LFS on a GitHub mirror of this tree to
+host packages.
+
+Copy the files onto the machine (into `/tmp` if apt cannot read
+`~/Downloads`) and `apt install` as below.
+
 **Ubuntu / Debian PC or VM (`amd64`):**
 
 ```

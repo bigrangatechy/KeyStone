@@ -45,6 +45,14 @@ Docker’s data root or `/`. Invariants (enforced by
 An upgrade restarts the KeyStone unit. Containers keep running. Mutating
 Docker is only a logged-in UI action while Manage is on.
 
+## Artifacts are not in this tree
+
+Do not commit `.deb` files here. CI keeps them as job artifacts
+(`package:amd64`, `package:arm64`, expire in two weeks). Operators download
+from the [KeyStone packages
+folder](https://git.bigrangatech.com/Ranga/bigrangatechs-debs/-/tree/main/KeyStone).
+A GitHub mirror of this source tree must not enable Git LFS for packages.
+
 ## Local `.deb`
 
 ```
