@@ -34,9 +34,21 @@ impl Ingest for IngestSvc {
         request: Request<Streaming<AgentToServer>>,
     ) -> Result<Response<Self::SessionStream>, Status> {
         let mut inbound = request.into_inner();
-        let (out_tx, out_rx) = mpsc::channel::<Result<ServerToAgent, Status>>(64);
+        let (out_tx, out_rx) = mpsc::channel::<Result<ServerToAgent, Status>>(128);
         let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
+        // Commands/Acks must not share the select with inbound. Awaiting
+        // gRPC write here meant we stopped reading Results; pipelined
+        // Docker/System lists then saw every oneshot dropped.
+        let (to_agent_tx, mut to_agent_rx) = mpsc::channel::<ServerToAgent>(128);
         let state = self.state.clone();
+
+        tokio::spawn(async move {
+            while let Some(msg) = to_agent_rx.recv().await {
+                if out_tx.send(Ok(msg)).await.is_err() {
+                    break;
+                }
+            }
+        });
 
         tokio::spawn(async move {
             let mut node_id: Option<String> = None;
@@ -69,21 +81,25 @@ impl Ingest for IngestSvc {
                                             node_id = Some(id.clone());
                                             info!("agent session {id}");
                                         }
-                                        let _ = out_tx.send(Ok(ServerToAgent {
+                                        if to_agent_tx.send(ServerToAgent {
                                             body: Some(server_to_agent::Body::Ack(Ack {
                                                 ok: true,
                                                 error: String::new(),
                                             })),
-                                        })).await;
+                                        }).await.is_err() {
+                                            break;
+                                        }
                                     }
                                     Err(e) => {
                                         warn!("push rejected: {e}");
-                                        let _ = out_tx.send(Ok(ServerToAgent {
+                                        if to_agent_tx.send(ServerToAgent {
                                             body: Some(server_to_agent::Body::Ack(Ack {
                                                 ok: false,
                                                 error: e.to_string(),
                                             })),
-                                        })).await;
+                                        }).await.is_err() {
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -108,9 +124,9 @@ impl Ingest for IngestSvc {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(command) => {
-                                if out_tx.send(Ok(ServerToAgent {
+                                if to_agent_tx.send(ServerToAgent {
                                     body: Some(server_to_agent::Body::Command(command)),
-                                })).await.is_err() {
+                                }).await.is_err() {
                                     break;
                                 }
                             }
@@ -374,5 +390,18 @@ mod tests {
         assert!(!node.awaiting_agent());
         server.abort();
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ingest_writes_commands_off_the_inbound_select() {
+        let src = include_str!("ingest.rs");
+        assert!(
+            src.contains("to_agent_tx"),
+            "Acks/Commands must not await the gRPC sink on the inbound select"
+        );
+        assert!(
+            src.contains("to_agent_rx.recv()"),
+            "a side writer must drain Commands so Results still complete"
+        );
     }
 }

@@ -43,8 +43,14 @@ impl AgentRegistry {
     /// Register a live command channel. Returns a generation that
     /// [`disconnect`] must present so a replaced session cannot wipe the new one.
     pub fn connect(&self, node_id: String, cmd_tx: CommandTx) -> u64 {
+        let mut inner = self.inner.lock();
+        if let Some(existing) = inner.get_mut(&node_id) {
+            if existing.cmd_tx.same_channel(&cmd_tx) {
+                return existing.gen;
+            }
+        }
         let gen = self.epoch.fetch_add(1, Ordering::Relaxed);
-        self.inner.lock().insert(
+        inner.insert(
             node_id,
             ConnectedAgent {
                 gen,
@@ -230,6 +236,42 @@ mod registry_tests {
         );
         assert!(registry.disconnect("ranga", live));
         assert!(!registry.is_connected("ranga"));
+    }
+
+    #[tokio::test]
+    async fn same_session_connect_does_not_drop_pending() {
+        let registry = AgentRegistry::default();
+        let (tx, mut rx) = mpsc::channel(4);
+        registry.connect("ranga".into(), tx.clone());
+        let wait = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .call_timeout(
+                        "ranga",
+                        "container_list",
+                        "{}".into(),
+                        Duration::from_secs(2),
+                    )
+                    .await
+            }
+        });
+        let cmd = rx.recv().await.expect("command queued");
+        registry.connect("ranga".into(), tx.clone());
+        registry.complete(
+            "ranga",
+            keystone_proto::CommandResult {
+                request_id: cmd.request_id,
+                ok: true,
+                payload_json: "[]".into(),
+                error: String::new(),
+            },
+        );
+        let result = wait.await.expect("join").expect("oneshot");
+        assert!(
+            result.ok,
+            "re-registering the same session must keep waiters"
+        );
     }
 
     #[tokio::test]

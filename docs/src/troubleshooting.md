@@ -116,10 +116,12 @@ token does not.
   Overview widgets can still move from stored samples after a reconnect;
   Docker tabs need the live command channel. **Docker: agent command timed
   out** is that channel, not `keystone-sys.socket` (the System tab helper).
-  Restarting the helper will not unstick Docker lists. Current agents run
-  Docker/System RPCs off the ingest loop so a slow helper or `docker stats`
-  cannot eat the 8s page budget; install a new `keystone-agent` and restart
-  it. Older servers could hang the node page until `keystone-server` restart.
+  **agent dropped command** means the wait was cancelled because the session
+  reset (often while sending several lists at once). Current servers write
+  Commands on a side task so Results still complete; install
+  `keystone-server` 0.1.0-10 or newer. Restarting the helper will not
+  unstick Docker lists. Current agents run Docker/System RPCs off the ingest
+  loop so a slow helper or `docker stats` cannot eat the 8s page budget.
 - `keystone` user not in `docker` group — `Permission denied` on the
   socket. Log out/in is not enough for a systemd service: restart
   `keystone-agent` after `usermod -aG docker keystone`.

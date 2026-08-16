@@ -94,6 +94,9 @@ node can reach the registry.
 - **Docker: agent command timed out** — ingest Docker RPC, not the System
   helper. Restarting `keystone-sys.socket` does not fix it; upgrade/restart
   `keystone-agent`.
+- **agent dropped command** — the session reset while lists were in flight.
+  Upgrade `keystone-server` (0.1.0-10 or newer) so Commands are written
+  without blocking Results.
 - The `keystone` user cannot open the socket (`Permission denied`).
 - Docker is not installed, or `docker.host` points at the wrong path.
 

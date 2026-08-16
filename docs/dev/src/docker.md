@@ -46,6 +46,10 @@ the node page hit **Docker: agent command timed out**. Host collect and
 per-container `stats` stay off that loop too; `stats` runs in parallel
 with a short cap so it cannot monopolise `docker.sock`.
 
+The server ingest loop must keep reading `CommandResult`s while it writes
+Commands. Blocking on the gRPC sink reset the session and the UI showed
+**agent dropped command**. Acks and Commands go through a side writer task.
+
 HTTP:
 
 - `GET /nodes/{id}/containers/{cid}/logs` — HTML follow page
