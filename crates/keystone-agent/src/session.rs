@@ -20,6 +20,7 @@ use keystone_proto::{
     ServerToAgent, StreamChunk,
 };
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use tokio_stream::wrappers::ReceiverStream;
@@ -157,7 +158,11 @@ async fn push_tick(
     push_tx: &mpsc::Sender<AgentToServer>,
     buffer: &DiskBuffer,
 ) -> anyhow::Result<()> {
-    let mut samples = collect_host(cfg);
+    let cfg_collect = cfg.clone();
+    let mut samples = match tokio::task::spawn_blocking(move || collect_host(&cfg_collect)).await {
+        Ok(s) => s,
+        Err(_) => collect_host(cfg),
+    };
     let docker = runtime.docker.lock().await.clone();
     if let Some(d) = docker.as_ref() {
         if runtime.list_inflight.load(Ordering::SeqCst) == 0 {
@@ -171,16 +176,25 @@ async fn push_tick(
     let labels = runtime.labels.lock().await.clone();
     let docker_version = cached_engine_version(runtime, docker.as_ref()).await;
     let frame = build_push(cfg, node_id, docker_version, &labels, &kept);
-    if push_tx
-        .send(AgentToServer {
-            body: Some(agent_to_server::Body::Push(frame.clone())),
-        })
-        .await
-        .is_err()
-    {
-        buffer.push(&frame)?;
+    enqueue_push(push_tx, buffer, frame);
+    if let Ok(Some(old)) = buffer.pop_oldest() {
+        enqueue_push(push_tx, buffer, old);
     }
     Ok(())
+}
+
+fn enqueue_push(tx: &mpsc::Sender<AgentToServer>, buffer: &DiskBuffer, frame: PushFrame) {
+    let msg = AgentToServer {
+        body: Some(agent_to_server::Body::Push(frame.clone())),
+    };
+    match tx.try_send(msg) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_)) | Err(TrySendError::Closed(_)) => {
+            if let Err(e) = buffer.push(&frame) {
+                warn!("disk buffer: {e}");
+            }
+        }
+    }
 }
 
 async fn connect_session(
@@ -193,27 +207,17 @@ async fn connect_session(
 ) -> anyhow::Result<()> {
     let channel = endpoint.connect().await.context("connect ingest")?;
     let mut client = IngestClient::new(channel);
-    let (tx, rx) = mpsc::channel::<AgentToServer>(256);
+    let (tx, rx) = mpsc::channel::<AgentToServer>(32);
     let response = client.session(ReceiverStream::new(rx)).await?;
     let mut inbound = response.into_inner();
 
     info!("connected to ingest at {ingest_url}");
 
-    if let Ok(frames) = buffer.drain() {
-        let buf_tx = tx.clone();
-        tokio::spawn(async move {
-            for frame in frames {
-                if buf_tx
-                    .send(AgentToServer {
-                        body: Some(agent_to_server::Body::Push(frame)),
-                    })
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+    for _ in 0..8 {
+        match buffer.pop_oldest() {
+            Ok(Some(frame)) => enqueue_push(&tx, &buffer, frame),
+            _ => break,
+        }
     }
 
     let push_tx = tx.clone();
@@ -963,6 +967,14 @@ mod tests {
     #[test]
     fn buffer_drain_does_not_block_command_reads() {
         let src = include_str!("session.rs");
+        assert!(
+            src.contains("enqueue_push") && src.contains("try_send"),
+            "Pushes must not fill the ingest stream ahead of CommandResults"
+        );
+        assert!(
+            src.contains("pop_oldest"),
+            "reconnect must not dump the whole disk buffer onto the session"
+        );
         let fn_src = src
             .split("async fn connect_session")
             .nth(1)
@@ -970,16 +982,9 @@ mod tests {
             .split("fn command_err")
             .next()
             .expect("loop body");
-        let drain_at = fn_src
-            .find("buffer.drain()")
-            .expect("drain buffered pushes");
-        let inbound_at = fn_src
-            .find("inbound.message()")
-            .expect("must read Commands");
-        let between = &fn_src[drain_at..inbound_at];
         assert!(
-            between.contains("tokio::spawn"),
-            "replaying the disk buffer must not await Push sends before inbound.message()"
+            !fn_src.contains("buffer.drain()"),
+            "drain-all before inbound.message() parked Results behind buffered Pushes"
         );
     }
 

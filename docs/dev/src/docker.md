@@ -48,14 +48,16 @@ with a short cap so it cannot monopolise `docker.sock`. While a node-page
 list is in flight the agent skips `docker stats` and `engine_version`, and
 those list RPCs themselves have a 6s budget so a hung Engine still replies
 before the server's 8s wait. System `status` runs `ip` and the helper
-together, each capped, instead of in series. Buffered pushes drain on a
-side task so reconnect does not block Command reads.
+together, each capped, instead of in series. Pushes `try_send` and overflow
+to the disk buffer so CommandResults are not stuck behind a reconnect dump.
 
 The server ingest loop must keep reading `CommandResult`s while it writes
 Commands. Blocking on the gRPC sink reset the session (**agent dropped
 command**) or stalled Result reads (**agent command timed out**). Acks and
 Commands are try-queued to a side writer; Commands are preferred over a
-burst of Pushes. The agent also spawns
+burst of Pushes. Series writes (and the `series.redb` retention prune, at
+most once a minute) run on a side task so a large history cannot block
+Result reads. The agent also spawns
 `set_runtime` so a Docker socket connect after reconnect cannot block
 `container_list`. A replaced ingest session keeps in-flight waits and
 replays those Commands on the new channel so the UI does not show

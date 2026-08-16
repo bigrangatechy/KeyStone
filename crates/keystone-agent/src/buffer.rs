@@ -38,23 +38,62 @@ impl DiskBuffer {
         Ok(())
     }
 
-    pub fn drain(&self) -> anyhow::Result<Vec<PushFrame>> {
+    /// Oldest buffered push, if any. Used so reconnect does not dump the
+    /// whole disk queue onto the ingest stream ahead of CommandResults.
+    pub fn pop_oldest(&self) -> anyhow::Result<Option<PushFrame>> {
         let mut files: Vec<_> = std::fs::read_dir(&self.dir)?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("bin"))
             .collect();
         files.sort();
-        let mut out = Vec::new();
-        for path in files {
-            let bytes = std::fs::read(&path)?;
-            if let Ok(msg) = AgentToServer::decode(bytes.as_slice()) {
-                if let Some(keystone_proto::agent_to_server::Body::Push(frame)) = msg.body {
-                    out.push(frame);
-                }
+        let Some(path) = files.into_iter().next() else {
+            return Ok(None);
+        };
+        let bytes = std::fs::read(&path)?;
+        let _ = std::fs::remove_file(&path);
+        if let Ok(msg) = AgentToServer::decode(bytes.as_slice()) {
+            if let Some(keystone_proto::agent_to_server::Body::Push(frame)) = msg.body {
+                return Ok(Some(frame));
             }
-            let _ = std::fs::remove_file(&path);
         }
-        Ok(out)
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keystone_proto::Heartbeat;
+
+    fn frame(n: &str) -> PushFrame {
+        PushFrame {
+            heartbeat: Some(Heartbeat {
+                node_id: n.into(),
+                hostname: n.into(),
+                agent_version: "test".into(),
+                os: "linux".into(),
+                kernel: "test".into(),
+                docker_version: String::new(),
+                labels: vec![],
+            }),
+            samples: vec![],
+            ingest_token: "t".into(),
+        }
+    }
+
+    #[test]
+    fn pop_oldest_is_fifo_and_leaves_the_rest() {
+        let dir = std::env::temp_dir().join(format!("ks-buf-{}", uuid::Uuid::new_v4()));
+        let buf = DiskBuffer::new(&dir).unwrap();
+        buf.push(&frame("a")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        buf.push(&frame("b")).unwrap();
+        let first = buf.pop_oldest().unwrap().expect("a");
+        assert_eq!(first.heartbeat.unwrap().node_id, "a");
+        let second = buf.pop_oldest().unwrap().expect("b");
+        assert_eq!(second.heartbeat.unwrap().node_id, "b");
+        assert!(buf.pop_oldest().unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

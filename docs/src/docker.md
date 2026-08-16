@@ -95,7 +95,7 @@ node can reach the registry.
   helper. Restarting `keystone-sys.socket` does not fix it; upgrade/restart
   `keystone-agent`.
 - **agent dropped command** — the session reset while lists were in flight.
-  Upgrade `keystone-server` (0.1.0-13 or newer) so in-flight lists survive
+  Upgrade `keystone-server` (0.1.0-14 or newer) so in-flight lists survive
   a session replace, Commands are written without blocking Results, and
   `container_list` does not share `docker.sock` with images/volumes.
 - The `keystone` user cannot open the socket (`Permission denied`).

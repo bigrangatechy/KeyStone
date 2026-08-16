@@ -54,7 +54,7 @@ priority = "optional"
 # restarts containers; KeyStone must not pull that in. Socket access is
 # optional at runtime via the docker group.
 depends = "$auto, adduser"
-revision = "10"
+revision = "11"
 license-file = ["../../COPYING", "0"]
 extended-description = """KeyStone agent for Debian and Raspberry Pi OS (64-bit).
 Pushes host metrics to a KeyStone server. Optional Docker Engine access

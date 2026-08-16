@@ -42,7 +42,15 @@ impl Ingest for IngestSvc {
         // Docker/System lists then saw every oneshot dropped.
         let (to_agent_tx, mut to_agent_rx) = mpsc::channel::<ServerToAgent>(128);
         let (writer_dead_tx, mut writer_dead_rx) = tokio::sync::oneshot::channel::<()>();
+        let (persist_tx, mut persist_rx) = mpsc::channel::<(String, Vec<Sample>)>(8);
         let state = self.state.clone();
+        let persist_state = state.clone();
+        tokio::spawn(async move {
+            while let Some((id, kept)) = persist_rx.recv().await {
+                let st = persist_state.clone();
+                let _ = tokio::task::spawn_blocking(move || persist_samples(&st, &id, &kept)).await;
+            }
+        });
 
         tokio::spawn(async move {
             while let Some(msg) = to_agent_rx.recv().await {
@@ -75,8 +83,8 @@ impl Ingest for IngestSvc {
                     msg = inbound.next() => {
                         match msg {
                             Some(Ok(AgentToServer { body: Some(agent_to_server::Body::Push(frame)) })) => {
-                                match handle_push(&state, &frame) {
-                                    Ok(id) => {
+                                match accept_push(&state, &frame) {
+                                    Ok((id, kept)) => {
                                         if node_id.as_deref() != Some(id.as_str()) {
                                             if let (Some(old), Some(gen)) = (node_id.take(), session_gen.take()) {
                                                 if state.agents.disconnect(&old, gen) {
@@ -97,6 +105,9 @@ impl Ingest for IngestSvc {
                                             state.agents.nudge_runtime(&id, &settings);
                                             node_id = Some(id.clone());
                                             info!("agent session {id}");
+                                        }
+                                        if persist_tx.try_send((id, kept)).is_err() {
+                                            tracing::debug!("series writer busy; dropped a push");
                                         }
                                         if !queue_to_agent(&to_agent_tx, ack(true, String::new())) {
                                             break;
@@ -171,7 +182,21 @@ fn queue_to_agent(tx: &mpsc::Sender<ServerToAgent>, msg: ServerToAgent) -> bool 
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn handle_push(state: &AppState, frame: &PushFrame) -> anyhow::Result<String> {
+    let (id, kept) = accept_push(state, frame)?;
+    persist_samples(state, &id, &kept);
+    Ok(id)
+}
+
+fn persist_samples(state: &AppState, node_id: &str, kept: &[Sample]) {
+    if let Err(e) = state.stores.series.write_samples(node_id, kept) {
+        warn!("series write: {e}");
+    }
+    crate::alerts::note_samples(state, node_id, kept);
+}
+
+fn accept_push(state: &AppState, frame: &PushFrame) -> anyhow::Result<(String, Vec<Sample>)> {
     let token = state.ingest_token();
     if !token.is_empty() && frame.ingest_token != token {
         anyhow::bail!("invalid ingest token");
@@ -206,9 +231,7 @@ fn handle_push(state: &AppState, frame: &PushFrame) -> anyhow::Result<String> {
     if dropped > 0 {
         tracing::debug!("dropped {dropped} unknown metrics from {}", hb.node_id);
     }
-    state.stores.series.write_samples(&hb.node_id, &kept)?;
-    crate::alerts::note_samples(state, &hb.node_id, &kept);
-    Ok(hb.node_id.clone())
+    Ok((hb.node_id.clone(), kept))
 }
 
 fn identity_from_heartbeat(hb: &Heartbeat) -> NodeIdentity {
@@ -442,6 +465,10 @@ mod tests {
         assert!(
             src.contains("try_recv"),
             "replayed Commands after connect must flush before the next Push"
+        );
+        assert!(
+            src.contains("persist_tx") && src.contains("spawn_blocking"),
+            "series writes must not block reading CommandResults on the ingest select"
         );
     }
 

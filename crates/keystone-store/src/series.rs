@@ -14,10 +14,13 @@ use redb::{Database, ReadableTable, TableDefinition};
 const LATEST: TableDefinition<&str, &[u8]> = TableDefinition::new("latest");
 const SERIES: TableDefinition<&str, f64> = TableDefinition::new("series");
 
+const PRUNE_EVERY_MS: i64 = 60_000;
+
 #[derive(Clone)]
 pub struct RedbSeries {
     db: Arc<Database>,
     retention_ms: Arc<AtomicI64>,
+    last_prune_ms: Arc<AtomicI64>,
 }
 
 pub trait SeriesStore {
@@ -37,6 +40,7 @@ impl RedbSeries {
         Ok(Self {
             db: Arc::new(db),
             retention_ms: Arc::new(AtomicI64::new(retention_ms(retention_hours))),
+            last_prune_ms: Arc::new(AtomicI64::new(0)),
         })
     }
 
@@ -171,7 +175,18 @@ impl SeriesStore for RedbSeries {
                 series.insert(key.as_str(), s.value)?;
             }
         }
-        self.prune(&tx)?;
+        // Full-table prune on every 1s heartbeat blocked ingest from reading
+        // CommandResults, so the node page hit agent command timed out.
+        let now = now_ms();
+        let last = self.last_prune_ms.load(Ordering::Relaxed);
+        if now.saturating_sub(last) >= PRUNE_EVERY_MS
+            && self
+                .last_prune_ms
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            self.prune(&tx)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -230,6 +245,37 @@ mod tests {
         assert!(hist.iter().all(|(t, _)| *t >= ts - 1500));
         store.set_retention_hours(48);
         assert_eq!(store.retention_hours(), 48);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_does_not_full_scan_on_every_push() {
+        let dir = std::env::temp_dir().join(format!("ks-series-prune-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = RedbSeries::open(&dir.join("s.redb"), 24).unwrap();
+        let ts = now_ms();
+        for i in 0..2500 {
+            store
+                .write(
+                    "n1",
+                    &[Sample::new("node_load1", 1.0, ts - i64::from(i) * 1000)],
+                )
+                .unwrap();
+        }
+        let start = std::time::Instant::now();
+        store
+            .write("n1", &[Sample::new("node_load1", 2.0, ts)])
+            .unwrap();
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(400),
+            "prune must not scan series.redb on every ingest push, took {:?}",
+            start.elapsed()
+        );
+        let src = include_str!("series.rs");
+        assert!(
+            src.contains("PRUNE_EVERY_MS"),
+            "retention prune belongs on a timer, not the CommandResult path"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
