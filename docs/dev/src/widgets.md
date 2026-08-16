@@ -23,9 +23,15 @@ not discard the widget list (`parse_or_default` / PUT). Version stays `1`.
 | `density` | `compact`, `comfortable`, `spacious` | `comfortable` |
 | `cards` | `bordered`, `flush`, `raised` | `bordered` |
 | `accent` | `blue`, `green`, `amber`, `rose` | `blue` |
+| `empty` | `show`, `hide` | `show` |
 
 Accent is scoped to `.widget-grid` (`--accent`), not the site header.
 `app.js` paints `density-*`, `cards-*`, and `accent-*` on the grid.
+`empty: hide` omits cards with no data while not editing (GPU/temps on a
+host that does not expose them). Customize still lists those cards.
+
+`WidgetInstance.title` is the card heading. Empty titles become the widget
+id; length is clamped to 48 in `normalize()`.
 
 ## Kinds (`WidgetKind`)
 

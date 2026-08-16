@@ -141,6 +141,15 @@ form.login label { display: flex; flex-direction: column; gap: 0.25rem; color: v
   border: 1px solid var(--line); padding: 0.12rem 0.35rem; border-radius: 4px;
   max-width: 7.5rem;
 }
+.widget-edit input[type="text"] {
+  font: inherit; font-size: 0.75rem;
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--line); padding: 0.12rem 0.35rem; border-radius: 4px;
+  max-width: 8.5rem;
+  min-width: 5rem;
+}
+.widget.editing button, .widget.editing select { cursor: pointer; }
+.widget.editing input { cursor: text; }
 .widget-grip {
   cursor: grab;
   color: var(--muted);

@@ -77,6 +77,8 @@ fn developer_widgets_doc_lists_kinds() {
         "`area`",
         "`compact`",
         "normalize",
+        "`empty`",
+        "`hide`",
     ] {
         assert!(
             DEV_WIDGETS.contains(needle),
@@ -100,6 +102,8 @@ fn operator_dashboard_documents_page_and_widget_styles() {
         "donut",
         "horizontal bar",
         "filled area",
+        "Hide empty",
+        "title",
     ] {
         assert!(
             dash.contains(needle),

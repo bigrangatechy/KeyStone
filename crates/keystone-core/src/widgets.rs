@@ -88,6 +88,10 @@ pub struct PageStyle {
     /// Accent on the widget grid only: `blue` (default), `green`, `amber`, `rose`.
     #[serde(default = "default_accent")]
     pub accent: String,
+    /// `show` (default) keeps cards with no data; `hide` omits them until they
+    /// have a value (GPU on a VM, temps with no hwmon).
+    #[serde(default = "default_empty")]
+    pub empty: String,
 }
 
 fn default_density() -> String {
@@ -102,12 +106,17 @@ fn default_accent() -> String {
     "blue".into()
 }
 
+fn default_empty() -> String {
+    "show".into()
+}
+
 impl Default for PageStyle {
     fn default() -> Self {
         Self {
             density: default_density(),
             cards: default_cards(),
             accent: default_accent(),
+            empty: default_empty(),
         }
     }
 }
@@ -125,6 +134,9 @@ impl PageStyle {
         }
         if !matches!(self.accent.as_str(), "blue" | "green" | "amber" | "rose") {
             self.accent = default_accent();
+        }
+        if !matches!(self.empty.as_str(), "show" | "hide") {
+            self.empty = default_empty();
         }
     }
 }
@@ -308,6 +320,12 @@ impl Dashboard {
         self.page.normalize();
         for w in &mut self.widgets {
             w.style = stored_style(w.kind, &w.style);
+            let title = w.title.trim();
+            w.title = if title.is_empty() {
+                w.id.clone()
+            } else {
+                title.chars().take(48).collect()
+            };
         }
     }
 
@@ -1390,7 +1408,7 @@ mod tests {
 
     #[test]
     fn unknown_page_and_widget_style_are_clamped_not_a_full_reset() {
-        let raw = r#"{"version":1,"page":{"density":"neon","cards":"glass","accent":"teal"},"widgets":[{"id":"cpu","kind":"gauge","title":"CPU","span":1,"metrics":["node_cpu_usage_ratio"],"style":"neon"}]}"#;
+        let raw = r#"{"version":1,"page":{"density":"neon","cards":"glass","accent":"teal","empty":"drop"},"widgets":[{"id":"cpu","kind":"gauge","title":"CPU","span":1,"metrics":["node_cpu_usage_ratio"],"style":"neon"}]}"#;
         let d = Dashboard::parse_or_default(Some(raw));
         assert_eq!(d.widgets.len(), 1);
         assert_eq!(d.widgets[0].id, "cpu");
@@ -1398,6 +1416,26 @@ mod tests {
         assert!(d.widgets[0].style.is_empty());
         let cards = hydrate(&d, &[], &HashMap::new(), &NodeSettings::default());
         assert_eq!(cards[0].style, "donut");
+    }
+
+    #[test]
+    fn blank_title_normalizes_to_id() {
+        let mut dash = Dashboard {
+            version: 1,
+            page: PageStyle::default(),
+            widgets: vec![WidgetInstance::new(
+                "cpu",
+                WidgetKind::Gauge,
+                "   ",
+                ["node_cpu_usage_ratio"],
+            )],
+        };
+        dash.normalize();
+        dash.validate().unwrap();
+        assert_eq!(dash.widgets[0].title, "cpu");
+        dash.widgets[0].title = "n".repeat(60);
+        dash.normalize();
+        assert_eq!(dash.widgets[0].title.chars().count(), 48);
     }
 
     #[test]
@@ -1412,6 +1450,7 @@ mod tests {
                 density: "compact".into(),
                 cards: "raised".into(),
                 accent: "green".into(),
+                empty: "hide".into(),
             },
             widgets: vec![gauge, spark],
         };
@@ -1423,6 +1462,7 @@ mod tests {
         assert_eq!(json["page"]["density"], "compact");
         assert_eq!(json["page"]["cards"], "raised");
         assert_eq!(json["page"]["accent"], "green");
+        assert_eq!(json["page"]["empty"], "hide");
         assert_eq!(json["widgets"][0]["style"], "bar");
         assert_eq!(json["widgets"][1]["style"], "area");
     }

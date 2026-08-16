@@ -2715,7 +2715,10 @@ mod tests {
         assert!(js.contains("density-") && js.contains("cards-") && js.contains("accent-"));
         assert!(js.contains("gauge-bar"), "gauge bar style");
         assert!(js.contains("spark-fill"), "sparkline area fill");
-        assert!(js.contains("styleChoices"));
+        assert!(js.contains("function widgetIsEmpty"), "hide empty cards");
+        assert!(js.contains("Card title"), "rename cards while customizing");
+        assert!(js.contains("Hide empty"));
+        assert!(js.contains("maxLength = 48"));
         let css = include_str!("static/app.css");
         assert!(css.contains(".widget-grid.density-compact"));
         assert!(css.contains(".widget-grid.density-spacious"));

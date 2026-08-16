@@ -71,10 +71,11 @@ is deleted and a new session id is issued.
 | DELETE | `/api/v1/nodes/{id}/dashboard` | Clear custom layout; 204. |
 
 `source` is `default` or `custom`. Optional `layout.page` (`density`,
-`cards`, `accent`) and per-widget `style` are clamped on read/save so
-unknown values do not drop a custom layout. `app.js` PUTs the layout from
-Customize and polls GET at `data-poll-secs`. The Containers tab polls
-`container-usage` at the same interval while that panel is visible.
+`cards`, `accent`, `empty`) and per-widget `style` / `title` are clamped
+on read/save so unknown values do not drop a custom layout. `app.js` PUTs
+the layout from Customize and polls GET at `data-poll-secs`. The
+Containers tab polls `container-usage` at the same interval while that
+panel is visible.
 
 There is no generated OpenAPI dump. Keep this chapter in sync when you add
 routes; do not hang utoipa on handlers just for docs.

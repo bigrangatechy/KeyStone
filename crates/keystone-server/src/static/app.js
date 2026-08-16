@@ -1099,15 +1099,20 @@
     return [];
   }
 
+  function widgetIsEmpty(w) {
+    if (w.kind === "gauge") return w.ratio == null;
+    if (w.kind === "bar_list") return !(w.rows && w.rows.length);
+    if (w.kind === "sparkline") return w.display === "—" && !(w.spark && w.spark.length);
+    return w.display === "—";
+  }
+
   function renderWidget(w) {
     const style = widgetStyle(w.kind, w.style);
     const card = el("article", "widget span-" + (w.span || 1) + " style-" + style + (w.tone ? " tone-" + w.tone : ""));
     card.appendChild(el("h3", null, w.title || w.id));
-    const empty = w.display === "—" && !(w.rows && w.rows.length) && !(w.spark && w.spark.length);
-    if (empty) card.classList.add("empty");
+    if (widgetIsEmpty(w)) card.classList.add("empty");
     if (w.kind === "gauge") {
       if (w.ratio == null) {
-        card.classList.add("empty");
         card.appendChild(el("div", "stat", "—"));
       } else if (style === "bar") {
         const wrap = el("div", "gauge-bar-wrap");
@@ -1188,7 +1193,8 @@
       return {
         density: clampChoice(p.density, ["compact", "comfortable", "spacious"], "comfortable"),
         cards: clampChoice(p.cards, ["bordered", "flush", "raised"], "bordered"),
-        accent: clampChoice(p.accent, ["blue", "green", "amber", "rose"], "blue")
+        accent: clampChoice(p.accent, ["blue", "green", "amber", "rose"], "blue"),
+        empty: clampChoice(p.empty, ["show", "hide"], "show")
       };
     }
 
@@ -1216,6 +1222,7 @@
       if (!items.length) {
         grid.appendChild(el("p", "muted", "No widgets yet. Use Customize to add some."));
       }
+      let shown = 0;
       items.forEach((spec, idx) => {
         const h = Object.assign({
           id: spec.id,
@@ -1232,14 +1239,19 @@
         h.span = spec.span;
         h.kind = spec.kind;
         h.style = spec.style || h.style || "";
+        if (!editing && page.empty === "hide" && widgetIsEmpty(h)) return;
+        shown += 1;
         const card = renderWidget(h);
         if (editing) {
           card.classList.add("editing");
-          card.insertBefore(editChrome(idx), card.firstChild);
+          card.insertBefore(editChrome(idx, card), card.firstChild);
           bindDrag(card, idx);
         }
         grid.appendChild(card);
       });
+      if (items.length && !shown) {
+        grid.appendChild(el("p", "muted", "No widgets with data yet. Empty cards are hidden."));
+      }
       widgetsHost.replaceChildren(grid);
     }
 
@@ -1265,7 +1277,7 @@
         if (!Number.isFinite(from)) return;
         moveWidgetTo(from, idx);
       });
-      card.querySelectorAll("button, select").forEach((b) => {
+      card.querySelectorAll("button, select, input").forEach((b) => {
         b.addEventListener("mousedown", (ev) => ev.stopPropagation());
         b.addEventListener("dragstart", (ev) => ev.preventDefault());
       });
@@ -1282,7 +1294,7 @@
       paintAll();
     }
 
-    function editChrome(idx) {
+    function editChrome(idx, card) {
       const row = el("div", "widget-edit");
       const n = layout.widgets.length;
       const span = Number(layout.widgets[idx].span) || 1;
@@ -1290,6 +1302,21 @@
       grip.title = "Drag to move";
       grip.setAttribute("aria-hidden", "true");
       row.appendChild(grip);
+      const titleIn = document.createElement("input");
+      titleIn.type = "text";
+      titleIn.value = layout.widgets[idx].title || "";
+      titleIn.maxLength = 48;
+      titleIn.setAttribute("aria-label", "Card title");
+      titleIn.addEventListener("input", () => {
+        const v = titleIn.value.trim();
+        layout.widgets[idx].title = v || layout.widgets[idx].id;
+        const h3 = card.querySelector("h3");
+        if (h3) h3.textContent = layout.widgets[idx].title;
+      });
+      titleIn.addEventListener("change", () => {
+        if (!titleIn.value.trim()) titleIn.value = layout.widgets[idx].title;
+      });
+      row.appendChild(titleIn);
       function addBtn(label, fn, disabled) {
         const b = el("button", null, label);
         b.type = "button";
@@ -1404,7 +1431,8 @@
       addPageSelect("density", "Density", [["compact", "Compact"], ["comfortable", "Comfortable"], ["spacious", "Spacious"]], page.density);
       addPageSelect("cards", "Cards", [["bordered", "Bordered"], ["flush", "Flush"], ["raised", "Raised"]], page.cards);
       addPageSelect("accent", "Accent", [["blue", "Blue"], ["green", "Green"], ["amber", "Amber"], ["rose", "Rose"]], page.accent);
-      toolbar.appendChild(el("span", "muted", "Drag cards to place them. +/− changes width. Style is per card."));
+      addPageSelect("empty", "Empty cards", [["show", "Show empty"], ["hide", "Hide empty"]], page.empty);
+      toolbar.appendChild(el("span", "muted", "Drag cards to place them. +/− changes width. Rename and style are per card."));
       const save = el("button", null, "Save");
       save.type = "button";
       save.addEventListener("click", saveLayout);

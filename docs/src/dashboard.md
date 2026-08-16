@@ -50,11 +50,15 @@ Use **Customize** on the Overview toolbar.
   you already saved stay until you reset or remove them.
 
 While Customize is open, the toolbar also has **density** (compact /
-comfortable / spacious), **cards** (bordered / flush / raised), and
-**accent** (blue / green / amber / rose). Those apply to this node’s
-Overview grid only — the site header stays the usual blue.
+comfortable / spacious), **cards** (bordered / flush / raised),
+**accent** (blue / green / amber / rose), and **empty cards** (show or
+hide). Those apply to this node’s Overview grid only — the site header
+stays the usual blue. Hide empty is useful on a VM with no GPU or hwmon:
+the default layout still includes those cards, but they stay off the
+board until samples exist. Customize always shows them so you can remove
+or restyle them.
 
-Each card has a **style** menu:
+Each card has a **title** field (rename it) and a **style** menu:
 
 - Gauge: donut (default) or horizontal bar
 - Sparkline: line (default) or filled area
