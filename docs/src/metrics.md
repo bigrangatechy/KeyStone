@@ -46,7 +46,8 @@ exist. See [Dashboards](dashboard.md).
 ## Containers
 
 Pushed only when **Observe Docker** is on. These are coarse background
-gauges (not the live stats stream on the Containers tab).
+gauges. The Containers tab polls the same samples; it does not open a
+live Engine `stats` stream.
 
 | Name | Labels |
 |---|---|

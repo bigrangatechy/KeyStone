@@ -133,10 +133,19 @@ impl DockerOp {
     }
 }
 
-/// Join background container series onto a `container_list` row by short `id`.
-pub fn merge_container_usage(list: &mut [serde_json::Value], samples: &[crate::Sample]) {
-    let mut cpu = std::collections::HashMap::<String, f64>::new();
-    let mut mem = std::collections::HashMap::<String, f64>::new();
+/// CPU/memory from pushed container series, keyed by short container `id`.
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+pub struct ContainerUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<f64>,
+}
+
+pub fn container_usage_by_id(
+    samples: &[crate::Sample],
+) -> std::collections::BTreeMap<String, ContainerUsage> {
+    let mut out = std::collections::BTreeMap::<String, ContainerUsage>::new();
     for s in samples {
         let Some(id) = s
             .labels
@@ -146,25 +155,31 @@ pub fn merge_container_usage(list: &mut [serde_json::Value], samples: &[crate::S
         else {
             continue;
         };
+        let row = out.entry(id.to_string()).or_default();
         match s.metric.as_str() {
-            "container_cpu_usage_ratio" => {
-                cpu.insert(id.to_string(), s.value);
-            }
-            "container_memory_usage_bytes" => {
-                mem.insert(id.to_string(), s.value);
-            }
+            "container_cpu_usage_ratio" => row.cpu_ratio = Some(s.value),
+            "container_memory_usage_bytes" => row.memory_bytes = Some(s.value),
             _ => {}
         }
     }
+    out.retain(|_, u| u.cpu_ratio.is_some() || u.memory_bytes.is_some());
+    out
+}
+
+/// Join background container series onto a `container_list` row by short `id`.
+pub fn merge_container_usage(list: &mut [serde_json::Value], samples: &[crate::Sample]) {
+    let usage = container_usage_by_id(samples);
     for row in list {
         let Some(id) = row.get("id").and_then(|v| v.as_str()).map(str::to_string) else {
             continue;
         };
-        if let Some(v) = cpu.get(&id) {
-            row["cpu_ratio"] = serde_json::json!(v);
-        }
-        if let Some(v) = mem.get(&id) {
-            row["memory_bytes"] = serde_json::json!(v);
+        if let Some(u) = usage.get(&id) {
+            if let Some(v) = u.cpu_ratio {
+                row["cpu_ratio"] = serde_json::json!(v);
+            }
+            if let Some(v) = u.memory_bytes {
+                row["memory_bytes"] = serde_json::json!(v);
+            }
         }
     }
 }
@@ -208,5 +223,11 @@ mod tests {
         assert_eq!(list[0]["memory_bytes"], 64.0 * 1024.0 * 1024.0);
         assert!(list[1].get("cpu_ratio").is_none());
         assert!(list[1].get("memory_bytes").is_none());
+        let map = container_usage_by_id(&samples);
+        assert_eq!(
+            map.get("abc123def456").and_then(|u| u.cpu_ratio),
+            Some(0.25)
+        );
+        assert!(!map.contains_key("other0000000"));
     }
 }

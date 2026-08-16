@@ -177,6 +177,12 @@
     return n;
   }
 
+  function tdUsage(kind, text) {
+    const n = tdText(text);
+    n.className = "usage-" + kind;
+    return n;
+  }
+
   function tdCode(text) {
     const n = document.createElement("td");
     const c = document.createElement("code");
@@ -363,6 +369,7 @@
         const tr = document.createElement("tr");
         const name = (c.names && c.names[0]) ? c.names[0].replace(/^\//, "") : (c.id || "");
         const id = c.id_full || c.id || "";
+        if (c.id) tr.setAttribute("data-id", c.id);
         const nameTd = document.createElement("td");
         nameTd.appendChild(document.createTextNode(name));
         nameTd.appendChild(document.createElement("br"));
@@ -371,8 +378,8 @@
         nameTd.appendChild(code);
         tr.appendChild(nameTd);
         tr.appendChild(tdText(c.image || ""));
-        tr.appendChild(tdText(formatCpuRatio(c.cpu_ratio)));
-        tr.appendChild(tdText(c.memory_bytes == null ? "—" : (formatBytes(c.memory_bytes) || "—")));
+        tr.appendChild(tdUsage("cpu", formatCpuRatio(c.cpu_ratio)));
+        tr.appendChild(tdUsage("mem", c.memory_bytes == null ? "—" : (formatBytes(c.memory_bytes) || "—")));
         tr.appendChild(stateCell(c.state, c.status));
         tr.appendChild(tdText(c.compose_project || ""));
         const acts = [];
@@ -388,6 +395,50 @@
     }
     table.appendChild(body);
     containers.replaceChildren(table);
+
+    function applyContainerUsage(map) {
+      if (!map || typeof map !== "object") return;
+      containers.querySelectorAll("tr[data-id]").forEach((tr) => {
+        const u = map[tr.getAttribute("data-id")];
+        if (!u) return;
+        const cpu = tr.querySelector(".usage-cpu");
+        const mem = tr.querySelector(".usage-mem");
+        if (cpu && u.cpu_ratio != null) cpu.textContent = formatCpuRatio(u.cpu_ratio);
+        if (mem && u.memory_bytes != null) mem.textContent = formatBytes(u.memory_bytes) || "—";
+      });
+    }
+
+    function containersVisible() {
+      const panel = containers.closest("[data-panel]");
+      return !document.hidden && (!panel || panel.classList.contains("active"));
+    }
+
+    async function refreshUsage() {
+      if (!containersVisible()) return;
+      try {
+        const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/container-usage");
+        if (r.status === 401 || r.status === 403) return "auth";
+        if (!r.ok) return;
+        applyContainerUsage(await r.json());
+      } catch (e) {}
+    }
+
+    const pollSecs = Math.max(1, Math.min(60, Number(containers.getAttribute("data-poll-secs") || 1) || 1));
+    let usageInflight = false;
+    const usageTimer = setInterval(async () => {
+      if (usageInflight) return;
+      usageInflight = true;
+      try {
+        const status = await refreshUsage();
+        if (status === "auth") clearInterval(usageTimer);
+      } finally {
+        usageInflight = false;
+      }
+    }, pollSecs * 1000);
+    document.querySelectorAll('[data-tab="containers"]').forEach((btn) => {
+      btn.addEventListener("click", () => { refreshUsage(); });
+    });
+    refreshUsage();
   }
 
   const compose = document.getElementById("compose");

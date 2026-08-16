@@ -64,7 +64,7 @@ priority = "optional"
 # engine socket; agents talk to Docker locally. An Engine package upgrade
 # would bounce containers — KeyStone must not pull that in.
 depends = "$auto, adduser"
-revision = "7"
+revision = "8"
 license-file = ["../../COPYING", "0"]
 extended-description = """KeyStone server (the UI) for Debian and Raspberry Pi OS (64-bit).
 Central ingest, Prometheus/SNMP scrape, per-node dashboard, and operator /help.

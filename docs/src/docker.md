@@ -49,9 +49,10 @@ showing stale lists. Manage buttons and pull/create toolbars are hidden
 when mutations are off.
 
 - **Containers** — name, image, CPU, memory, state, Compose project. CPU and
-  memory come from the same background samples as Overview (refresh the
-  page). **Logs** opens a follow view (last 200 lines, then live). With
-  Manage: start / stop / restart / kill / remove.
+  memory come from the same background samples as Overview and update at
+  that node’s poll interval while the tab is open (not a live Engine
+  `stats` stream). **Logs** opens a follow view (last 200 lines, then live).
+  With Manage: start / stop / restart / kill / remove.
 - **Compose** — projects discovered from `com.docker.compose.project`
   labels, with a service table per project. **Logs** follows
   `docker compose logs`. With Manage: up / down / pull / **Update** (pull

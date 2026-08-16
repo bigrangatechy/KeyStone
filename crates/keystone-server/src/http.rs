@@ -109,6 +109,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/dockerhub/tags", get(crate::dockerhub::tags))
         .route("/api/v1/nodes/{id}/sys/updates", get(sys_updates_api))
         .route(
+            "/api/v1/nodes/{id}/container-usage",
+            get(container_usage_api),
+        )
+        .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
                 .put(dashboard_put)
@@ -1684,6 +1688,14 @@ fn attach_container_usage(state: &AppState, node_id: &str, raw: String) -> Strin
     serde_json::to_string(&rows).unwrap_or(raw)
 }
 
+async fn container_usage_api(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    let samples = state.stores.series.latest_samples(&id).unwrap_or_default();
+    Json(keystone_core::container_usage_by_id(&samples)).into_response()
+}
+
 async fn call_json_op(
     state: &AppState,
     node_id: &str,
@@ -2439,6 +2451,13 @@ mod tests {
             !head[authed_end..].contains("/api/v1/dockerhub"),
             "Hub lookup must not be on the public router"
         );
+        let usage = head
+            .find("/api/v1/nodes/{id}/container-usage")
+            .expect("container usage API");
+        assert!(
+            usage < authed_end,
+            "container usage must require a UI session"
+        );
     }
 
     #[test]
@@ -2518,6 +2537,10 @@ mod tests {
         assert!(
             js.contains("formatCpuRatio") && js.contains("CPU"),
             "Containers tab must show per-container CPU from pushed samples"
+        );
+        assert!(
+            js.contains("container-usage"),
+            "Containers tab must poll /api/v1/nodes/{{id}}/container-usage"
         );
         let css = include_str!("static/app.css");
         assert!(

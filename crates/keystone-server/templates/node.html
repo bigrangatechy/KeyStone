@@ -49,7 +49,7 @@
 
 <section class="tab-panel" data-panel="containers">
   <h2>Containers</h2>
-  <div id="containers" data-json="{{ containers_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
+  <div id="containers" data-json="{{ containers_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}" data-poll-secs="{{ poll_secs }}"></div>
 </section>
 <section class="tab-panel" data-panel="compose">
   <h2>Compose</h2>

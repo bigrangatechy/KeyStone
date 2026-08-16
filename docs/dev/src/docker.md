@@ -54,7 +54,8 @@ List payloads the UI tables expect:
 
 - containers: `[{id, id_full, names, image, state, status, compose_project, cpu_ratio?, memory_bytes?}]`
   (`cpu_ratio` / `memory_bytes` are joined from pushed
-  `container_cpu_usage_ratio` / `container_memory_usage_bytes`, not a live
+  `container_cpu_usage_ratio` / `container_memory_usage_bytes` at page load;
+  the tab then polls `GET /api/v1/nodes/{id}/container-usage`. Not a live
   `container_stats` stream)
 - compose ps: `{ "<project>": [{id, id_short, name, image, state, status, service}] }`
 - images: `[{id, id_short, tags, size}]`
