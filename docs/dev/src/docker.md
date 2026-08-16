@@ -39,6 +39,13 @@ Observe is off. The agent gates still apply.
 sends `StreamChunk` (`data`, then `eof`) followed by `CommandResult`.
 `op == "cancel"` with `{"request_id":"..."}` aborts the task.
 
+Non-streaming Docker and System RPCs (`container_list`, `status`, …) are
+also spawned off the ingest `select!` loop. Awaiting them there meant the
+agent stopped reading Commands while one list (or a hung helper) ran, so
+the node page hit **Docker: agent command timed out**. Host collect and
+per-container `stats` stay off that loop too; `stats` runs in parallel
+with a short cap so it cannot monopolise `docker.sock`.
+
 HTTP:
 
 - `GET /nodes/{id}/containers/{cid}/logs` — HTML follow page

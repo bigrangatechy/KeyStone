@@ -20,8 +20,9 @@ helper binary is `/usr/lib/keystone/keystone-sys` (root, no `sh -c`, no
 setuid).
 
 `NodeSettings.sys_enabled` / `sys_manage` are pushed in `set_runtime`.
-The agent refuses mutating `SysOp` unless manage is on. Tests must not
-run live `apt-get`.
+The agent refuses mutating `SysOp` unless manage is on. Helper RPCs have a
+read deadline (`status` 5s) so a stuck socket cannot block Docker Commands
+on the ingest loop. Tests must not run live `apt-get`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|

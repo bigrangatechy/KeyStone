@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::default::Default;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{anyhow, Context};
 use bollard::container::{
@@ -15,6 +16,7 @@ use bollard::image::{ListImagesOptions, PruneImagesOptions, RemoveImageOptions};
 use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
 use bollard::Docker;
+use futures_util::future::join_all;
 use futures_util::StreamExt;
 use keystone_core::config::DockerConfig;
 use keystone_core::docker::DockerOp;
@@ -76,6 +78,7 @@ impl DockerHandle {
         else {
             return out;
         };
+        let mut running = Vec::new();
         for c in list {
             let id = c.id.clone().unwrap_or_default();
             let short = id.chars().take(12).collect::<String>();
@@ -94,39 +97,18 @@ impl DockerHandle {
                 .and_then(|l| l.get("com.docker.compose.project"))
                 .cloned()
                 .unwrap_or_default();
-            let running = c.state.as_deref() == Some("running");
+            let is_running = c.state.as_deref() == Some("running");
             out.push(
-                Sample::new("container_running", if running { 1.0 } else { 0.0 }, ts)
+                Sample::new("container_running", if is_running { 1.0 } else { 0.0 }, ts)
                     .with_label("id", &short)
                     .with_label("name", &name)
                     .with_label("compose_project", &project),
             );
-            if running {
-                let mut stream = self.docker.stats(
-                    &id,
-                    Some(StatsOptions {
-                        stream: false,
-                        one_shot: true,
-                    }),
-                );
-                if let Some(Ok(s)) = stream.next().await {
-                    let mem = s.memory_stats.usage.unwrap_or(0) as f64;
-                    out.push(
-                        Sample::new("container_memory_usage_bytes", mem, ts)
-                            .with_label("id", &short)
-                            .with_label("name", &name)
-                            .with_label("compose_project", &project),
-                    );
-                    let cpu = cpu_ratio(&s);
-                    out.push(
-                        Sample::new("container_cpu_usage_ratio", cpu, ts)
-                            .with_label("id", &short)
-                            .with_label("name", &name)
-                            .with_label("compose_project", &project),
-                    );
-                }
+            if is_running {
+                running.push((id, short, name, project));
             }
         }
+        out.extend(stats_samples(&self.docker, running, ts).await);
         out
     }
 
@@ -630,6 +612,47 @@ fn follow_arg(payload: &Value) -> bool {
         .unwrap_or(true)
 }
 
+/// One-shot Engine stats wait ~1s per container if done in series, which
+/// starves `container_list` on the same socket. Run them together and cap
+/// the wait so a push tick cannot eat the node-page RPC budget.
+async fn stats_samples(
+    docker: &Docker,
+    running: Vec<(String, String, String, String)>,
+    ts: i64,
+) -> Vec<Sample> {
+    let futs = running.into_iter().map(|(id, short, name, project)| {
+        let docker = docker.clone();
+        async move {
+            let mut stream = docker.stats(
+                &id,
+                Some(StatsOptions {
+                    stream: false,
+                    one_shot: true,
+                }),
+            );
+            let s = match tokio::time::timeout(Duration::from_secs(2), stream.next()).await {
+                Ok(Some(Ok(s))) => s,
+                _ => return Vec::new(),
+            };
+            let mem = s.memory_stats.usage.unwrap_or(0) as f64;
+            vec![
+                Sample::new("container_memory_usage_bytes", mem, ts)
+                    .with_label("id", &short)
+                    .with_label("name", &name)
+                    .with_label("compose_project", &project),
+                Sample::new("container_cpu_usage_ratio", cpu_ratio(&s), ts)
+                    .with_label("id", &short)
+                    .with_label("name", &name)
+                    .with_label("compose_project", &project),
+            ]
+        }
+    });
+    match tokio::time::timeout(Duration::from_secs(3), join_all(futs)).await {
+        Ok(parts) => parts.into_iter().flatten().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 fn cpu_ratio(stats: &bollard::container::Stats) -> f64 {
     let cpu = stats.cpu_stats.cpu_usage.total_usage;
     let precpu = stats.precpu_stats.cpu_usage.total_usage;
@@ -679,6 +702,23 @@ mod tests {
         assert!(!DockerOp::ContainerList.streams());
         assert!(!DockerOp::ComposeUp.streams());
         assert!(!DockerOp::ComposeUpdate.streams());
+    }
+
+    #[test]
+    fn container_stats_collect_is_bounded_and_parallel() {
+        let src = include_str!("docker.rs");
+        let fn_src = src
+            .split("async fn stats_samples")
+            .nth(1)
+            .expect("stats_samples");
+        assert!(
+            fn_src.contains("join_all"),
+            "one-shot stats must not run one container after another"
+        );
+        assert!(
+            fn_src.contains("timeout"),
+            "stats collect must not wait forever on docker.sock"
+        );
     }
 
     #[test]

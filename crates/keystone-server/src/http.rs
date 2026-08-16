@@ -1471,50 +1471,19 @@ async fn node_page(
         .collect();
     let connected = state.agents.is_connected(&id);
     let settings = node_settings(&state, &id);
-    let mut docker_error = String::new();
-    let mut docker_reason = String::new();
-    let mut containers_json = "[]".into();
-    let mut compose_json = "{}".into();
-    let mut images_json = "[]".into();
-    let mut volumes_json = "[]".into();
-    let mut networks_json = "[]".into();
-    let mut sys_error = String::new();
-    let mut sys_reason = String::new();
-    let mut sys_json = "{}".into();
-    if !connected {
-        sys_reason = "offline".into();
-    } else if !settings.sys_enabled {
-        sys_reason = "disabled".into();
-    } else {
-        match call_json_op_timeout(
-            &state,
-            &id,
-            SysOp::Status.as_str(),
-            "{}",
-            crate::state::PAGE_LIST_TIMEOUT,
-        )
-        .await
-        {
-            Ok(body) => sys_json = body,
-            Err(e) => sys_error = e.to_string(),
-        }
-    }
-    if !connected {
-        docker_reason = "offline".into();
-    } else if !settings.docker_enabled {
-        docker_reason = "disabled".into();
-    } else {
-        match fetch_docker_bundle(&state, &id).await {
-            Ok(bundle) => {
-                containers_json = bundle.0;
-                compose_json = bundle.1;
-                images_json = bundle.2;
-                volumes_json = bundle.3;
-                networks_json = bundle.4;
-            }
-            Err(e) => docker_error = e.to_string(),
-        }
-    }
+    let sys_task = load_sys_tab(&state, &id, connected, settings.sys_enabled);
+    let docker_task = load_docker_tabs(&state, &id, connected, settings.docker_enabled);
+    let (sys_tab, docker_tab) = tokio::join!(sys_task, docker_task);
+    let sys_reason = sys_tab.0;
+    let sys_error = sys_tab.1;
+    let sys_json = sys_tab.2;
+    let docker_reason = docker_tab.0;
+    let docker_error = docker_tab.1;
+    let containers_json = docker_tab.2;
+    let compose_json = docker_tab.3;
+    let images_json = docker_tab.4;
+    let volumes_json = docker_tab.5;
+    let networks_json = docker_tab.6;
     let awaiting = node.awaiting_agent();
     let last_seen = if awaiting {
         "never".into()
@@ -1650,10 +1619,77 @@ async fn node_settings_post(
     Redirect::to(&format!("/nodes/{id}?saved=1&panel=settings")).into_response()
 }
 
+async fn load_sys_tab(
+    state: &AppState,
+    id: &str,
+    connected: bool,
+    enabled: bool,
+) -> (String, String, String) {
+    if !connected {
+        return ("offline".into(), String::new(), "{}".into());
+    }
+    if !enabled {
+        return ("disabled".into(), String::new(), "{}".into());
+    }
+    match call_json_op_timeout(
+        state,
+        id,
+        SysOp::Status.as_str(),
+        "{}",
+        crate::state::PAGE_LIST_TIMEOUT,
+    )
+    .await
+    {
+        Ok(body) => (String::new(), String::new(), body),
+        Err(e) => (String::new(), e.to_string(), "{}".into()),
+    }
+}
+
+async fn load_docker_tabs(
+    state: &AppState,
+    id: &str,
+    connected: bool,
+    enabled: bool,
+) -> (String, String, String, String, String, String, String) {
+    if !connected {
+        return (
+            "offline".into(),
+            String::new(),
+            "[]".into(),
+            "{}".into(),
+            "[]".into(),
+            "[]".into(),
+            "[]".into(),
+        );
+    }
+    if !enabled {
+        return (
+            "disabled".into(),
+            String::new(),
+            "[]".into(),
+            "{}".into(),
+            "[]".into(),
+            "[]".into(),
+            "[]".into(),
+        );
+    }
+    let (containers_json, compose_json, images_json, volumes_json, networks_json, docker_error) =
+        fetch_docker_bundle(state, id).await;
+    (
+        String::new(),
+        docker_error,
+        containers_json,
+        compose_json,
+        images_json,
+        volumes_json,
+        networks_json,
+    )
+}
+
 async fn fetch_docker_bundle(
     state: &AppState,
     id: &str,
-) -> anyhow::Result<(String, String, String, String, String)> {
+) -> (String, String, String, String, String, String) {
     let timeout = crate::state::PAGE_LIST_TIMEOUT;
     let (c, p, i, v, n) = tokio::join!(
         call_json_op_timeout(state, id, DockerOp::ContainerList.as_str(), "{}", timeout),
@@ -1662,17 +1698,18 @@ async fn fetch_docker_bundle(
         call_json_op_timeout(state, id, DockerOp::VolumeList.as_str(), "{}", timeout),
         call_json_op_timeout(state, id, DockerOp::NetworkList.as_str(), "{}", timeout),
     );
-    let c = match c {
-        Ok(body) => attach_container_usage(state, id, body),
-        Err(e) => return Err(e),
+    let (containers_json, docker_error) = match c {
+        Ok(body) => (attach_container_usage(state, id, body), String::new()),
+        Err(e) => ("[]".into(), e.to_string()),
     };
-    Ok((
-        c,
+    (
+        containers_json,
         p.unwrap_or_else(|_| "{}".into()),
         i.unwrap_or_else(|_| "[]".into()),
         v.unwrap_or_else(|_| "[]".into()),
         n.unwrap_or_else(|_| "[]".into()),
-    ))
+        docker_error,
+    )
 }
 
 fn attach_container_usage(state: &AppState, node_id: &str, raw: String) -> String {
@@ -2546,6 +2583,26 @@ mod tests {
         assert!(
             css.contains("select"),
             "System IPv4 <select> must share the dark input style"
+        );
+    }
+
+    #[test]
+    fn node_page_does_not_wait_for_sys_before_docker() {
+        let src = include_str!("http.rs");
+        let page = src
+            .split("async fn node_page")
+            .nth(1)
+            .expect("node_page")
+            .split("async fn node_settings_post")
+            .next()
+            .expect("node_page body");
+        assert!(
+            page.contains("tokio::join!"),
+            "sys status must not delay Docker lists on the node page"
+        );
+        assert!(
+            page.contains("load_docker_tabs") && page.contains("load_sys_tab"),
+            "Docker and System tabs must load together"
         );
     }
 

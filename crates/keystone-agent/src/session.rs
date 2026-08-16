@@ -313,20 +313,17 @@ async fn connect_session(
                             );
                             continue;
                         }
-                        let body = match handle_command(&runtime, &cmd.op, &cmd.payload_json).await {
-                            Ok(payload) => CommandResult {
-                                request_id: cmd.request_id,
-                                ok: true,
-                                payload_json: payload.to_string(),
-                                error: String::new(),
-                            },
-                            Err(e) => command_err(cmd.request_id, e),
-                        };
-                        if tx.send(AgentToServer {
-                            body: Some(agent_to_server::Body::Result(body)),
-                        }).await.is_err() {
-                            break;
-                        }
+                        // Docker list / sys status must not sit on this
+                        // select. The node page fires several RPCs at once;
+                        // awaiting one here means the rest sit unread until
+                        // the 8s server timeout.
+                        spawn_rpc_command(
+                            runtime.clone(),
+                            tx.clone(),
+                            cmd.request_id,
+                            cmd.op,
+                            cmd.payload_json,
+                        );
                     }
                     Ok(Some(_)) | Ok(None) => break,
                     Err(e) => {
@@ -354,6 +351,31 @@ fn cancel_target(payload_json: &str) -> String {
         .ok()
         .and_then(|v| v.get("request_id")?.as_str().map(str::to_string))
         .unwrap_or_default()
+}
+
+fn spawn_rpc_command(
+    runtime: Arc<AgentRuntimeState>,
+    tx: mpsc::Sender<AgentToServer>,
+    request_id: String,
+    op: String,
+    payload_json: String,
+) {
+    tokio::spawn(async move {
+        let body = match handle_command(&runtime, &op, &payload_json).await {
+            Ok(payload) => CommandResult {
+                request_id: request_id.clone(),
+                ok: true,
+                payload_json: payload.to_string(),
+                error: String::new(),
+            },
+            Err(e) => command_err(request_id, e),
+        };
+        let _ = tx
+            .send(AgentToServer {
+                body: Some(agent_to_server::Body::Result(body)),
+            })
+            .await;
+    });
 }
 
 fn spawn_streaming_command(
@@ -565,8 +587,8 @@ async fn handle_command(
     if let Ok(sys_op) = SysOp::from_str(op) {
         return handle_sys(runtime, sys_op, payload).await;
     }
-    let docker = runtime.docker.lock().await;
-    let Some(docker) = docker.as_ref() else {
+    let docker = runtime.docker.lock().await.clone();
+    let Some(docker) = docker else {
         anyhow::bail!("docker is not enabled on this agent");
     };
     let op = DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
@@ -782,6 +804,26 @@ mod tests {
         assert!(
             src.contains("compare_exchange"),
             "skip overlapping collect so Commands stay readable"
+        );
+    }
+
+    #[test]
+    fn rpc_execute_is_off_the_session_loop() {
+        let src = include_str!("session.rs");
+        let loop_src = src
+            .split("async fn connect_session")
+            .nth(1)
+            .expect("connect_session")
+            .split("fn command_err")
+            .next()
+            .expect("loop body");
+        assert!(
+            !loop_src.contains("handle_command("),
+            "Docker/System execute must not await on the ingest select loop"
+        );
+        assert!(
+            loop_src.contains("spawn_rpc_command("),
+            "non-streaming Commands must be spawned like logs"
         );
     }
 }

@@ -91,6 +91,9 @@ node can reach the registry.
 
 - Observe is off on that node.
 - The agent is not control-connected (see [Troubleshooting](troubleshooting.md)).
+- **Docker: agent command timed out** — ingest Docker RPC, not the System
+  helper. Restarting `keystone-sys.socket` does not fix it; upgrade/restart
+  `keystone-agent`.
 - The `keystone` user cannot open the socket (`Permission denied`).
 - Docker is not installed, or `docker.host` points at the wrong path.
 

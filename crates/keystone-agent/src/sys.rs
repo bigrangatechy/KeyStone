@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use keystone_core::sys::{parse_ip_addr_json, SysOp, SYS_SOCKET_PATH};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -22,7 +22,22 @@ pub fn socket_present() -> bool {
     std::path::Path::new(&socket_path()).exists()
 }
 
+fn call_budget(op: SysOp) -> Duration {
+    match op {
+        SysOp::Status => Duration::from_secs(5),
+        SysOp::NetSet => Duration::from_secs(20),
+        SysOp::UpdatesList | SysOp::UpdatesApply => Duration::from_secs(120),
+    }
+}
+
 pub async fn call(op: SysOp, payload: Value) -> anyhow::Result<Value> {
+    match timeout(call_budget(op), call_inner(op, payload)).await {
+        Ok(r) => r,
+        Err(_) => bail!("system helper timed out"),
+    }
+}
+
+async fn call_inner(op: SysOp, payload: Value) -> anyhow::Result<Value> {
     let mut stream = connect().await?;
     send_req(&mut stream, op, &payload).await?;
     let mut lines = BufReader::new(stream).lines();
@@ -163,5 +178,11 @@ mod tests {
         );
         assert!(err.contains("keystone-sys.socket"), "{err}");
         assert!(!err.contains("docker.sock"), "{err}");
+    }
+
+    #[test]
+    fn status_call_budget_is_shorter_than_node_page_timeout() {
+        assert!(call_budget(SysOp::Status) <= Duration::from_secs(8));
+        assert!(call_budget(SysOp::UpdatesList) >= Duration::from_secs(60));
     }
 }
