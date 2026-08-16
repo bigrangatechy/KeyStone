@@ -52,7 +52,10 @@ is a one-shot JSON GET, not wired in the UI.
 
 List payloads the UI tables expect:
 
-- containers: `[{id, id_full, names, image, state, status, compose_project}]`
+- containers: `[{id, id_full, names, image, state, status, compose_project, cpu_ratio?, memory_bytes?}]`
+  (`cpu_ratio` / `memory_bytes` are joined from pushed
+  `container_cpu_usage_ratio` / `container_memory_usage_bytes`, not a live
+  `container_stats` stream)
 - compose ps: `{ "<project>": [{id, id_short, name, image, state, status, service}] }`
 - images: `[{id, id_short, tags, size}]`
 - volumes: `[{name, driver, mountpoint}]`

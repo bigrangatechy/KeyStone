@@ -32,7 +32,7 @@ pub use config::{
     listen_bind_context, AgentConfig, DockerConfig, PrometheusScrape, ServerAuth, ServerConfig,
     SnmpScrape, TlsConfig,
 };
-pub use docker::DockerOp;
+pub use docker::{merge_container_usage, DockerOp};
 pub use dockerhub::{parse_search, parse_tags, pull_ref, search_url, tags_url, HubRepo, HubTag};
 pub use fleet::{fleet_chips, FleetChip};
 pub use mdns::{ingest_url_from_mdns, wants_mdns, MDNS_SERVICE_TYPE};

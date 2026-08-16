@@ -18,6 +18,10 @@ use crate::auth;
 
 pub type CommandTx = mpsc::Sender<Command>;
 
+/// Wait budget for Docker/System tables when rendering a node page.
+/// Pull/compose mutate still use 180s via [`AgentRegistry::call`].
+pub const PAGE_LIST_TIMEOUT: Duration = Duration::from_secs(8);
+
 pub struct Pending {
     pub tx: oneshot::Sender<keystone_proto::CommandResult>,
 }
@@ -25,28 +29,43 @@ pub struct Pending {
 #[derive(Clone, Default)]
 pub struct AgentRegistry {
     inner: Arc<Mutex<HashMap<String, ConnectedAgent>>>,
+    epoch: Arc<AtomicU64>,
 }
 
 struct ConnectedAgent {
+    gen: u64,
     cmd_tx: CommandTx,
     pending: HashMap<String, oneshot::Sender<keystone_proto::CommandResult>>,
     streams: HashMap<String, mpsc::Sender<StreamChunk>>,
 }
 
 impl AgentRegistry {
-    pub fn connect(&self, node_id: String, cmd_tx: CommandTx) {
+    /// Register a live command channel. Returns a generation that
+    /// [`disconnect`] must present so a replaced session cannot wipe the new one.
+    pub fn connect(&self, node_id: String, cmd_tx: CommandTx) -> u64 {
+        let gen = self.epoch.fetch_add(1, Ordering::Relaxed);
         self.inner.lock().insert(
             node_id,
             ConnectedAgent {
+                gen,
                 cmd_tx,
                 pending: HashMap::new(),
                 streams: HashMap::new(),
             },
         );
+        gen
     }
 
-    pub fn disconnect(&self, node_id: &str) {
-        self.inner.lock().remove(node_id);
+    /// Drop this session only. Returns true when this generation was still live.
+    pub fn disconnect(&self, node_id: &str, gen: u64) -> bool {
+        let mut inner = self.inner.lock();
+        match inner.get(node_id) {
+            Some(agent) if agent.gen == gen => {
+                inner.remove(node_id);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn is_connected(&self, node_id: &str) -> bool {
@@ -139,6 +158,19 @@ impl AgentRegistry {
         op: &str,
         payload_json: String,
     ) -> anyhow::Result<keystone_proto::CommandResult> {
+        self.call_timeout(node_id, op, payload_json, Duration::from_secs(180))
+            .await
+    }
+
+    /// Same as [`call`] with an explicit wait. Node page listings must not
+    /// use the 180s pull budget or opening a node hangs until restart.
+    pub async fn call_timeout(
+        &self,
+        node_id: &str,
+        op: &str,
+        payload_json: String,
+        timeout: Duration,
+    ) -> anyhow::Result<keystone_proto::CommandResult> {
         let request_id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
         let cmd = Command {
@@ -151,17 +183,81 @@ impl AgentRegistry {
             let agent = inner
                 .get_mut(node_id)
                 .ok_or_else(|| anyhow::anyhow!("agent {node_id} is not connected"))?;
-            agent.pending.insert(request_id, tx);
-            agent
-                .cmd_tx
-                .try_send(cmd)
-                .map_err(|_| anyhow::anyhow!("agent command queue full"))?;
+            agent.pending.insert(request_id.clone(), tx);
+            if agent.cmd_tx.try_send(cmd).is_err() {
+                agent.pending.remove(&request_id);
+                anyhow::bail!("agent command queue full");
+            }
         }
-        match tokio::time::timeout(Duration::from_secs(180), rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(_)) => anyhow::bail!("agent dropped command"),
-            Err(_) => anyhow::bail!("agent command timed out"),
+            Err(_) => {
+                if let Some(agent) = self.inner.lock().get_mut(node_id) {
+                    agent.pending.remove(&request_id);
+                }
+                anyhow::bail!("agent command timed out")
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn stale_disconnect_does_not_drop_the_live_session() {
+        let registry = AgentRegistry::default();
+        let (tx_old, mut rx_old) = mpsc::channel(4);
+        let (tx_live, mut rx_live) = mpsc::channel(4);
+        let old = registry.connect("ranga".into(), tx_old);
+        let live = registry.connect("ranga".into(), tx_live);
+        assert!(registry.is_connected("ranga"));
+        assert!(
+            !registry.disconnect("ranga", old),
+            "the replaced session must not clear the new command channel"
+        );
+        assert!(registry.is_connected("ranga"));
+        registry.nudge("ranga", "container_list", "{}".into());
+        assert!(
+            rx_live.try_recv().is_ok(),
+            "Docker ops must reach the live session"
+        );
+        assert!(
+            rx_old.try_recv().is_err(),
+            "replaced session must not still receive commands"
+        );
+        assert!(registry.disconnect("ranga", live));
+        assert!(!registry.is_connected("ranga"));
+    }
+
+    #[tokio::test]
+    async fn page_list_timeout_does_not_wait_for_image_pull() {
+        let registry = AgentRegistry::default();
+        let (tx, _rx) = mpsc::channel(4);
+        registry.connect("ranga".into(), tx);
+        let start = std::time::Instant::now();
+        let err = registry
+            .call_timeout(
+                "ranga",
+                "container_list",
+                "{}".into(),
+                Duration::from_millis(80),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "listing timeout must fail fast, waited {:?}",
+            start.elapsed()
+        );
+        assert!(err.contains("timed out"), "{err}");
+        assert!(
+            PAGE_LIST_TIMEOUT <= Duration::from_secs(15),
+            "node page must not use the 180s pull budget"
+        );
     }
 }
 

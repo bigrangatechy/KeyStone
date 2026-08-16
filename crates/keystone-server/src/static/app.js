@@ -210,6 +210,12 @@
     return (i === 0 ? String(Math.round(v)) : v.toFixed(1)) + " " + units[i];
   }
 
+  function formatCpuRatio(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return "—";
+    return Math.round(x * 100) + "%";
+  }
+
   const OP_LABELS = {
     container_start: "Start",
     container_stop: "Stop",
@@ -348,10 +354,10 @@
     const data = parse(containers);
     const node = containers.getAttribute("data-node");
     const table = document.createElement("table");
-    table.appendChild(thead(["Name", "Image", "State", "Project", ""]));
+    table.appendChild(thead(["Name", "Image", "CPU", "Memory", "State", "Project", ""]));
     const body = document.createElement("tbody");
     if (!Array.isArray(data) || !data.length) {
-      body.appendChild(emptyRow(5, "No containers."));
+      body.appendChild(emptyRow(7, "No containers."));
     } else {
       data.forEach((c) => {
         const tr = document.createElement("tr");
@@ -365,6 +371,8 @@
         nameTd.appendChild(code);
         tr.appendChild(nameTd);
         tr.appendChild(tdText(c.image || ""));
+        tr.appendChild(tdText(formatCpuRatio(c.cpu_ratio)));
+        tr.appendChild(tdText(c.memory_bytes == null ? "—" : (formatBytes(c.memory_bytes) || "—")));
         tr.appendChild(stateCell(c.state, c.status));
         tr.appendChild(tdText(c.compose_project || ""));
         const acts = [];

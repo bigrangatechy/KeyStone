@@ -133,6 +133,42 @@ impl DockerOp {
     }
 }
 
+/// Join background container series onto a `container_list` row by short `id`.
+pub fn merge_container_usage(list: &mut [serde_json::Value], samples: &[crate::Sample]) {
+    let mut cpu = std::collections::HashMap::<String, f64>::new();
+    let mut mem = std::collections::HashMap::<String, f64>::new();
+    for s in samples {
+        let Some(id) = s
+            .labels
+            .iter()
+            .find(|l| l.name == "id")
+            .map(|l| l.value.as_str())
+        else {
+            continue;
+        };
+        match s.metric.as_str() {
+            "container_cpu_usage_ratio" => {
+                cpu.insert(id.to_string(), s.value);
+            }
+            "container_memory_usage_bytes" => {
+                mem.insert(id.to_string(), s.value);
+            }
+            _ => {}
+        }
+    }
+    for row in list {
+        let Some(id) = row.get("id").and_then(|v| v.as_str()).map(str::to_string) else {
+            continue;
+        };
+        if let Some(v) = cpu.get(&id) {
+            row["cpu_ratio"] = serde_json::json!(v);
+        }
+        if let Some(v) = mem.get(&id) {
+            row["memory_bytes"] = serde_json::json!(v);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +186,27 @@ mod tests {
             DockerOp::ComposeUpdate.description(),
             "Compose pull then up"
         );
+    }
+
+    #[test]
+    fn merge_container_usage_matches_short_id_only() {
+        let samples = vec![
+            crate::Sample::new("container_cpu_usage_ratio", 0.25, 1)
+                .with_label("id", "abc123def456")
+                .with_label("name", "web"),
+            crate::Sample::new("container_memory_usage_bytes", 64.0 * 1024.0 * 1024.0, 1)
+                .with_label("id", "abc123def456")
+                .with_label("name", "web"),
+            crate::Sample::new("node_cpu_usage_ratio", 0.9, 1),
+        ];
+        let mut list = vec![
+            serde_json::json!({"id": "abc123def456", "names": ["/web"]}),
+            serde_json::json!({"id": "other0000000", "names": ["/db"]}),
+        ];
+        merge_container_usage(&mut list, &samples);
+        assert_eq!(list[0]["cpu_ratio"], 0.25);
+        assert_eq!(list[0]["memory_bytes"], 64.0 * 1024.0 * 1024.0);
+        assert!(list[1].get("cpu_ratio").is_none());
+        assert!(list[1].get("memory_bytes").is_none());
     }
 }

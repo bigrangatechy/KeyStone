@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,7 +72,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
     };
 
     let runtime = Arc::new(AgentRuntimeState::from_config(&cfg));
-    let buffer = DiskBuffer::new(&cfg.buffer_dir)?;
+    let buffer = Arc::new(DiskBuffer::new(&cfg.buffer_dir)?);
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     loop {
@@ -96,7 +97,7 @@ pub async fn run(cfg: AgentConfig) -> anyhow::Result<()> {
             &ingest_url,
             &node_id,
             runtime.clone(),
-            &buffer,
+            buffer.clone(),
             endpoint,
         )
         .await
@@ -142,12 +143,42 @@ fn ingest_endpoint(cfg: &AgentConfig, ingest_url: &str) -> anyhow::Result<Endpoi
     Ok(endpoint)
 }
 
+async fn push_tick(
+    cfg: &AgentConfig,
+    node_id: &str,
+    runtime: &AgentRuntimeState,
+    push_tx: &mpsc::Sender<AgentToServer>,
+    buffer: &DiskBuffer,
+) -> anyhow::Result<()> {
+    let mut samples = collect_host(cfg);
+    let docker = runtime.docker.lock().await.clone();
+    if let Some(d) = docker.as_ref() {
+        samples.extend(d.collect_container_metrics().await);
+    }
+    let (kept, dropped) = sample::allowlist(samples);
+    if dropped > 0 {
+        warn!("dropped {dropped} unknown metrics");
+    }
+    let labels = runtime.labels.lock().await.clone();
+    let frame = build_push(cfg, node_id, docker.as_ref(), &labels, &kept).await;
+    if push_tx
+        .send(AgentToServer {
+            body: Some(agent_to_server::Body::Push(frame.clone())),
+        })
+        .await
+        .is_err()
+    {
+        buffer.push(&frame)?;
+    }
+    Ok(())
+}
+
 async fn connect_session(
     cfg: &AgentConfig,
     ingest_url: &str,
     node_id: &str,
     runtime: Arc<AgentRuntimeState>,
-    buffer: &DiskBuffer,
+    buffer: Arc<DiskBuffer>,
     endpoint: Endpoint,
 ) -> anyhow::Result<()> {
     let channel = endpoint.connect().await.context("connect ingest")?;
@@ -172,29 +203,36 @@ async fn connect_session(
     let node_id_owned = node_id.to_string();
     let cancels: Arc<std::sync::Mutex<HashMap<String, AbortHandle>>> =
         Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let pushing = Arc::new(AtomicBool::new(false));
 
     let mut interval = tokio::time::interval(Duration::from_secs(cfg.interval_secs.max(1)));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let mut samples = collect_host(cfg);
-                let docker = runtime.docker.lock().await.clone();
-                if let Some(d) = docker.as_ref() {
-                    samples.extend(d.collect_container_metrics().await);
+                // Collect off the session loop. Per-container docker stats
+                // can take seconds; blocking here means the agent never
+                // reads Commands and the node page waits until restart.
+                if pushing
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    continue;
                 }
-                let (kept, dropped) = sample::allowlist(samples);
-                if dropped > 0 {
-                    warn!("dropped {dropped} unknown metrics");
-                }
-                let labels = runtime.labels.lock().await.clone();
-                let frame = build_push(cfg, &node_id_owned, docker.as_ref(), &labels, &kept).await;
-                if push_tx.send(AgentToServer {
-                    body: Some(agent_to_server::Body::Push(frame.clone())),
-                }).await.is_err() {
-                    buffer.push(&frame)?;
-                    break;
-                }
+                let pushing = pushing.clone();
+                let runtime = runtime.clone();
+                let push_tx = push_tx.clone();
+                let buffer = buffer.clone();
+                let cfg = cfg.clone();
+                let node_id_owned = node_id_owned.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        push_tick(&cfg, &node_id_owned, &runtime, &push_tx, &buffer).await
+                    {
+                        warn!("push tick failed: {e}");
+                    }
+                    pushing.store(false, Ordering::SeqCst);
+                });
             }
             msg = inbound.message() => {
                 match msg {
@@ -732,5 +770,18 @@ mod tests {
             "must resolve mDNS to http(s):// before building an Endpoint"
         );
         assert!(ingest_endpoint(&cfg, "http://127.0.0.1:9100").is_ok());
+    }
+
+    #[test]
+    fn push_tick_is_off_the_session_loop() {
+        let src = include_str!("session.rs");
+        assert!(
+            src.contains("push_tick("),
+            "host/container collect must not run inside select! tick"
+        );
+        assert!(
+            src.contains("compare_exchange"),
+            "skip overlapping collect so Commands stay readable"
+        );
     }
 }

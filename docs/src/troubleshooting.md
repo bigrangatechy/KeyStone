@@ -113,6 +113,11 @@ token does not.
 
 - Observe is off.
 - Agent not control-connected (commands ride the same session as metrics).
+  Overview widgets can still move from stored samples after a reconnect;
+  Docker tabs need the live command channel. Opening a node that never
+  finishes loading is the same class of bug: the page waited on Docker
+  RPCs. Restart `keystone-server` on an older build; current servers keep
+  the new session and fail the tables after 8s instead of hanging.
 - `keystone` user not in `docker` group — `Permission denied` on the
   socket. Log out/in is not enough for a systemd service: restart
   `keystone-agent` after `usermod -aG docker keystone`.

@@ -73,9 +73,17 @@ and aborts a streaming logs (or apt apply) task. `set_runtime` payload is
 `docker_manage`, `docker_allow_exec`, `compose_paths`, `sys_enabled`,
 `sys_manage`). Interval is clamped 1–60.
 
+The agent collects host (and optional container) samples on a task off the
+gRPC session loop. `docker stats` per container must not block reading
+`Command`s. Overlapping ticks are skipped if a collect is still running.
+
 `AgentRegistry` maps `node_id` → command channel + pending oneshots +
-in-flight log streams. Disconnect marks the node not-connected and fails
-in-flight calls. Chunks are forwarded by `request_id` until `eof`.
+in-flight log streams. Each `connect` returns a generation;
+`disconnect(node_id, gen)` is a no-op if a newer session already replaced
+it. Otherwise a reconnect’s old task would drop the live command channel
+while pushes (widgets) still land. Disconnect of the live generation marks
+the node not-connected and fails in-flight calls. Chunks are forwarded by
+`request_id` until `eof`.
 
 ## Buffer
 

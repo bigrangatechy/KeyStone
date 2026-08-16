@@ -54,9 +54,12 @@ not advertise mDNS.
    fleet-chip alerts (`apply_node_alerts`), ACKs. Webhook POSTs (if
    configured) are `tokio::spawn`’d and must not block the ACK.
 3. On first good push for a node id, the server registers the stream in
-   `AgentRegistry` and sends `set_runtime` (poll interval, labels, Docker
-   flags, compose paths, `sys_enabled` / `sys_manage`) from `NodeSettings`.
+   `AgentRegistry` (generation-scoped) and sends `set_runtime` (poll
+   interval, labels, Docker flags, compose paths, `sys_enabled` /
+   `sys_manage`) from `NodeSettings`.
 4. UI Docker POSTs become `Command { op, payload_json }` on that stream.
+   Opening a node lists Docker/System with an 8s timeout (not the 180s
+   pull budget) so a wedged session cannot hang the HTML until restart.
    The agent runs `DockerOp` and returns `CommandResult`. Logs use
    `StreamChunk` then a result; the HTML logs page is an EventSource onto
    that stream. `cancel` aborts a follow when the browser disconnects.

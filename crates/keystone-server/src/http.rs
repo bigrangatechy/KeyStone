@@ -1482,7 +1482,15 @@ async fn node_page(
     } else if !settings.sys_enabled {
         sys_reason = "disabled".into();
     } else {
-        match call_json_op(&state, &id, SysOp::Status.as_str(), "{}").await {
+        match call_json_op_timeout(
+            &state,
+            &id,
+            SysOp::Status.as_str(),
+            "{}",
+            crate::state::PAGE_LIST_TIMEOUT,
+        )
+        .await
+        {
             Ok(body) => sys_json = body,
             Err(e) => sys_error = e.to_string(),
         }
@@ -1642,29 +1650,38 @@ async fn fetch_docker_bundle(
     state: &AppState,
     id: &str,
 ) -> anyhow::Result<(String, String, String, String, String)> {
-    let c = call_json(state, id, DockerOp::ContainerList, "{}").await?;
-    let p = call_json(state, id, DockerOp::ComposePs, "{}")
-        .await
-        .unwrap_or_else(|_| "{}".into());
-    let i = call_json(state, id, DockerOp::ImageList, "{}")
-        .await
-        .unwrap_or_else(|_| "[]".into());
-    let v = call_json(state, id, DockerOp::VolumeList, "{}")
-        .await
-        .unwrap_or_else(|_| "[]".into());
-    let n = call_json(state, id, DockerOp::NetworkList, "{}")
-        .await
-        .unwrap_or_else(|_| "[]".into());
-    Ok((c, p, i, v, n))
+    let timeout = crate::state::PAGE_LIST_TIMEOUT;
+    let (c, p, i, v, n) = tokio::join!(
+        call_json_op_timeout(state, id, DockerOp::ContainerList.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::ComposePs.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::ImageList.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::VolumeList.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::NetworkList.as_str(), "{}", timeout),
+    );
+    let c = match c {
+        Ok(body) => attach_container_usage(state, id, body),
+        Err(e) => return Err(e),
+    };
+    Ok((
+        c,
+        p.unwrap_or_else(|_| "{}".into()),
+        i.unwrap_or_else(|_| "[]".into()),
+        v.unwrap_or_else(|_| "[]".into()),
+        n.unwrap_or_else(|_| "[]".into()),
+    ))
 }
 
-async fn call_json(
-    state: &AppState,
-    node_id: &str,
-    op: DockerOp,
-    payload: &str,
-) -> anyhow::Result<String> {
-    call_json_op(state, node_id, op.as_str(), payload).await
+fn attach_container_usage(state: &AppState, node_id: &str, raw: String) -> String {
+    let Ok(mut rows) = serde_json::from_str::<Vec<serde_json::Value>>(&raw) else {
+        return raw;
+    };
+    let samples = state
+        .stores
+        .series
+        .latest_samples(node_id)
+        .unwrap_or_default();
+    keystone_core::merge_container_usage(&mut rows, &samples);
+    serde_json::to_string(&rows).unwrap_or(raw)
 }
 
 async fn call_json_op(
@@ -1673,7 +1690,27 @@ async fn call_json_op(
     op: &str,
     payload: &str,
 ) -> anyhow::Result<String> {
-    let result = state.agents.call(node_id, op, payload.to_string()).await?;
+    call_json_op_timeout(
+        state,
+        node_id,
+        op,
+        payload,
+        std::time::Duration::from_secs(180),
+    )
+    .await
+}
+
+async fn call_json_op_timeout(
+    state: &AppState,
+    node_id: &str,
+    op: &str,
+    payload: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<String> {
+    let result = state
+        .agents
+        .call_timeout(node_id, op, payload.to_string(), timeout)
+        .await?;
     if !result.ok {
         anyhow::bail!("{}", result.error);
     }
@@ -2477,6 +2514,10 @@ mod tests {
         assert!(
             js.contains("restart keystone-agent"),
             "helper-down copy must cover ProtectSystem until the agent is restarted"
+        );
+        assert!(
+            js.contains("formatCpuRatio") && js.contains("CPU"),
+            "Containers tab must show per-container CPU from pushed samples"
         );
         let css = include_str!("static/app.css");
         assert!(

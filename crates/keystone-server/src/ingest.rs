@@ -40,6 +40,7 @@ impl Ingest for IngestSvc {
 
         tokio::spawn(async move {
             let mut node_id: Option<String> = None;
+            let mut session_gen: Option<u64> = None;
             loop {
                 tokio::select! {
                     msg = inbound.next() => {
@@ -48,11 +49,13 @@ impl Ingest for IngestSvc {
                                 match handle_push(&state, &frame) {
                                     Ok(id) => {
                                         if node_id.as_deref() != Some(id.as_str()) {
-                                            if let Some(old) = node_id.take() {
-                                                state.agents.disconnect(&old);
-                                                let _ = state.stores.metadata.set_online(&old, false);
+                                            if let (Some(old), Some(gen)) = (node_id.take(), session_gen.take()) {
+                                                if state.agents.disconnect(&old, gen) {
+                                                    let _ = state.stores.metadata.set_online(&old, false);
+                                                }
                                             }
-                                            state.agents.connect(id.clone(), cmd_tx.clone());
+                                            let gen = state.agents.connect(id.clone(), cmd_tx.clone());
+                                            session_gen = Some(gen);
                                             let settings = NodeSettings::parse_or_default(
                                                 state
                                                     .stores
@@ -116,10 +119,11 @@ impl Ingest for IngestSvc {
                     }
                 }
             }
-            if let Some(id) = node_id {
-                state.agents.disconnect(&id);
-                let _ = state.stores.metadata.set_online(&id, false);
-                info!("agent disconnected {id}");
+            if let (Some(id), Some(gen)) = (node_id, session_gen) {
+                if state.agents.disconnect(&id, gen) {
+                    let _ = state.stores.metadata.set_online(&id, false);
+                    info!("agent disconnected {id}");
+                }
             }
         });
 
