@@ -264,11 +264,15 @@ fn debs_must_not_depend_on_engine() {
             .lines()
             .find(|l| l.trim_start().starts_with("depends"))
             .expect("depends");
-        for pkg in ["docker.io", "docker-ce", "containerd", "podman"] {
-            assert!(
-                !depends.contains(pkg),
-                "deb depends must not pull {pkg} (Engine upgrades bounce containers)"
-            );
+        for pkg in [
+            "docker.io",
+            "docker-ce",
+            "containerd",
+            "podman",
+            "gitlab-ce",
+            "gitlab-ee",
+        ] {
+            assert!(!depends.contains(pkg), "deb depends must not pull {pkg}");
         }
     }
 }

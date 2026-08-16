@@ -8,7 +8,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 The HTTP UI is the only console. Agents do not serve a web page. The home
 page is the Netdata-shaped **fleet** (live chips per host). Open a node for
 that machine’s Overview; the Docker tabs are the Portainer-shaped control
-plane; **System** is apt and IPv4 on the machine itself (not Docker).
+plane; **System** is apt, IPv4, and GitLab Omnibus backup on the machine
+itself (not Docker).
 
 ## Sign in
 
@@ -86,7 +87,8 @@ Tabs:
   project. Images can search Docker Hub to fill Pull. Empty or an explanation
   until Observe Docker is on and the agent can use the socket. See
   [Docker](docker.md).
-- **System** — pending apt upgrades and IPv4 DHCP/static. Off until you
+- **System** — pending apt upgrades, IPv4 DHCP/static, and GitLab Omnibus
+  backup when that node has `/opt/gitlab/bin/gitlab-backup`. Off until you
   enable the root helper socket and the Settings flags. See [System](system.md).
 - **Settings** — display name, notes, poll interval, NICs, labels, Docker
   flags, Compose paths, System-admin flags. See [Configuration](configuration.md).

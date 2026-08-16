@@ -68,3 +68,22 @@ fn developer_widgets_doc_lists_kinds() {
         );
     }
 }
+
+#[test]
+fn operator_audit_page_is_documented() {
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    assert!(
+        audit.contains("200"),
+        "operator Audit must state the row cap"
+    );
+    assert!(
+        audit.contains("ingest token"),
+        "operator Audit must say the ingest token cannot write the log"
+    );
+    assert!(http.contains("`/audit`"), "HTTP API must list GET /audit");
+    assert!(
+        http.contains("200"),
+        "HTTP API must match the audit row cap"
+    );
+}

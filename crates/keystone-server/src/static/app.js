@@ -878,6 +878,28 @@
       wrap.appendChild(pt);
     }
 
+    const gitlab = data.gitlab || {};
+    if (gitlab.kind === "omnibus") {
+      const glHead = el("div", "compose-head");
+      glHead.appendChild(el("h3", null, "GitLab"));
+      wrap.appendChild(glHead);
+      wrap.appendChild(el("p", "muted", "Omnibus gitlab-backup create on this node (not Docker GitLab). Copy /etc/gitlab next to the archive. Restore is not in this UI."));
+      if (helperOn && manage) {
+        const backup = document.createElement("button");
+        backup.type = "button";
+        backup.textContent = "Backup GitLab";
+        backup.addEventListener("click", () => {
+          if (!window.confirm("Create a GitLab Omnibus backup on this node? This can take a while and load the disk.")) {
+            return;
+          }
+          window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/gitlab-backup";
+        });
+        wrap.appendChild(backup);
+      } else if (!helperOn) {
+        wrap.appendChild(el("p", "muted", "Enable the system helper to run gitlab-backup."));
+      }
+    }
+
     if (manage && helperOn) {
       const netHead = el("div", "compose-head");
       netHead.appendChild(el("h3", null, "IPv4"));

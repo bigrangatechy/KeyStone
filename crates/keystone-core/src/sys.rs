@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Host system-admin ops (apt, IPv4). No I/O — the helper and agent run them.
-//! Keep `docs/dev/src/system.md` in sync.
+//! Host system-admin ops (apt, IPv4, GitLab Omnibus backup). No I/O — the
+//! helper and agent run them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::Ipv4Addr;
 
@@ -14,6 +14,9 @@ use crate::rbac::Permission;
 
 /// Unix socket the opt-in root helper listens on (`0660 root:keystone`).
 pub const SYS_SOCKET_PATH: &str = "/run/keystone/sys.sock";
+
+/// Omnibus GitLab backup binary. Docker GitLab is not this path.
+pub const GITLAB_BACKUP_BIN: &str = "/opt/gitlab/bin/gitlab-backup";
 
 #[derive(
     Debug,
@@ -35,6 +38,7 @@ pub enum SysOp {
     UpdatesList,
     UpdatesApply,
     NetSet,
+    GitlabBackup,
 }
 
 impl SysOp {
@@ -48,11 +52,12 @@ impl SysOp {
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
             Self::NetSet => "Set IPv4 DHCP or static on one interface",
+            Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
         }
     }
 
     pub fn mutating(self) -> bool {
-        matches!(self, Self::UpdatesApply | Self::NetSet)
+        matches!(self, Self::UpdatesApply | Self::NetSet | Self::GitlabBackup)
     }
 
     pub fn permission(self) -> Permission {
@@ -64,7 +69,7 @@ impl SysOp {
     }
 
     pub fn streams(self) -> bool {
-        matches!(self, Self::UpdatesApply)
+        matches!(self, Self::UpdatesApply | Self::GitlabBackup)
     }
 }
 
@@ -368,10 +373,34 @@ mod tests {
         assert!(!SysOp::UpdatesList.mutating());
         assert!(SysOp::UpdatesApply.mutating());
         assert!(SysOp::NetSet.mutating());
+        assert!(SysOp::GitlabBackup.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
+        assert_eq!(SysOp::GitlabBackup.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
+        assert!(SysOp::GitlabBackup.streams());
         assert!(!SysOp::Status.streams());
+        assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
+        assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
+    }
+
+    #[test]
+    fn mutating_sys_ops_are_in_the_ui() {
+        let js = include_str!("../../keystone-server/src/static/app.js");
+        assert!(
+            js.contains("/sys/net_set"),
+            "IPv4 changes must POST net_set from the System tab"
+        );
+        assert!(
+            js.contains("/sys/updates"),
+            "apt apply must open the updates stream page"
+        );
+        assert!(
+            js.contains("/sys/gitlab-backup"),
+            "GitLab Omnibus backup must open the backup stream page"
+        );
+        assert!(!SysOp::Status.mutating());
+        assert!(!SysOp::UpdatesList.mutating());
     }
 
     #[test]
@@ -456,5 +485,9 @@ mod tests {
         assert!("compose_pull".parse::<SysOp>().is_err());
         assert!("not_an_op".parse::<SysOp>().is_err());
         assert_eq!("status".parse::<SysOp>().unwrap(), SysOp::Status);
+        assert_eq!(
+            "gitlab_backup".parse::<SysOp>().unwrap(),
+            SysOp::GitlabBackup
+        );
     }
 }

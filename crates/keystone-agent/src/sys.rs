@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use keystone_core::sys::{parse_ip_addr_json, SysOp, SYS_SOCKET_PATH};
+use keystone_core::sys::{parse_ip_addr_json, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -27,6 +27,7 @@ fn call_budget(op: SysOp) -> Duration {
         SysOp::Status => Duration::from_secs(3),
         SysOp::NetSet => Duration::from_secs(20),
         SysOp::UpdatesList | SysOp::UpdatesApply => Duration::from_secs(120),
+        SysOp::GitlabBackup => Duration::from_secs(1800),
     }
 }
 
@@ -124,6 +125,13 @@ pub async fn local_status() -> Value {
         "reboot_required": std::path::Path::new("/run/reboot-required").is_file()
             || std::path::Path::new("/var/run/reboot-required").is_file(),
         "interfaces": interfaces,
+        "gitlab": {
+            "kind": if std::path::Path::new(GITLAB_BACKUP_BIN).is_file() {
+                "omnibus"
+            } else {
+                "none"
+            }
+        },
     })
 }
 

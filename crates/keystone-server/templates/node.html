@@ -140,7 +140,7 @@
     <fieldset>
       <legend>System admin</legend>
       <label class="check"><input type="checkbox" name="sys_enabled" value="on"{% if sys_enabled %} checked{% endif %}> Observe host updates and addressing</label>
-      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade and IPv4 changes (root helper)</label>
+      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade, IPv4 changes, and GitLab backup (root helper)</label>
       <span class="muted">Both this checkbox and <code>sudo systemctl enable --now keystone-sys.socket</code> on the node. If the tab still says the helper is off, <code>sudo systemctl restart keystone-agent</code>. The metrics agent does not become root.</span>
     </fieldset>
     <button type="submit">Save settings</button>

@@ -84,6 +84,11 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}/sys/{op}", post(sys_action))
         .route("/nodes/{id}/sys/updates", get(sys_updates_page))
         .route("/nodes/{id}/sys/updates/stream", get(sys_updates_sse))
+        .route("/nodes/{id}/sys/gitlab-backup", get(sys_gitlab_backup_page))
+        .route(
+            "/nodes/{id}/sys/gitlab-backup/stream",
+            get(sys_gitlab_backup_sse),
+        )
         .route(
             "/nodes/{id}/containers/{cid}/logs",
             get(container_logs_page),
@@ -1941,10 +1946,12 @@ async fn docker_action(
         ),
         Err(e) => (false, e.to_string()),
     };
-    let _ = state
-        .stores
-        .metadata
-        .audit(&username, &id, parsed.as_str(), &target, ok, &detail);
+    if parsed.mutating() {
+        let _ = state
+            .stores
+            .metadata
+            .audit(&username, &id, parsed.as_str(), &target, ok, &detail);
+    }
     let dest = if form.redirect.is_empty() {
         format!("/nodes/{id}?panel={}", panel_for_op(parsed))
     } else {
@@ -2029,7 +2036,11 @@ async fn sys_action(
         Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
     };
     if parsed.streams() {
-        return Redirect::to(&format!("/nodes/{id}/sys/updates")).into_response();
+        let dest = match parsed {
+            SysOp::GitlabBackup => format!("/nodes/{id}/sys/gitlab-backup"),
+            _ => format!("/nodes/{id}/sys/updates"),
+        };
+        return Redirect::to(&dest).into_response();
     }
     let payload = sys_form_payload(&form);
     let target = payload.clone();
@@ -2045,10 +2056,12 @@ async fn sys_action(
         ),
         Err(e) => (false, e.to_string()),
     };
-    let _ = state
-        .stores
-        .metadata
-        .audit(&username, &id, parsed.as_str(), &target, ok, &detail);
+    if parsed.mutating() {
+        let _ = state
+            .stores
+            .metadata
+            .audit(&username, &id, parsed.as_str(), &target, ok, &detail);
+    }
     let dest = if form.redirect.is_empty() {
         format!("/nodes/{id}?panel=system")
     } else {
@@ -2094,6 +2107,45 @@ async fn sys_updates_sse(
         .metadata
         .audit(&username, &id, "updates_apply", "{}", true, "started");
     logs_sse_op(state, id, SysOp::UpdatesApply.as_str(), "{}".into())
+}
+
+async fn sys_gitlab_backup_page(Path(id): Path<String>) -> impl IntoResponse {
+    Html(
+        LogsTemplate {
+            title: "GitLab backup".into(),
+            node_id: id.clone(),
+            subtitle: "gitlab-backup create".into(),
+            hint: "Streaming GitLab Omnibus backup. Leave this page to stop following (the backup keeps running on the node). Copy /etc/gitlab next to the archive. Restore is not in this UI.".into(),
+            back_href: format!("/nodes/{id}?panel=system"),
+            stream_url: format!("/nodes/{}/sys/gitlab-backup/stream", urlencoding_path(&id)),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn sys_gitlab_backup_sse(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Response {
+    let username = jar
+        .get(SESSION_COOKIE)
+        .and_then(|c| {
+            state
+                .stores
+                .metadata
+                .get_session(c.value())
+                .ok()
+                .flatten()
+                .map(|s| s.username)
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let _ = state
+        .stores
+        .metadata
+        .audit(&username, &id, "gitlab_backup", "{}", true, "started");
+    logs_sse_op(state, id, SysOp::GitlabBackup.as_str(), "{}".into())
 }
 
 async fn sys_updates_api(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -2512,6 +2564,184 @@ mod tests {
         assert_eq!(relative_seen(now - 120, false), "2m ago");
     }
 
+    #[test]
+    fn unix_rfc3339_is_utc() {
+        let s = unix_rfc3339(0);
+        assert!(
+            s.starts_with("1970-01-01T00:00:00"),
+            "audit tooltip must be UTC, got {s}"
+        );
+    }
+
+    #[test]
+    fn mutations_write_audit_lists_do_not() {
+        let src = include_str!("http.rs");
+        let docker = src
+            .split("async fn docker_action")
+            .nth(1)
+            .expect("docker_action")
+            .split("async fn sys_action")
+            .next()
+            .expect("docker_action body");
+        assert!(
+            docker.contains(".audit("),
+            "Docker mutations must write the audit table"
+        );
+        assert!(
+            docker.contains("parsed.mutating()"),
+            "non-mutating Docker POSTs must not write audit"
+        );
+
+        let sys = src
+            .split("async fn sys_action")
+            .nth(1)
+            .expect("sys_action")
+            .split("async fn sys_updates_page")
+            .next()
+            .expect("sys_action body");
+        assert!(
+            sys.contains(".audit("),
+            "System mutations must write the audit table"
+        );
+        assert!(
+            sys.contains("parsed.mutating()"),
+            "status and updates_list must not write audit"
+        );
+
+        let sse = src
+            .split("async fn sys_updates_sse")
+            .nth(1)
+            .expect("sys_updates_sse")
+            .split("async fn sys_gitlab_backup_page")
+            .next()
+            .expect("sys_updates_sse body");
+        assert!(
+            sse.contains(".audit(") && sse.contains("updates_apply"),
+            "apt apply must write audit when the stream starts"
+        );
+
+        let gitlab = src
+            .split("async fn sys_gitlab_backup_sse")
+            .nth(1)
+            .expect("sys_gitlab_backup_sse")
+            .split("async fn sys_updates_api")
+            .next()
+            .expect("sys_gitlab_backup_sse body");
+        assert!(
+            gitlab.contains(".audit(") && gitlab.contains("gitlab_backup"),
+            "GitLab backup must write audit when the stream starts"
+        );
+        assert!(
+            src.split("async fn sys_action")
+                .nth(1)
+                .expect("sys_action")
+                .split("async fn sys_updates_page")
+                .next()
+                .expect("sys_action body")
+                .contains("/sys/gitlab-backup"),
+            "streaming gitlab_backup must not redirect to apt apply"
+        );
+    }
+
+    #[test]
+    fn ingest_cannot_write_audit() {
+        let ingest = include_str!("ingest.rs");
+        assert!(
+            !ingest.contains(".audit(") && !ingest.contains("recent_audit"),
+            "gRPC ingest must not write the UI audit table"
+        );
+    }
+
+    #[test]
+    fn audit_page_limit_matches_docs() {
+        assert_eq!(AUDIT_PAGE_LIMIT, 200);
+        let src = include_str!("http.rs");
+        assert!(src.contains("const AUDIT_PAGE_LIMIT: i64 = 200"));
+        let op = include_str!("../../../docs/src/audit.md");
+        assert!(
+            op.contains("200"),
+            "operator Audit chapter must match the cap"
+        );
+        let api = include_str!("../../../docs/dev/src/http-api.md");
+        assert!(api.contains("`/audit`"), "HTTP API must list GET /audit");
+        assert!(api.contains("200"), "HTTP API must match the row cap");
+    }
+
+    #[test]
+    fn audit_ui_chrome() {
+        let layout = include_str!("../templates/layout.html");
+        assert!(
+            layout.contains("href=\"/audit\""),
+            "header must link to the mutation audit log"
+        );
+        let audit = include_str!("../templates/audit.html");
+        assert!(
+            audit.contains("No mutations yet"),
+            "empty audit copy must say where rows come from"
+        );
+        assert!(
+            audit.contains("tone-crit"),
+            "failed mutations must use the crit chip"
+        );
+        let js = include_str!("static/app.js");
+        assert!(
+            js.contains("nav a[href='/audit']"),
+            "welcome tour must point at header Audit"
+        );
+        let css = include_str!("static/app.css");
+        assert!(
+            css.contains(".chip.tone-crit"),
+            "crit chips must stay coloured after audit CSS"
+        );
+        assert!(css.contains(".audit-detail"));
+    }
+
+    #[test]
+    fn ui_docker_posts_are_mutating_and_skip_exec() {
+        let js = include_str!("static/app.js");
+        let html = include_str!("../templates/node.html");
+        for op in [
+            "container_start",
+            "container_stop",
+            "container_restart",
+            "container_kill",
+            "container_remove",
+            "compose_up",
+            "compose_down",
+            "compose_pull",
+            "compose_update",
+            "image_remove",
+            "image_pull",
+            "image_prune",
+            "volume_create",
+            "volume_remove",
+            "network_create",
+            "network_remove",
+        ] {
+            let parsed: DockerOp = op.parse().expect(op);
+            assert!(
+                parsed.mutating(),
+                "{op} posted by the UI must be a mutation"
+            );
+            assert!(
+                js.contains(op) || html.contains(&format!("docker/{op}")),
+                "{op} must appear in the Docker UI"
+            );
+        }
+        assert!(
+            !js.contains("container_exec") && !html.contains("container_exec"),
+            "interactive exec must stay out of this UI"
+        );
+        assert!(js.contains("/sys/net_set"));
+        assert!(js.contains("/sys/updates"));
+        assert!(js.contains("/sys/gitlab-backup"));
+        assert!(SysOp::NetSet.mutating());
+        assert!(SysOp::UpdatesApply.mutating());
+        assert!(SysOp::GitlabBackup.mutating());
+        assert!(!SysOp::Status.mutating());
+        assert!(!SysOp::UpdatesList.mutating());
+    }
+
     fn host_headers(host: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
         h.insert(header::HOST, host.parse().unwrap());
@@ -2563,6 +2793,13 @@ mod tests {
             usage < authed_end,
             "container usage must require a UI session"
         );
+        let docker_post = head
+            .find("/nodes/{id}/docker/{op}")
+            .expect("docker mutation POST");
+        assert!(
+            docker_post < authed_end,
+            "Docker mutations must require a UI session"
+        );
         let audit = head.find("\"/audit\"").expect("audit page");
         assert!(audit < authed_end, "audit log must require a UI session");
         assert!(
@@ -2578,11 +2815,15 @@ mod tests {
         let authed_end = head.find(".layer(").expect("session layer");
         let post = head.find("/nodes/{id}/sys/{op}").expect("sys POST");
         let apply = head.find("/nodes/{id}/sys/updates").expect("sys apply");
+        let backup = head
+            .find("/nodes/{id}/sys/gitlab-backup")
+            .expect("gitlab backup page");
         let api = head
             .find("/api/v1/nodes/{id}/sys/updates")
             .expect("sys updates API");
         assert!(post < authed_end);
         assert!(apply < authed_end);
+        assert!(backup < authed_end);
         assert!(api < authed_end);
         let public = head[authed_end..]
             .split("async fn health()")
@@ -2626,6 +2867,14 @@ mod tests {
             "Apply updates must ask before apt-get upgrade"
         );
         assert!(
+            js.contains("Backup GitLab"),
+            "System tab must offer GitLab Omnibus backup when detected"
+        );
+        assert!(
+            js.contains("Create a GitLab Omnibus backup"),
+            "GitLab backup must ask before gitlab-backup create"
+        );
+        assert!(
             js.contains("Change IPv4 on this node"),
             "net_set must ask before changing addressing"
         );
@@ -2652,20 +2901,6 @@ mod tests {
         assert!(
             js.contains("container-usage"),
             "Containers tab must poll /api/v1/nodes/{{id}}/container-usage"
-        );
-        let layout = include_str!("../templates/layout.html");
-        assert!(
-            layout.contains("href=\"/audit\""),
-            "header must link to the mutation audit log"
-        );
-        let audit = include_str!("../templates/audit.html");
-        assert!(
-            audit.contains("No mutations yet"),
-            "empty audit copy must say where rows come from"
-        );
-        assert!(
-            js.contains("nav a[href='/audit']"),
-            "welcome tour must point at header Audit"
         );
         let css = include_str!("static/app.css");
         assert!(

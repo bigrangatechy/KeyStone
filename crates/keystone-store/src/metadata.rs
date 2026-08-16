@@ -613,6 +613,14 @@ mod tests {
         assert_eq!(log[1].op, "container_start");
         assert!(log[1].ok);
         assert_eq!(db.recent_audit(1).unwrap().len(), 1);
+        assert_eq!(db.recent_audit(0).unwrap().len(), 1);
+        db.audit("admin", "pi", "net_set", r#"{"iface":"eth0"}"#, true, "ok")
+            .unwrap();
+        let many = db.recent_audit(5000).unwrap();
+        assert_eq!(many.len(), 3);
+        assert_eq!(many[0].node_id, "pi");
+        assert_eq!(many[0].target, r#"{"iface":"eth0"}"#);
+        assert_eq!(many[0].username, "admin");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

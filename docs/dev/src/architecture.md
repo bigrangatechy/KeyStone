@@ -85,4 +85,5 @@ WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, Docker Hub login, System reboot/shutdown from the UI, hostname /
 timezone / users / SSH / firewall editors, Wi-Fi / VLAN / IPv6, Fedora /
-Arch host updates, unattended-upgrades config, Watchtower.
+Arch host updates, unattended-upgrades config, Watchtower, GitLab restore,
+Docker GitLab backup.

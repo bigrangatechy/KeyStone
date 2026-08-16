@@ -45,6 +45,8 @@ is deleted and a new session id is issued.
 | POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields. Audit log. Streaming ops redirect to the apply page. |
 | GET | `/nodes/{id}/sys/updates` | HTML follow page for `apt-get upgrade`. |
 | GET | `/nodes/{id}/sys/updates/stream` | SSE for `updates_apply`. Cancel on drop. |
+| GET | `/nodes/{id}/sys/gitlab-backup` | HTML follow page for Omnibus `gitlab-backup create`. |
+| GET | `/nodes/{id}/sys/gitlab-backup/stream` | SSE for `gitlab_backup`. Audit `started`. Cancel on drop. |
 | GET | `/nodes/{id}/containers/{cid}/logs` | HTML follow page. |
 | GET | `/nodes/{id}/containers/{cid}/logs/stream` | SSE: `{"t":"..."}` then `event: done`. Cancel on drop. |
 | GET | `/nodes/{id}/containers/{cid}/stats` | One-shot JSON stats (not linked from the UI). |

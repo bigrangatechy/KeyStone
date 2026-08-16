@@ -733,6 +733,7 @@ async fn handle_sys(
         }
         SysOp::UpdatesList | SysOp::NetSet => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
+        SysOp::GitlabBackup => anyhow::bail!("gitlab_backup is streamed from the backup page"),
     }
 }
 
@@ -894,7 +895,13 @@ mod tests {
 
     #[test]
     fn sys_ops_are_not_docker_ops() {
-        for op in ["status", "updates_list", "updates_apply", "net_set"] {
+        for op in [
+            "status",
+            "updates_list",
+            "updates_apply",
+            "net_set",
+            "gitlab_backup",
+        ] {
             assert!(
                 DockerOp::from_str(op).is_err(),
                 "sys op {op} must not parse as DockerOp"

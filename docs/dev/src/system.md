@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Host apt and IPv4 are **not** `DockerOp`. Cookie-authed
 `POST /nodes/{id}/sys/{op}` and `GET /api/v1/nodes/{id}/sys/updates` become
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
-`updates_apply`, `net_set`).
+`updates_apply`, `net_set`, `gitlab_backup`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
@@ -22,7 +22,7 @@ setuid).
 `NodeSettings.sys_enabled` / `sys_manage` are pushed in `set_runtime`.
 The agent refuses mutating `SysOp` unless manage is on. Helper RPCs have a
 read deadline (`status` 5s) so a stuck socket cannot block Docker Commands
-on the ingest loop. Tests must not run live `apt-get`.
+on the ingest loop. Tests must not run live `apt-get` or `gitlab-backup`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|
@@ -30,6 +30,7 @@ on the ingest loop. Tests must not run live `apt-get`.
 | `updates_list` | no | `sys_view` | List pending apt upgrades |
 | `updates_apply` | yes | `sys_manage` | Apply apt upgrades (streamed) |
 | `net_set` | yes | `sys_manage` | Set IPv4 DHCP or static on one interface |
+| `gitlab_backup` | yes | `sys_manage` | Omnibus `gitlab-backup create` (streamed). Missing binary is an error; tests must not run it. Docker GitLab is not this op. |
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
 token cannot call these routes.

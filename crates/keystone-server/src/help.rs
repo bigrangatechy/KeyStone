@@ -131,4 +131,24 @@ mod tests {
             "Audit help must match the page row cap"
         );
     }
+
+    #[test]
+    fn operator_help_matches_summary() {
+        let summary = include_str!("../../../docs/src/SUMMARY.md");
+        let files: Vec<&str> = summary
+            .lines()
+            .filter_map(|l| {
+                let start = l.find('(')?;
+                let rest = &l[start + 1..];
+                let end = rest.find(')')?;
+                rest[..end].strip_suffix(".md")
+            })
+            .collect();
+        let slugs: Vec<String> = sections().into_iter().map(|s| s.slug).collect();
+        assert_eq!(
+            files,
+            slugs.iter().map(String::as_str).collect::<Vec<_>>(),
+            "docs/src/SUMMARY.md order must match help.rs sections()"
+        );
+    }
 }

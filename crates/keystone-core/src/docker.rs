@@ -230,4 +230,28 @@ mod tests {
         );
         assert!(!map.contains_key("other0000000"));
     }
+
+    #[test]
+    fn mutating_ops_are_in_the_ui_except_reserved_exec() {
+        use strum::IntoEnumIterator;
+        let js = include_str!("../../keystone-server/src/static/app.js");
+        let html = include_str!("../../keystone-server/templates/node.html");
+        for op in DockerOp::iter() {
+            if !op.mutating() {
+                continue;
+            }
+            let name = op.as_str();
+            if op == DockerOp::ContainerExec {
+                assert!(
+                    !js.contains(name) && !html.contains(name),
+                    "container_exec must stay out of the UI"
+                );
+                continue;
+            }
+            assert!(
+                js.contains(name) || html.contains(&format!("docker/{name}")),
+                "mutating {name} must be reachable from the Docker UI"
+            );
+        }
+    }
 }

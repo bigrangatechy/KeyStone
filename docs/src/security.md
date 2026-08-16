@@ -157,15 +157,15 @@ does not use the ingest token. Pull still runs on the agent. Hub
 rate-limits unauthenticated search per IP — if it fails, type the image
 name. There is no Hub login in this version.
 
-## System (host apt and IPv4)
+## System (host apt, IPv4, GitLab backup)
 
 The metrics agent stays unprivileged (`NoNewPrivileges`, `ProtectSystem`).
-Host apt and addressing go through an **opt-in** root helper
-(`keystone-sys`) on `/run/keystone/sys.sock`. The package does not enable
-that socket. Compromised `keystone` user **plus** an enabled socket **plus**
-System Manage is host root for the allowlist (same class as Docker Manage).
-Keep the allowlist tiny; do not start the helper on nodes that should only
-report metrics.
+Host apt, addressing, and Omnibus GitLab backup go through an **opt-in**
+root helper (`keystone-sys`) on `/run/keystone/sys.sock`. The package does
+not enable that socket. Compromised `keystone` user **plus** an enabled
+socket **plus** System Manage is host root for the allowlist (same class as
+Docker Manage). Keep the allowlist tiny; do not start the helper on nodes
+that should only report metrics.
 
 Changing IPv4 can lock you out of SSH and drop the agent session. Keep a
 console. Mutations are written to [Audit](audit.md). The ingest token

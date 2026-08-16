@@ -12,7 +12,7 @@ on **Compose** (use **Update** = pull then up).
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade and IPv4 changes** if you want Apply.
+   and **Allow apt upgrade, IPv4 changes, and GitLab backup** if you want Apply.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
 
@@ -31,7 +31,7 @@ Missing socket → the tab shows that `systemctl` line. Observe off → it
 points at Settings (the socket unit alone does not turn the tab on). The
 helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
 It only runs allowlisted ops (`apt-get update` / `upgrade`, netplan or
-`nmcli`). There is no shell string.
+`nmcli`, Omnibus `gitlab-backup create`). There is no shell string.
 
 ## Updates
 
@@ -49,6 +49,15 @@ Pick an Ethernet interface that is already up. **DHCP** or **static**
 
 Changing the address can drop the agent session (and SSH). Keep a console.
 Wi-Fi, VLANs, and IPv6 are not in this version.
+
+## GitLab backup
+
+If this node has Omnibus GitLab (`/opt/gitlab/bin/gitlab-backup`), the
+System tab shows **Backup GitLab**. That runs `gitlab-backup create` on
+the machine (GitLab’s own dump, not a volume tar) and streams the log.
+Copy `/etc/gitlab` (`gitlab.rb` and `gitlab-secrets.json`) next to the
+archive yourself. Restore is not in this UI. Docker GitLab is not this
+button.
 
 Anyone who can sign in to the UI and who turned Manage on can change that
 host. Same class of trust as Docker Manage. Mutations are written to

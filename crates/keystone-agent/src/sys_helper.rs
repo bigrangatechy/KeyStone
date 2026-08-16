@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Root helper: allowlisted apt and IPv4. No `sh -c`. Started by systemd socket.
+//! Root helper: allowlisted apt, IPv4, and GitLab Omnibus backup. No `sh -c`.
+//! Started by systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -11,7 +12,7 @@ use std::process::Stdio;
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     netplan_yaml, nmcli_modify_args, parse_apt_simulate, parse_ip_addr_json, NetSet, SysOp,
-    SYS_SOCKET_PATH,
+    GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -118,6 +119,10 @@ async fn dispatch(
             net_set(&req).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
+        SysOp::GitlabBackup => {
+            gitlab_backup(writer).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
     }
 }
 
@@ -130,6 +135,7 @@ async fn status() -> anyhow::Result<Value> {
         "reboot_required": reboot_required(),
         "interfaces": interfaces,
         "net": net_snapshot(backend, &interfaces),
+        "gitlab": { "kind": gitlab_kind() },
     }))
 }
 
@@ -152,6 +158,14 @@ fn which(bin: &str) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+fn gitlab_kind() -> &'static str {
+    if Path::new(GITLAB_BACKUP_BIN).is_file() {
+        "omnibus"
+    } else {
+        "none"
+    }
 }
 
 fn reboot_required() -> bool {
@@ -347,6 +361,60 @@ async fn stream_apt(
     Ok(())
 }
 
+async fn gitlab_backup(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
+    if gitlab_kind() != "omnibus" {
+        anyhow::bail!(
+            "GitLab Omnibus is not installed on this node ({GITLAB_BACKUP_BIN} missing). Docker GitLab is not in this version."
+        );
+    }
+    let mut child = Command::new(GITLAB_BACKUP_BIN)
+        .arg("create")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("gitlab-backup")?;
+    let stdout = child.stdout.take().context("gitlab-backup stdout")?;
+    let stderr = child.stderr.take().context("gitlab-backup stderr")?;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+    let tx_out = tx.clone();
+    let tx_err = tx.clone();
+    drop(tx);
+    let h_out = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(l)) = lines.next_line().await {
+            if tx_out.send(l).await.is_err() {
+                break;
+            }
+        }
+    });
+    let h_err = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(l)) = lines.next_line().await {
+            if tx_err.send(l).await.is_err() {
+                break;
+            }
+        }
+    });
+    while let Some(l) = rx.recv().await {
+        write_json(writer, &json!({"t": l})).await?;
+    }
+    let _ = h_out.await;
+    let _ = h_err.await;
+    let st = child.wait().await?;
+    if !st.success() {
+        anyhow::bail!("gitlab-backup create failed");
+    }
+    write_json(
+        writer,
+        &json!({
+            "t": "Copy /etc/gitlab (gitlab.rb and gitlab-secrets.json) next to the archive. Restore is not in this UI."
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
 async fn net_set(req: &NetSet) -> anyhow::Result<()> {
     let backend = detect_backend();
     match backend {
@@ -462,6 +530,15 @@ mod tests {
             v.get("payload").and_then(|p| p.get("backend")).is_some(),
             "status payload must include backend, got {line}"
         );
+        let kind = v
+            .get("payload")
+            .and_then(|p| p.get("gitlab"))
+            .and_then(|g| g.get("kind"))
+            .and_then(|k| k.as_str());
+        assert!(
+            kind == Some("omnibus") || kind == Some("none"),
+            "status must report gitlab.kind, got {line}"
+        );
         server.await.unwrap();
     }
 
@@ -491,6 +568,52 @@ mod tests {
             "unknown op must not run apt: {err}"
         );
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_gitlab_backup_without_omnibus_does_not_spawn() {
+        if Path::new(GITLAB_BACKUP_BIN).is_file() {
+            return;
+        }
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"gitlab_backup","payload":{}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(err.contains("Omnibus"), "{err}");
+        assert!(
+            !err.contains("apt-get"),
+            "missing GitLab must not run apt: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn gitlab_backup_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn gitlab_backup")
+            .nth(1)
+            .expect("gitlab_backup")
+            .split("async fn net_set")
+            .next()
+            .expect("gitlab_backup body");
+        assert!(body.contains("GITLAB_BACKUP_BIN"));
+        assert!(body.contains(".arg(\"create\")"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
     }
 
     #[tokio::test]

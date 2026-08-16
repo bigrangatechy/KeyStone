@@ -22,7 +22,7 @@ prune audit rows.
 - Docker Manage: start, stop, restart, kill, remove, Compose up / down /
   pull / Update, image pull / remove / prune, volume and network
   create / remove.
-- System Manage: apt apply, IPv4 DHCP vs static.
+- System Manage: apt apply, IPv4 DHCP vs static, GitLab Omnibus backup.
 
 Observe-only lists and live logs are not rows. There is no interactive
 exec/PTY in this UI.

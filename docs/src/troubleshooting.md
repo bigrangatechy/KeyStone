@@ -148,7 +148,8 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade and IPv4 changes** on and save.
+- Manage refused: turn **Allow apt upgrade, IPv4 changes, and GitLab backup**
+  on and save.
 - `apt-get` failed: read the apply stream; the helper only runs `upgrade`,
   not `dist-upgrade`. Debian / Ubuntu / Raspberry Pi OS only.
 - Static IPv4 dropped the session: that address is now on the interface.
