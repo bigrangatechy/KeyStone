@@ -11,6 +11,7 @@ use keystone_proto::{
     agent_to_server, server_to_agent, Ack, AgentToServer, Heartbeat, PushFrame, ServerToAgent,
 };
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{info, warn};
@@ -81,23 +82,13 @@ impl Ingest for IngestSvc {
                                             node_id = Some(id.clone());
                                             info!("agent session {id}");
                                         }
-                                        if to_agent_tx.send(ServerToAgent {
-                                            body: Some(server_to_agent::Body::Ack(Ack {
-                                                ok: true,
-                                                error: String::new(),
-                                            })),
-                                        }).await.is_err() {
+                                        if !queue_to_agent(&to_agent_tx, ack(true, String::new())) {
                                             break;
                                         }
                                     }
                                     Err(e) => {
                                         warn!("push rejected: {e}");
-                                        if to_agent_tx.send(ServerToAgent {
-                                            body: Some(server_to_agent::Body::Ack(Ack {
-                                                ok: false,
-                                                error: e.to_string(),
-                                            })),
-                                        }).await.is_err() {
+                                        if !queue_to_agent(&to_agent_tx, ack(false, e.to_string())) {
                                             break;
                                         }
                                     }
@@ -124,9 +115,9 @@ impl Ingest for IngestSvc {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(command) => {
-                                if to_agent_tx.send(ServerToAgent {
+                                if !queue_to_agent(&to_agent_tx, ServerToAgent {
                                     body: Some(server_to_agent::Body::Command(command)),
-                                }).await.is_err() {
+                                }) {
                                     break;
                                 }
                             }
@@ -144,6 +135,28 @@ impl Ingest for IngestSvc {
         });
 
         Ok(Response::new(Box::pin(ReceiverStream::new(out_rx))))
+    }
+}
+
+fn ack(ok: bool, error: String) -> ServerToAgent {
+    ServerToAgent {
+        body: Some(server_to_agent::Body::Ack(Ack { ok, error })),
+    }
+}
+
+/// Never `.await` outbound on the inbound select. A full gRPC window used to
+/// stall Result reads so every node-page RPC hit the 8s timeout.
+fn queue_to_agent(tx: &mpsc::Sender<ServerToAgent>, msg: ServerToAgent) -> bool {
+    match tx.try_send(msg) {
+        Ok(()) => true,
+        Err(TrySendError::Closed(_)) => false,
+        Err(TrySendError::Full(msg)) => {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(msg).await;
+            });
+            true
+        }
     }
 }
 
@@ -402,6 +415,10 @@ mod tests {
         assert!(
             src.contains("to_agent_rx.recv()"),
             "a side writer must drain Commands so Results still complete"
+        );
+        assert!(
+            src.contains("queue_to_agent") && src.contains("try_send"),
+            "inbound select must not await Ack/Command enqueue"
         );
     }
 }

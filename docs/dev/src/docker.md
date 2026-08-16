@@ -47,8 +47,11 @@ per-container `stats` stay off that loop too; `stats` runs in parallel
 with a short cap so it cannot monopolise `docker.sock`.
 
 The server ingest loop must keep reading `CommandResult`s while it writes
-Commands. Blocking on the gRPC sink reset the session and the UI showed
-**agent dropped command**. Acks and Commands go through a side writer task.
+Commands. Blocking on the gRPC sink reset the session (**agent dropped
+command**) or stalled Result reads (**agent command timed out**). Acks and
+Commands are try-queued to a side writer. The agent also spawns
+`set_runtime` so a Docker socket connect after reconnect cannot block
+`container_list`.
 
 HTTP:
 

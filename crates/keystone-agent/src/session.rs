@@ -249,16 +249,15 @@ async fn connect_session(
                             {
                                 handle.abort();
                             }
-                            if tx.send(AgentToServer {
-                                body: Some(agent_to_server::Body::Result(CommandResult {
+                            reply(
+                                &tx,
+                                CommandResult {
                                     request_id: cmd.request_id,
                                     ok: true,
                                     payload_json: "{}".into(),
                                     error: String::new(),
-                                })),
-                            }).await.is_err() {
-                                break;
-                            }
+                                },
+                            );
                             continue;
                         }
                         if cmd.op == "set_interval" {
@@ -274,27 +273,21 @@ async fn connect_session(
                                 }
                                 Err(e) => command_err(cmd.request_id, e),
                             };
-                            if tx.send(AgentToServer {
-                                body: Some(agent_to_server::Body::Result(body)),
-                            }).await.is_err() {
-                                break;
-                            }
+                            reply(&tx, body);
                             continue;
                         }
                         if cmd.op == "set_runtime" {
-                            let body = match apply_runtime(&runtime, &mut interval, &cmd.payload_json).await {
-                                Ok(v) => CommandResult {
-                                    request_id: cmd.request_id,
-                                    ok: true,
-                                    payload_json: v.to_string(),
-                                    error: String::new(),
-                                },
-                                Err(e) => command_err(cmd.request_id, e),
-                            };
-                            if tx.send(AgentToServer {
-                                body: Some(agent_to_server::Body::Result(body)),
-                            }).await.is_err() {
-                                break;
+                            match parse_set_runtime(&cmd.payload_json) {
+                                Ok(rt) => {
+                                    apply_interval(&mut interval, rt.interval_secs);
+                                    spawn_set_runtime(
+                                        runtime.clone(),
+                                        tx.clone(),
+                                        cmd.request_id,
+                                        rt,
+                                    );
+                                }
+                                Err(e) => reply(&tx, command_err(cmd.request_id, e)),
                             }
                             continue;
                         }
@@ -313,10 +306,6 @@ async fn connect_session(
                             );
                             continue;
                         }
-                        // Docker list / sys status must not sit on this
-                        // select. The node page fires several RPCs at once;
-                        // awaiting one here means the rest sit unread until
-                        // the 8s server timeout.
                         spawn_rpc_command(
                             runtime.clone(),
                             tx.clone(),
@@ -346,6 +335,17 @@ fn command_err(request_id: String, e: impl std::fmt::Display) -> CommandResult {
     }
 }
 
+fn reply(tx: &mpsc::Sender<AgentToServer>, body: CommandResult) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let _ = tx
+            .send(AgentToServer {
+                body: Some(agent_to_server::Body::Result(body)),
+            })
+            .await;
+    });
+}
+
 fn cancel_target(payload_json: &str) -> String {
     serde_json::from_str::<serde_json::Value>(payload_json)
         .ok()
@@ -366,6 +366,30 @@ fn spawn_rpc_command(
                 request_id: request_id.clone(),
                 ok: true,
                 payload_json: payload.to_string(),
+                error: String::new(),
+            },
+            Err(e) => command_err(request_id, e),
+        };
+        let _ = tx
+            .send(AgentToServer {
+                body: Some(agent_to_server::Body::Result(body)),
+            })
+            .await;
+    });
+}
+
+fn spawn_set_runtime(
+    runtime: Arc<AgentRuntimeState>,
+    tx: mpsc::Sender<AgentToServer>,
+    request_id: String,
+    rt: AgentRuntime,
+) {
+    tokio::spawn(async move {
+        let body = match apply_runtime_state(&runtime, rt).await {
+            Ok(v) => CommandResult {
+                request_id: request_id.clone(),
+                ok: true,
+                payload_json: v.to_string(),
                 error: String::new(),
             },
             Err(e) => command_err(request_id, e),
@@ -521,46 +545,56 @@ fn parse_set_runtime(payload_json: &str) -> anyhow::Result<AgentRuntime> {
     Ok(rt)
 }
 
-async fn apply_runtime(
+async fn apply_runtime_state(
     runtime: &AgentRuntimeState,
-    interval: &mut tokio::time::Interval,
-    payload_json: &str,
+    rt: AgentRuntime,
 ) -> anyhow::Result<serde_json::Value> {
-    let rt = parse_set_runtime(payload_json)?;
-    apply_interval(interval, rt.interval_secs);
     {
         let mut labels = runtime.labels.lock().await;
         *labels = rt.labels.clone();
     }
-    {
-        let mut docker = runtime.docker.lock().await;
-        if rt.docker_enabled {
-            if let Some(handle) = docker.as_ref() {
+    if rt.docker_enabled {
+        let already = runtime.docker.lock().await.is_some();
+        if already {
+            if let Some(handle) = runtime.docker.lock().await.as_ref() {
                 handle.set_policy(
                     rt.docker_manage,
                     rt.docker_allow_exec,
                     rt.compose_paths.clone(),
                 );
-            } else {
-                let cfg = DockerConfig {
-                    enabled: true,
-                    manage: rt.docker_manage,
-                    allow_exec: rt.docker_allow_exec,
-                    host: runtime.docker_host.clone(),
-                    compose_paths: rt.compose_paths.clone(),
-                };
-                match DockerHandle::connect(&cfg) {
-                    Ok(handle) => {
+            }
+        } else {
+            let cfg = DockerConfig {
+                enabled: true,
+                manage: rt.docker_manage,
+                allow_exec: rt.docker_allow_exec,
+                host: runtime.docker_host.clone(),
+                compose_paths: rt.compose_paths.clone(),
+            };
+            // Connect without holding the mutex so container_list can run.
+            let connected = DockerHandle::connect(&cfg);
+            let mut docker = runtime.docker.lock().await;
+            match connected {
+                Ok(handle) => {
+                    if docker.is_none() {
                         info!("docker enabled from Settings");
                         *docker = Some(handle);
-                    }
-                    Err(e) => {
-                        warn!("docker enable failed: {e}");
-                        *docker = None;
+                    } else if let Some(h) = docker.as_ref() {
+                        h.set_policy(
+                            rt.docker_manage,
+                            rt.docker_allow_exec,
+                            rt.compose_paths.clone(),
+                        );
                     }
                 }
+                Err(e) => {
+                    warn!("docker enable failed: {e}");
+                }
             }
-        } else if docker.is_some() {
+        }
+    } else {
+        let mut docker = runtime.docker.lock().await;
+        if docker.is_some() {
             info!("docker disabled from Settings");
             *docker = None;
         }
@@ -824,6 +858,18 @@ mod tests {
         assert!(
             loop_src.contains("spawn_rpc_command("),
             "non-streaming Commands must be spawned like logs"
+        );
+        assert!(
+            !loop_src.contains("apply_runtime_state("),
+            "set_runtime docker connect must not await on the ingest select loop"
+        );
+        assert!(
+            loop_src.contains("spawn_set_runtime("),
+            "set_runtime must be spawned so lists still run after reconnect"
+        );
+        assert!(
+            !loop_src.contains("tx.send("),
+            "Result sends must not block reading the next Command"
         );
     }
 }
