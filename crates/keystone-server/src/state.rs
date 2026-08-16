@@ -22,8 +22,16 @@ pub type CommandTx = mpsc::Sender<Command>;
 /// Pull/compose mutate still use 180s via [`AgentRegistry::call`].
 pub const PAGE_LIST_TIMEOUT: Duration = Duration::from_secs(8);
 
-pub struct Pending {
-    pub tx: oneshot::Sender<keystone_proto::CommandResult>,
+struct PendingCall {
+    cmd: Command,
+    tx: oneshot::Sender<keystone_proto::CommandResult>,
+}
+
+struct ConnectedAgent {
+    gen: u64,
+    cmd_tx: CommandTx,
+    pending: HashMap<String, PendingCall>,
+    streams: HashMap<String, mpsc::Sender<StreamChunk>>,
 }
 
 #[derive(Clone, Default)]
@@ -32,31 +40,33 @@ pub struct AgentRegistry {
     epoch: Arc<AtomicU64>,
 }
 
-struct ConnectedAgent {
-    gen: u64,
-    cmd_tx: CommandTx,
-    pending: HashMap<String, oneshot::Sender<keystone_proto::CommandResult>>,
-    streams: HashMap<String, mpsc::Sender<StreamChunk>>,
-}
-
 impl AgentRegistry {
     /// Register a live command channel. Returns a generation that
     /// [`disconnect`] must present so a replaced session cannot wipe the new one.
     pub fn connect(&self, node_id: String, cmd_tx: CommandTx) -> u64 {
         let mut inner = self.inner.lock();
-        if let Some(existing) = inner.get_mut(&node_id) {
+        if let Some(existing) = inner.get(&node_id) {
             if existing.cmd_tx.same_channel(&cmd_tx) {
                 return existing.gen;
             }
         }
         let gen = self.epoch.fetch_add(1, Ordering::Relaxed);
+        let (pending, streams) = match inner.remove(&node_id) {
+            Some(old) => {
+                for p in old.pending.values() {
+                    let _ = cmd_tx.try_send(p.cmd.clone());
+                }
+                (old.pending, old.streams)
+            }
+            None => (HashMap::new(), HashMap::new()),
+        };
         inner.insert(
             node_id,
             ConnectedAgent {
                 gen,
                 cmd_tx,
-                pending: HashMap::new(),
-                streams: HashMap::new(),
+                pending,
+                streams,
             },
         );
         gen
@@ -97,8 +107,8 @@ impl AgentRegistry {
     pub fn complete(&self, node_id: &str, result: keystone_proto::CommandResult) {
         let mut inner = self.inner.lock();
         if let Some(agent) = inner.get_mut(node_id) {
-            if let Some(tx) = agent.pending.remove(&result.request_id) {
-                let _ = tx.send(result);
+            if let Some(p) = agent.pending.remove(&result.request_id) {
+                let _ = p.tx.send(result);
             }
         }
     }
@@ -189,7 +199,13 @@ impl AgentRegistry {
             let agent = inner
                 .get_mut(node_id)
                 .ok_or_else(|| anyhow::anyhow!("agent {node_id} is not connected"))?;
-            agent.pending.insert(request_id.clone(), tx);
+            agent.pending.insert(
+                request_id.clone(),
+                PendingCall {
+                    cmd: cmd.clone(),
+                    tx,
+                },
+            );
             if agent.cmd_tx.try_send(cmd).is_err() {
                 agent.pending.remove(&request_id);
                 anyhow::bail!("agent command queue full");
@@ -271,6 +287,45 @@ mod registry_tests {
         assert!(
             result.ok,
             "re-registering the same session must keep waiters"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_session_replays_pending_instead_of_dropping() {
+        let registry = AgentRegistry::default();
+        let (tx_old, mut rx_old) = mpsc::channel(4);
+        let (tx_new, mut rx_new) = mpsc::channel(4);
+        registry.connect("ranga".into(), tx_old);
+        let wait = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .call_timeout(
+                        "ranga",
+                        "container_list",
+                        "{}".into(),
+                        Duration::from_secs(2),
+                    )
+                    .await
+            }
+        });
+        let first = rx_old.recv().await.expect("queued on old session");
+        registry.connect("ranga".into(), tx_new);
+        let replayed = rx_new.recv().await.expect("replayed on new session");
+        assert_eq!(replayed.request_id, first.request_id);
+        registry.complete(
+            "ranga",
+            keystone_proto::CommandResult {
+                request_id: replayed.request_id,
+                ok: true,
+                payload_json: "[]".into(),
+                error: String::new(),
+            },
+        );
+        let result = wait.await.expect("join").expect("oneshot");
+        assert!(
+            result.ok,
+            "a replaced ingest session must not drop in-flight Docker/System waits"
         );
     }
 

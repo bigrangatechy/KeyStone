@@ -314,7 +314,10 @@ async fn connect_session(
                             cmd.payload_json,
                         );
                     }
-                    Ok(Some(_)) | Ok(None) => break,
+                    Ok(Some(other)) => {
+                        warn!("ignored server message: {:?}", other.body);
+                    }
+                    Ok(None) => break,
                     Err(e) => {
                         warn!("stream closed: {e}");
                         break;
@@ -870,6 +873,10 @@ mod tests {
         assert!(
             !loop_src.contains("tx.send("),
             "Result sends must not block reading the next Command"
+        );
+        assert!(
+            !loop_src.contains("Ok(Some(_)) | Ok(None) => break"),
+            "an empty ServerToAgent must not tear down the ingest session"
         );
     }
 }

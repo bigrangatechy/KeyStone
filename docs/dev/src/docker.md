@@ -51,7 +51,9 @@ Commands. Blocking on the gRPC sink reset the session (**agent dropped
 command**) or stalled Result reads (**agent command timed out**). Acks and
 Commands are try-queued to a side writer. The agent also spawns
 `set_runtime` so a Docker socket connect after reconnect cannot block
-`container_list`.
+`container_list`. A replaced ingest session keeps in-flight waits and
+replays those Commands on the new channel so the UI does not show
+**agent dropped command**.
 
 HTTP:
 
