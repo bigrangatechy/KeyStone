@@ -49,18 +49,32 @@ Use **Customize** on the Overview toolbar.
 - **Reset** drops a saved layout and returns to the built-in default. Cards
   you already saved stay until you reset or remove them.
 
+While Customize is open, the toolbar also has **density** (compact /
+comfortable / spacious), **cards** (bordered / flush / raised), and
+**accent** (blue / green / amber / rose). Those apply to this node’s
+Overview grid only — the site header stays the usual blue.
+
+Each card has a **style** menu:
+
+- Gauge: donut (default) or horizontal bar
+- Sparkline: line (default) or filled area
+- Stat: large (default) or compact
+- Bar list: bars (default) or compact
+
 Layouts are stored **per node**. Customising the NAS does not change the Pi.
 
 ## Card types
 
-You do not pick these by name in the UI; they describe how a card draws:
+You do not pick these by name in the UI; they describe how a card draws.
+**Customize** can change the drawing style without changing the metric:
 
-- **Stat** — one large value (uptime, load, a temperature, a rate).
-- **Gauge** — donut 0–100% from a ratio, or used/total (memory, GPU memory,
-  a sensor with a max).
+- **Stat** — one value (uptime, load, a temperature, a rate). Large or compact.
+- **Gauge** — 0–100% from a ratio, or used/total (memory, GPU memory, a
+  sensor with a max). Donut or horizontal bar.
 - **Bar list** — one bar per labeled series (filesystems, GPUs, all temps).
+  Normal or compact.
 - **Sparkline** — short history of one metric (about the last 15 minutes of
-  retained points).
+  retained points). Line or filled area.
 
 ## Temperatures
 

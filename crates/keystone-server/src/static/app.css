@@ -135,6 +135,12 @@ form.login label { display: flex; flex-direction: column; gap: 0.25rem; color: v
   margin: 0 0 0.45rem;
 }
 .widget-edit button { font-size: 0.75rem; padding: 0.12rem 0.4rem; }
+.widget-edit select {
+  font: inherit; font-size: 0.75rem;
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--line); padding: 0.12rem 0.35rem; border-radius: 4px;
+  max-width: 7.5rem;
+}
 .widget-grip {
   cursor: grab;
   color: var(--muted);
@@ -183,6 +189,12 @@ pre.snippet { background: var(--card); padding: 0.75rem 1rem; overflow: auto; bo
   gap: 0.75rem;
   margin-bottom: 1.25rem;
 }
+.widget-grid.density-compact { gap: 0.4rem; }
+.widget-grid.density-spacious { gap: 1.15rem; }
+.widget-grid.accent-blue { --accent: #3d8bfd; }
+.widget-grid.accent-green { --accent: #3fb950; }
+.widget-grid.accent-amber { --accent: #d29922; }
+.widget-grid.accent-rose { --accent: #e5534b; }
 .widget {
   background: var(--card);
   border: 1px solid var(--line);
@@ -191,6 +203,23 @@ pre.snippet { background: var(--card); padding: 0.75rem 1rem; overflow: auto; bo
   min-height: 8.5rem;
   display: flex;
   flex-direction: column;
+}
+.widget-grid.density-compact .widget {
+  min-height: 6.75rem;
+  padding: 0.5rem 0.65rem 0.55rem;
+}
+.widget-grid.density-spacious .widget {
+  min-height: 10rem;
+  padding: 1rem 1.1rem;
+}
+.widget-grid.cards-flush .widget {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.widget-grid.cards-raised .widget {
+  border-color: transparent;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
 }
 .widget.span-1 { grid-column: span 1; }
 .widget.span-2 { grid-column: span 2; }
@@ -211,6 +240,11 @@ pre.snippet { background: var(--card); padding: 0.75rem 1rem; overflow: auto; bo
   margin-top: auto;
   line-height: 1.15;
 }
+.widget.style-compact { min-height: 5.75rem; }
+.widget.style-compact h3 { margin-bottom: 0.2rem; }
+.widget.style-compact .stat { font-size: 1.2rem; }
+.widget.style-compact .bar-row { margin: 0.2rem 0 0.3rem; }
+.widget.style-compact .spark { height: 2.8rem; }
 .widget .gauge-wrap {
   display: grid;
   grid-template-columns: 7rem 1fr;
@@ -220,6 +254,15 @@ pre.snippet { background: var(--card); padding: 0.75rem 1rem; overflow: auto; bo
 }
 .widget .gauge-wrap svg { width: 7rem; height: 7rem; }
 .widget .gauge-caption { font-size: 0.95rem; }
+.widget .gauge-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  gap: 0.45rem;
+}
+.widget .gauge-bar { height: 0.85rem; }
+.widget .fill { stroke: var(--accent); }
 .widget.tone-ok .fill { stroke: #3fb950; }
 .widget.tone-warn .fill { stroke: #d29922; }
 .widget.tone-crit .fill { stroke: var(--danger); }
@@ -239,6 +282,10 @@ pre.snippet { background: var(--card); padding: 0.75rem 1rem; overflow: auto; bo
 .bar-fill { height: 100%; background: var(--accent); border-radius: 99px; }
 .widget .spark { width: 100%; height: 4.2rem; margin-top: auto; }
 .widget .spark path { fill: none; stroke: var(--accent); stroke-width: 2; }
+.widget .spark path.spark-fill {
+  fill: color-mix(in srgb, var(--accent) 28%, transparent);
+  stroke: none;
+}
 .widget.empty .stat { color: var(--muted); font-size: 1.4rem; }
 details.raw-metrics { margin-top: 0.5rem; color: var(--muted); }
 details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }

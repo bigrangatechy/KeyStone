@@ -11,33 +11,55 @@ row (`dashboard_json`) when the operator saves Customize; otherwise
 reorder cards (drop on another card = insert before it). Span is still
 `+/−` (1–4). Live dashboard polls do not rebuild the grid while editing.
 
+## Page chrome (`Dashboard.page`)
+
+Optional. Missing JSON is comfortable / bordered / blue so layouts saved
+before this field still load. Unknown `density`, `cards`, or `accent`
+values are **clamped to defaults** in `Dashboard::normalize` — they must
+not discard the widget list (`parse_or_default` / PUT). Version stays `1`.
+
+| Field | Values | Default |
+|---|---|---|
+| `density` | `compact`, `comfortable`, `spacious` | `comfortable` |
+| `cards` | `bordered`, `flush`, `raised` | `bordered` |
+| `accent` | `blue`, `green`, `amber`, `rose` | `blue` |
+
+Accent is scoped to `.widget-grid` (`--accent`), not the site header.
+`app.js` paints `density-*`, `cards-*`, and `accent-*` on the grid.
+
 ## Kinds (`WidgetKind`)
 
 Serialized snake_case. The UI, layout JSON, and hydrate all use this enum.
 
 | Kind | Metrics | Draw |
 |---|---|---|
-| `stat` | 1 | Large formatted value from `metrics[0]`. Optional `series` filters `labels_key`. |
-| `gauge` | 1 or 2 | One metric treated as 0–1, or used/total from two metrics. |
-| `bar_list` | 1 or 2 | One row per labeled series. `label` is the row title key (e.g. `mountpoint`). `invert` means `metrics[0]` is remaining space. |
-| `sparkline` | 1 | History of `metrics[0]` (about 15 minutes of retained points). |
+| `stat` | 1 | Formatted value from `metrics[0]`. Optional `series` filters `labels_key`. Style: `large` (default) or `compact`. |
+| `gauge` | 1 or 2 | One metric treated as 0–1, or used/total from two metrics. Style: `donut` (default) or `bar`. |
+| `bar_list` | 1 or 2 | One row per labeled series. `label` is the row title key (e.g. `mountpoint`). `invert` means `metrics[0]` is remaining space. Style: `bars` (default) or `compact`. |
+| `sparkline` | 1 | History of `metrics[0]` (about 15 minutes of retained points). Style: `line` (default) or `area`. |
 
-`WidgetInstance.span` is 1–4 grid columns. Unknown JSON keys are ignored so
-older servers can load a layout after a downgrade of optional fields.
+`WidgetInstance.span` is 1–4 grid columns. `WidgetInstance.style` is the
+drawing variant; empty means the kind default. Unknown JSON keys are
+ignored so older servers can load a layout after a downgrade of optional
+fields. Unknown `style` values are clamped, not rejected.
 
 ## Add a card type or preset
 
-1. New drawing style: add a `WidgetKind` variant, `description()`, hydrate
+1. New **metric** card type: add a `WidgetKind` variant, `description()`, hydrate
    in `hydrate_one`, and a branch in `crates/keystone-server/src/static/app.js`
    (`renderWidget`).
-2. New picker entry: `presets()` in `widgets.rs` (id, group, description,
+2. New **drawing variant** of an existing kind: add a value to
+   `effective_style` / `widgetStyle`, draw it in `renderWidget`, and list it
+   in this table. Do not add a kind only to change how a card looks.
+3. New picker entry: `presets()` in `widgets.rs` (id, group, description,
    `WidgetInstance`). Default Overview is `Dashboard::DEFAULT_IDS` — a subset
    of those ids.
-3. Per-sensor temps: `presets_for_samples` appends cards after `presets()`,
+4. Per-sensor temps: `presets_for_samples` appends cards after `presets()`,
    keyed by `labels_key`. Sensors with `node_hwmon_temp_max_celsius` become
    gauges; others are `stat`. Do not put every sensor on the default board.
-4. Validate: `Dashboard::validate` checks version `1`, unique ids, span,
-   catalog names, and metric arity per kind.
+5. Validate: `Dashboard::validate` checks version `1`, unique ids, span,
+   catalog names, and metric arity per kind. Call `normalize()` before
+   validate on PUT and when loading a saved layout.
 
 Saved custom layouts are left alone when you change the default. Operators
 **Reset** to pick up a new built-in set.

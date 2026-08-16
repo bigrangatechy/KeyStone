@@ -1468,7 +1468,14 @@ fn effective_dashboard(state: &AppState, node_id: &str) -> (Dashboard, &'static 
         .flatten();
     match saved.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(raw) => match serde_json::from_str::<Dashboard>(raw) {
-            Ok(d) if d.validate().is_ok() => (d, "custom"),
+            Ok(mut d) => {
+                d.normalize();
+                if d.validate().is_ok() {
+                    (d, "custom")
+                } else {
+                    (Dashboard::default_node(), "default")
+                }
+            }
             _ => (Dashboard::default_node(), "default"),
         },
         None => (Dashboard::default_node(), "default"),
@@ -2454,10 +2461,11 @@ async fn dashboard_put(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let dash: Dashboard = match serde_json::from_value(body) {
+    let mut dash: Dashboard = match serde_json::from_value(body) {
         Ok(d) => d,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
+    dash.normalize();
     if let Err(e) = dash.validate() {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
@@ -2694,6 +2702,58 @@ mod tests {
             "crit chips must stay coloured after audit CSS"
         );
         assert!(css.contains(".audit-detail"));
+    }
+
+    #[test]
+    fn overview_page_and_widget_styles() {
+        let js = include_str!("static/app.js");
+        assert!(js.contains("function widgetStyle"), "per-card draw styles");
+        assert!(
+            js.contains("function setPage"),
+            "page chrome while customizing"
+        );
+        assert!(js.contains("density-") && js.contains("cards-") && js.contains("accent-"));
+        assert!(js.contains("gauge-bar"), "gauge bar style");
+        assert!(js.contains("spark-fill"), "sparkline area fill");
+        assert!(js.contains("styleChoices"));
+        let css = include_str!("static/app.css");
+        assert!(css.contains(".widget-grid.density-compact"));
+        assert!(css.contains(".widget-grid.density-spacious"));
+        assert!(css.contains(".widget-grid.cards-flush"));
+        assert!(css.contains(".widget-grid.cards-raised"));
+        assert!(css.contains(".widget-grid.accent-green"));
+        assert!(css.contains(".widget-grid.accent-amber"));
+        assert!(css.contains(".widget-grid.accent-rose"));
+        assert!(css.contains(".widget.style-compact"));
+        assert!(css.contains(".gauge-bar"));
+        assert!(css.contains("path.spark-fill"));
+        assert!(
+            css.contains(".chip.tone-crit"),
+            "overview CSS must not drop crit chips"
+        );
+        let src = include_str!("http.rs");
+        let put = src
+            .split("async fn dashboard_put")
+            .nth(1)
+            .expect("dashboard_put")
+            .split("async fn dashboard_delete")
+            .next()
+            .expect("dashboard_put body");
+        assert!(
+            put.contains(".normalize()"),
+            "PUT must clamp page/style before validate"
+        );
+        let load = src
+            .split("fn effective_dashboard")
+            .nth(1)
+            .expect("effective_dashboard")
+            .split("fn node_settings")
+            .next()
+            .expect("effective_dashboard body");
+        assert!(
+            load.contains(".normalize()"),
+            "loading a saved layout must clamp page/style before validate"
+        );
     }
 
     #[test]

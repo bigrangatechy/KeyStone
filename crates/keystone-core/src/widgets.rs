@@ -10,6 +10,11 @@
 //! 4. Register a [`presets`] entry so the overview picker can place it.
 //! 5. Optionally include it on the built-in default dashboard.
 //!
+//! Drawing variants of an existing kind belong on [`WidgetInstance::style`],
+//! not a new kind. Page chrome (density, cards, accent) lives on
+//! [`Dashboard::page`]. Unknown values are clamped so a saved layout is not
+//! discarded after a downgrade.
+//!
 //! Operator Customize behaviour is in `docs/src/dashboard.md`. Extension
 //! steps and preset ids are in `docs/dev/src/widgets.md`.
 
@@ -70,6 +75,110 @@ fn default_span() -> u8 {
     1
 }
 
+/// How Overview draws the grid. Missing JSON uses these defaults so layouts
+/// saved before page styles still load.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageStyle {
+    /// `compact`, `comfortable` (default), or `spacious`.
+    #[serde(default = "default_density")]
+    pub density: String,
+    /// `bordered` (default), `flush`, or `raised`.
+    #[serde(default = "default_cards")]
+    pub cards: String,
+    /// Accent on the widget grid only: `blue` (default), `green`, `amber`, `rose`.
+    #[serde(default = "default_accent")]
+    pub accent: String,
+}
+
+fn default_density() -> String {
+    "comfortable".into()
+}
+
+fn default_cards() -> String {
+    "bordered".into()
+}
+
+fn default_accent() -> String {
+    "blue".into()
+}
+
+impl Default for PageStyle {
+    fn default() -> Self {
+        Self {
+            density: default_density(),
+            cards: default_cards(),
+            accent: default_accent(),
+        }
+    }
+}
+
+impl PageStyle {
+    fn normalize(&mut self) {
+        if !matches!(
+            self.density.as_str(),
+            "compact" | "comfortable" | "spacious"
+        ) {
+            self.density = default_density();
+        }
+        if !matches!(self.cards.as_str(), "bordered" | "flush" | "raised") {
+            self.cards = default_cards();
+        }
+        if !matches!(self.accent.as_str(), "blue" | "green" | "amber" | "rose") {
+            self.accent = default_accent();
+        }
+    }
+}
+
+fn page_is_default(page: &PageStyle) -> bool {
+    *page == PageStyle::default()
+}
+
+/// How a kind is drawn. Empty / unknown values become the kind default so a
+/// newer saved layout still loads on an older server after clamp-on-read.
+pub fn effective_style(kind: WidgetKind, style: &str) -> &'static str {
+    match kind {
+        WidgetKind::Gauge => {
+            if style == "bar" {
+                "bar"
+            } else {
+                "donut"
+            }
+        }
+        WidgetKind::Sparkline => {
+            if style == "area" {
+                "area"
+            } else {
+                "line"
+            }
+        }
+        WidgetKind::Stat => {
+            if style == "compact" {
+                "compact"
+            } else {
+                "large"
+            }
+        }
+        WidgetKind::BarList => {
+            if style == "compact" {
+                "compact"
+            } else {
+                "bars"
+            }
+        }
+    }
+}
+
+fn stored_style(kind: WidgetKind, style: &str) -> String {
+    let effective = effective_style(kind, style);
+    match (kind, effective) {
+        (WidgetKind::Gauge, "donut")
+        | (WidgetKind::Sparkline, "line")
+        | (WidgetKind::Stat, "large")
+        | (WidgetKind::BarList, "bars") => String::new(),
+        _ => effective.to_string(),
+    }
+}
+
 /// One card on a node dashboard. Add fields here as widgets need them; unknown
 /// JSON keys are ignored so older servers can still load a newer saved layout
 /// after a downgrade of optional settings.
@@ -95,6 +204,10 @@ pub struct WidgetInstance {
     /// For [`WidgetKind::BarList`]: treat `metrics[0]` as remaining space (`total - value`).
     #[serde(default)]
     pub invert: bool,
+    /// Drawing variant for this kind. Empty means the kind default (`donut`,
+    /// `line`, `large`, `bars`). Unknown values are clamped, not rejected.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style: String,
 }
 
 impl WidgetInstance {
@@ -113,11 +226,17 @@ impl WidgetInstance {
             label: None,
             series: None,
             invert: false,
+            style: String::new(),
         }
     }
 
     pub fn with_span(mut self, span: u8) -> Self {
         self.span = span;
+        self
+    }
+
+    pub fn with_style(mut self, style: impl Into<String>) -> Self {
+        self.style = style.into();
         self
     }
 
@@ -149,6 +268,9 @@ pub struct WidgetPreset {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Dashboard {
     pub version: u32,
+    /// Grid chrome. Omitted in JSON when it matches the built-in default.
+    #[serde(default, skip_serializing_if = "page_is_default")]
+    pub page: PageStyle,
     pub widgets: Vec<WidgetInstance>,
 }
 
@@ -165,6 +287,7 @@ impl Dashboard {
         let catalog = presets();
         Self {
             version: Self::VERSION,
+            page: PageStyle::default(),
             widgets: Self::DEFAULT_IDS
                 .iter()
                 .map(|id| {
@@ -179,12 +302,28 @@ impl Dashboard {
         }
     }
 
+    /// Clamp page chrome and per-card styles. Unknown values become defaults
+    /// so a layout saved by a newer server still loads here.
+    pub fn normalize(&mut self) {
+        self.page.normalize();
+        for w in &mut self.widgets {
+            w.style = stored_style(w.kind, &w.style);
+        }
+    }
+
     pub fn parse_or_default(json: Option<&str>) -> Self {
         let Some(raw) = json.map(str::trim).filter(|s| !s.is_empty()) else {
             return Self::default_node();
         };
         match serde_json::from_str::<Self>(raw) {
-            Ok(d) if d.validate().is_ok() => d,
+            Ok(mut d) => {
+                d.normalize();
+                if d.validate().is_ok() {
+                    d
+                } else {
+                    Self::default_node()
+                }
+            }
             _ => Self::default_node(),
         }
     }
@@ -734,6 +873,9 @@ pub struct HydratedWidget {
     pub rows: Vec<HydratedRow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spark: Vec<SparkPoint>,
+    /// Clamped drawing variant (`donut`, `bar`, `line`, `area`, `large`,
+    /// `compact`, `bars`). Always set so the UI does not re-derive it.
+    pub style: String,
 }
 
 const NOISY_FSTYPE: &[&str] = &[
@@ -776,6 +918,7 @@ fn hydrate_one(
         tone: String::new(),
         rows: Vec::new(),
         spark: Vec::new(),
+        style: effective_style(w.kind, &w.style).to_string(),
     };
     match w.kind {
         WidgetKind::Stat => {
@@ -1145,6 +1288,7 @@ mod tests {
         assert_eq!(cpu.display, "42%");
         assert!((cpu.ratio.unwrap() - 0.42).abs() < 1e-9);
         assert_eq!(cpu.tone, "ok");
+        assert_eq!(cpu.style, "donut");
         let mem = cards.iter().find(|c| c.id == "memory").unwrap();
         assert!(mem.display.contains("GiB"));
         assert!((mem.ratio.unwrap() - 0.5).abs() < 1e-9);
@@ -1180,6 +1324,7 @@ mod tests {
             label: Some("mountpoint".into()),
             series: None,
             invert: true,
+            style: String::new(),
         };
         let rows = bar_rows(&w, &samples, "bytes");
         assert_eq!(rows.len(), 1);
@@ -1204,6 +1349,7 @@ mod tests {
         ];
         let dash = Dashboard {
             version: 1,
+            page: PageStyle::default(),
             widgets: vec![WidgetInstance {
                 id: "net_rx".into(),
                 kind: WidgetKind::Sparkline,
@@ -1213,6 +1359,7 @@ mod tests {
                 label: None,
                 series: None,
                 invert: false,
+                style: String::new(),
             }],
         };
         let cards = hydrate(&dash, &samples, &HashMap::new(), &NodeSettings::default());
@@ -1228,6 +1375,68 @@ mod tests {
     }
 
     #[test]
+    fn old_layout_json_without_page_keeps_widgets() {
+        let raw = r#"{"version":1,"widgets":[{"id":"cpu","kind":"gauge","title":"CPU","span":1,"metrics":["node_cpu_usage_ratio"]}]}"#;
+        let d = Dashboard::parse_or_default(Some(raw));
+        assert_ne!(d, Dashboard::default_node());
+        assert_eq!(d.widgets.len(), 1);
+        assert_eq!(d.widgets[0].id, "cpu");
+        assert_eq!(d.page, PageStyle::default());
+        assert!(d.widgets[0].style.is_empty());
+        let json = serde_json::to_value(&d).unwrap();
+        assert!(json.get("page").is_none());
+        assert!(json["widgets"][0].get("style").is_none());
+    }
+
+    #[test]
+    fn unknown_page_and_widget_style_are_clamped_not_a_full_reset() {
+        let raw = r#"{"version":1,"page":{"density":"neon","cards":"glass","accent":"teal"},"widgets":[{"id":"cpu","kind":"gauge","title":"CPU","span":1,"metrics":["node_cpu_usage_ratio"],"style":"neon"}]}"#;
+        let d = Dashboard::parse_or_default(Some(raw));
+        assert_eq!(d.widgets.len(), 1);
+        assert_eq!(d.widgets[0].id, "cpu");
+        assert_eq!(d.page, PageStyle::default());
+        assert!(d.widgets[0].style.is_empty());
+        let cards = hydrate(&d, &[], &HashMap::new(), &NodeSettings::default());
+        assert_eq!(cards[0].style, "donut");
+    }
+
+    #[test]
+    fn hydrate_exposes_bar_and_area_styles() {
+        let gauge = WidgetInstance::new("cpu", WidgetKind::Gauge, "CPU", ["node_cpu_usage_ratio"])
+            .with_style("bar");
+        let spark = WidgetInstance::new("load", WidgetKind::Sparkline, "Load", ["node_load1"])
+            .with_style("area");
+        let dash = Dashboard {
+            version: 1,
+            page: PageStyle {
+                density: "compact".into(),
+                cards: "raised".into(),
+                accent: "green".into(),
+            },
+            widgets: vec![gauge, spark],
+        };
+        dash.validate().unwrap();
+        let cards = hydrate(&dash, &[], &HashMap::new(), &NodeSettings::default());
+        assert_eq!(cards[0].style, "bar");
+        assert_eq!(cards[1].style, "area");
+        let json = serde_json::to_value(&dash).unwrap();
+        assert_eq!(json["page"]["density"], "compact");
+        assert_eq!(json["page"]["cards"], "raised");
+        assert_eq!(json["page"]["accent"], "green");
+        assert_eq!(json["widgets"][0]["style"], "bar");
+        assert_eq!(json["widgets"][1]["style"], "area");
+    }
+
+    #[test]
+    fn default_layout_json_omits_page_and_style() {
+        let json = serde_json::to_value(Dashboard::default_node()).unwrap();
+        assert!(json.get("page").is_none());
+        for w in json["widgets"].as_array().unwrap() {
+            assert!(w.get("style").is_none(), "default card should omit style");
+        }
+    }
+
+    #[test]
     fn presets_are_valid_and_cover_default() {
         let catalog = presets();
         let mut ids = std::collections::HashSet::new();
@@ -1236,6 +1445,7 @@ mod tests {
             assert_eq!(p.id, p.widget.id);
             Dashboard {
                 version: 1,
+                page: PageStyle::default(),
                 widgets: vec![p.widget.clone()],
             }
             .validate()
@@ -1319,6 +1529,7 @@ mod tests {
             .any(|p| p.widget.series.as_deref() == Some("")));
         let dash = Dashboard {
             version: 1,
+            page: PageStyle::default(),
             widgets: vec![pkg.widget.clone(), nvme.widget.clone()],
         };
         let cards = hydrate(&dash, &samples, &HashMap::new(), &NodeSettings::default());

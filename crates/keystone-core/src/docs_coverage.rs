@@ -67,6 +67,45 @@ fn developer_widgets_doc_lists_kinds() {
             "docs/dev/src/widgets.md missing {needle}"
         );
     }
+    for needle in [
+        "`density`",
+        "`cards`",
+        "`accent`",
+        "`donut`",
+        "`bar`",
+        "`line`",
+        "`area`",
+        "`compact`",
+        "normalize",
+    ] {
+        assert!(
+            DEV_WIDGETS.contains(needle),
+            "docs/dev/src/widgets.md missing {needle}"
+        );
+    }
+}
+
+#[test]
+fn operator_dashboard_documents_page_and_widget_styles() {
+    let dash = include_str!("../../../docs/src/dashboard.md");
+    for needle in [
+        "density",
+        "compact",
+        "comfortable",
+        "spacious",
+        "bordered",
+        "flush",
+        "raised",
+        "accent",
+        "donut",
+        "horizontal bar",
+        "filled area",
+    ] {
+        assert!(
+            dash.contains(needle),
+            "docs/src/dashboard.md missing {needle}"
+        );
+    }
 }
 
 #[test]

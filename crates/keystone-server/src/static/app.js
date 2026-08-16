@@ -1044,7 +1044,7 @@
     return svg;
   }
 
-  function sparkline(points) {
+  function sparkline(points, area) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 240 64");
     svg.setAttribute("class", "spark");
@@ -1057,19 +1057,51 @@
     const max = Math.max.apply(null, vs);
     const span = (max - min) || 1;
     const pad = 4;
-    const d = points.map((p, i) => {
+    const coords = points.map((p, i) => {
       const x = pad + i * (240 - 2 * pad) / Math.max(points.length - 1, 1);
       const y = 64 - pad - ((p.v - min) / span) * (64 - 2 * pad);
-      return (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+      return [x, y];
+    });
+    const d = coords.map((xy, i) => {
+      return (i ? "L" : "M") + xy[0].toFixed(1) + " " + xy[1].toFixed(1);
     }).join(" ");
+    if (area) {
+      const first = coords[0];
+      const last = coords[coords.length - 1];
+      const fill = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      fill.setAttribute(
+        "d",
+        d + " L" + last[0].toFixed(1) + " " + (64 - pad) + " L" + first[0].toFixed(1) + " " + (64 - pad) + " Z"
+      );
+      fill.setAttribute("class", "spark-fill");
+      svg.appendChild(fill);
+    }
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     svg.appendChild(path);
     return svg;
   }
 
+  function widgetStyle(kind, style) {
+    const s = String(style || "");
+    if (kind === "gauge") return s === "bar" ? "bar" : "donut";
+    if (kind === "sparkline") return s === "area" ? "area" : "line";
+    if (kind === "stat") return s === "compact" ? "compact" : "large";
+    if (kind === "bar_list") return s === "compact" ? "compact" : "bars";
+    return s || "default";
+  }
+
+  function styleChoices(kind) {
+    if (kind === "gauge") return [["donut", "Donut"], ["bar", "Bar"]];
+    if (kind === "sparkline") return [["line", "Line"], ["area", "Area"]];
+    if (kind === "stat") return [["large", "Large"], ["compact", "Compact"]];
+    if (kind === "bar_list") return [["bars", "Bars"], ["compact", "Compact"]];
+    return [];
+  }
+
   function renderWidget(w) {
-    const card = el("article", "widget span-" + (w.span || 1) + (w.tone ? " tone-" + w.tone : ""));
+    const style = widgetStyle(w.kind, w.style);
+    const card = el("article", "widget span-" + (w.span || 1) + " style-" + style + (w.tone ? " tone-" + w.tone : ""));
     card.appendChild(el("h3", null, w.title || w.id));
     const empty = w.display === "—" && !(w.rows && w.rows.length) && !(w.spark && w.spark.length);
     if (empty) card.classList.add("empty");
@@ -1077,6 +1109,15 @@
       if (w.ratio == null) {
         card.classList.add("empty");
         card.appendChild(el("div", "stat", "—"));
+      } else if (style === "bar") {
+        const wrap = el("div", "gauge-bar-wrap");
+        wrap.appendChild(el("div", "stat", w.display || "—"));
+        const track = el("div", "bar-track gauge-bar");
+        const fill = el("div", "bar-fill");
+        fill.style.width = Math.round((Number(w.ratio) || 0) * 100) + "%";
+        track.appendChild(fill);
+        wrap.appendChild(track);
+        card.appendChild(wrap);
       } else {
         const wrap = el("div", "gauge-wrap");
         wrap.appendChild(donut(w.ratio));
@@ -1100,7 +1141,7 @@
       if (!(w.rows && w.rows.length)) card.appendChild(el("p", "muted", "No series yet."));
     } else if (w.kind === "sparkline") {
       card.appendChild(el("div", "stat", w.display || "—"));
-      card.appendChild(sparkline(w.spark || []));
+      card.appendChild(sparkline(w.spark || [], style === "area"));
       (w.rows || []).forEach((row) => {
         const meta = el("div", "bar-meta");
         meta.appendChild(el("span", null, row.label || ""));
@@ -1138,12 +1179,39 @@
     let backup = null;
     const dashUrl = "/api/v1/nodes/" + encodeURIComponent(nodeId) + "/dashboard";
 
+    function clampChoice(value, allowed, fallback) {
+      return allowed.indexOf(value) >= 0 ? value : fallback;
+    }
+
+    function pageStyle() {
+      const p = (layout && layout.page) || {};
+      return {
+        density: clampChoice(p.density, ["compact", "comfortable", "spacious"], "comfortable"),
+        cards: clampChoice(p.cards, ["bordered", "flush", "raised"], "bordered"),
+        accent: clampChoice(p.accent, ["blue", "green", "amber", "rose"], "blue")
+      };
+    }
+
+    function setPage(field, value) {
+      layout.page = Object.assign(pageStyle(), { [field]: value });
+      paintAll();
+    }
+
+    function setWidgetStyle(idx, value) {
+      const kind = layout.widgets[idx].kind;
+      const choices = styleChoices(kind).map((pair) => pair[0]);
+      const fallback = choices[0] || "";
+      layout.widgets[idx].style = clampChoice(value, choices, fallback);
+      paintAll();
+    }
+
     function paintWidgets() {
       const byId = {};
       (Array.isArray(hydrated) ? hydrated : []).forEach((w) => {
         byId[w.id] = w;
       });
-      const grid = el("div", "widget-grid");
+      const page = pageStyle();
+      const grid = el("div", "widget-grid density-" + page.density + " cards-" + page.cards + " accent-" + page.accent);
       const items = (layout && layout.widgets) || [];
       if (!items.length) {
         grid.appendChild(el("p", "muted", "No widgets yet. Use Customize to add some."));
@@ -1154,6 +1222,7 @@
           kind: spec.kind,
           title: spec.title,
           span: spec.span,
+          style: spec.style || "",
           display: "—",
           tone: "",
           rows: [],
@@ -1162,6 +1231,7 @@
         h.title = spec.title;
         h.span = spec.span;
         h.kind = spec.kind;
+        h.style = spec.style || h.style || "";
         const card = renderWidget(h);
         if (editing) {
           card.classList.add("editing");
@@ -1195,7 +1265,7 @@
         if (!Number.isFinite(from)) return;
         moveWidgetTo(from, idx);
       });
-      card.querySelectorAll("button").forEach((b) => {
+      card.querySelectorAll("button, select").forEach((b) => {
         b.addEventListener("mousedown", (ev) => ev.stopPropagation());
         b.addEventListener("dragstart", (ev) => ev.preventDefault());
       });
@@ -1234,6 +1304,21 @@
       addBtn("↓", () => moveWidget(idx, 1), idx >= n - 1);
       addBtn("−", () => setSpan(idx, span - 1), span <= 1);
       addBtn("+", () => setSpan(idx, span + 1), span >= 4);
+      const styles = styleChoices(layout.widgets[idx].kind);
+      if (styles.length) {
+        const sel = document.createElement("select");
+        sel.setAttribute("aria-label", "Card style");
+        const current = widgetStyle(layout.widgets[idx].kind, layout.widgets[idx].style);
+        styles.forEach((pair) => {
+          const o = new Option(pair[1], pair[0]);
+          if (pair[0] === current) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener("change", () => setWidgetStyle(idx, sel.value));
+        sel.addEventListener("mousedown", (ev) => ev.stopPropagation());
+        sel.addEventListener("dragstart", (ev) => ev.preventDefault());
+        row.appendChild(sel);
+      }
       addBtn("Remove", () => {
         layout.widgets.splice(idx, 1);
         paintAll();
@@ -1304,7 +1389,22 @@
         select.value = "";
       });
       toolbar.appendChild(select);
-      toolbar.appendChild(el("span", "muted", "Drag cards to place them. +/− changes width."));
+      const page = pageStyle();
+      function addPageSelect(field, label, options, current) {
+        const sel = document.createElement("select");
+        sel.setAttribute("aria-label", label);
+        options.forEach((pair) => {
+          const o = new Option(pair[1], pair[0]);
+          if (pair[0] === current) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener("change", () => setPage(field, sel.value));
+        toolbar.appendChild(sel);
+      }
+      addPageSelect("density", "Density", [["compact", "Compact"], ["comfortable", "Comfortable"], ["spacious", "Spacious"]], page.density);
+      addPageSelect("cards", "Cards", [["bordered", "Bordered"], ["flush", "Flush"], ["raised", "Raised"]], page.cards);
+      addPageSelect("accent", "Accent", [["blue", "Blue"], ["green", "Green"], ["amber", "Amber"], ["rose", "Rose"]], page.accent);
+      toolbar.appendChild(el("span", "muted", "Drag cards to place them. +/− changes width. Style is per card."));
       const save = el("button", null, "Save");
       save.type = "button";
       save.addEventListener("click", saveLayout);
