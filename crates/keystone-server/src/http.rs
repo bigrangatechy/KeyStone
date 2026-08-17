@@ -545,7 +545,12 @@ struct SettingsQuery {
 
 fn settings_err_message(err: Option<&str>) -> String {
     match err {
-        Some("totp") => "password or code did not match; authenticator was not changed".into(),
+        Some("totp-pw") => {
+            "that password did not match; authenticator setup was not started".into()
+        }
+        Some("totp") => {
+            "password or authenticator/backup code did not match; 2FA was not disabled".into()
+        }
         Some("totp-on") => "authenticator is already enabled".into(),
         _ => String::new(),
     }
@@ -802,7 +807,7 @@ async fn totp_start_post(
         .map(|h| auth::verify_password(&form.password, h))
         .unwrap_or(false);
     if !ok {
-        return Redirect::to("/settings?err=totp").into_response();
+        return Redirect::to("/settings?err=totp-pw").into_response();
     }
     let mut rec = state
         .stores
@@ -2710,6 +2715,34 @@ mod tests {
             "crit chips must stay coloured after audit CSS"
         );
         assert!(css.contains(".audit-detail"));
+    }
+
+    #[test]
+    fn totp_setup_password_mismatch_is_not_a_code_error() {
+        assert!(
+            settings_err_message(Some("totp-pw")).contains("setup was not started"),
+            "enroll must not blame an authenticator code"
+        );
+        assert!(
+            !settings_err_message(Some("totp-pw")).contains("code"),
+            "setup only asked for the password"
+        );
+        assert!(settings_err_message(Some("totp")).contains("disabled"));
+        let start = include_str!("http.rs")
+            .split("async fn totp_start_post")
+            .nth(1)
+            .expect("totp_start_post")
+            .split("async fn totp_confirm_post")
+            .next()
+            .expect("totp_start_post body");
+        assert!(
+            start.contains("err=totp-pw"),
+            "wrong password on Set up authenticator must use totp-pw"
+        );
+        assert!(
+            !start.contains("err=totp\""),
+            "setup must not reuse the disable error"
+        );
     }
 
     #[test]
