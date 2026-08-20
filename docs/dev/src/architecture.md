@@ -19,7 +19,8 @@ stream; the server never dials an agent and never opens a remote
        │  gRPC Session: PushFrame / Command / StreamChunk
        ▼
   keystone-server
-       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`)
+       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`);
+       │     last-tab logout, idle two hours, slides while a tab is open
        │     optional rustls on `http_listen` (`tls.rs`)
        ├── ingest (tonic), optional rustls on `grpc_listen`
        ├── mDNS advertise of ingest (`mdns.rs`, UDP 5353; no token in TXT)
@@ -83,7 +84,7 @@ send `set_runtime`.
 SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
-browse, Docker Hub login, System reboot/shutdown from the UI, hostname /
+browse, Docker Hub login, System shutdown from the UI, hostname /
 timezone / users / SSH / firewall editors, Wi-Fi / VLAN / IPv6, Fedora /
 Arch host updates, unattended-upgrades config, Watchtower, GitLab restore,
 Docker GitLab backup.

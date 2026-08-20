@@ -111,11 +111,11 @@
 </section>
 <section class="tab-panel" data-panel="system">
   <h2>System</h2>
-  <p class="muted">Host apt and IPv4 on this machine — not Docker.</p>
+  <p class="muted">Host apt, leftover services, failed units, and a confirmed reboot on this Ubuntu/Debian server — not Docker, and not a TrueNAS/Proxmox GUI. Appliance hosts stay on Observe.</p>
   {% if !sys_error.is_empty() %}
   <p class="error">System: {{ sys_error }}</p>
   {% endif %}
-  <div id="system" data-json="{{ sys_json }}" data-node="{{ node_id }}" data-manage="{% if sys_manage %}1{% else %}0{% endif %}" data-reason="{{ sys_reason }}" data-enabled="{% if sys_enabled %}1{% else %}0{% endif %}"></div>
+  <div id="system" data-json="{{ sys_json }}" data-node="{{ node_id }}" data-manage="{% if sys_manage %}1{% else %}0{% endif %}" data-reason="{{ sys_reason }}" data-enabled="{% if sys_enabled %}1{% else %}0{% endif %}" data-ui-host="{% if sys_ui_host %}1{% else %}0{% endif %}"></div>
 </section>
 <section class="tab-panel" data-panel="settings">
   <h2>Node settings</h2>
@@ -153,8 +153,8 @@
     <fieldset>
       <legend>System admin</legend>
       <label class="check"><input type="checkbox" name="sys_enabled" value="on"{% if sys_enabled %} checked{% endif %}> Observe host updates and addressing</label>
-      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade, IPv4 changes, and GitLab backup (root helper)</label>
-      <span class="muted">Both this checkbox and <code>sudo systemctl enable --now keystone-sys.socket</code> on the node. If the tab still says the helper is off, <code>sudo systemctl restart keystone-agent</code>. The metrics agent does not become root.</span>
+      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade, IPv4, GitLab backup, and reboot (root helper)</label>
+      <span class="muted">For Ubuntu Server, Debian, and Raspberry Pi OS. Keep this off on Proxmox, TrueNAS, OMV, Unraid. Both this checkbox and <code>sudo systemctl enable --now keystone-sys.socket</code> on the node. If the tab still says the helper is off, <code>sudo systemctl restart keystone-agent</code>. The metrics agent does not become root. Apply is apt, not dnf.</span>
     </fieldset>
     <button type="submit">Save settings</button>
   </form>

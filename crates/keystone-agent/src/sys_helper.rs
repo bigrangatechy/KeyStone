@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Root helper: allowlisted apt, IPv4, and GitLab Omnibus backup. No `sh -c`.
-//! Started by systemd socket.
+//! Root helper: allowlisted apt, leftover services, failed units, reboot,
+//! IPv4, and GitLab Omnibus backup. No `sh -c`. Started by systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -12,8 +12,8 @@ use std::process::Stdio;
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     merge_upgradable, netplan_yaml, nmcli_modify_args, parse_apt_list_upgradable,
-    parse_apt_simulate, parse_ip_addr_json, NetSet, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
-    UPDATES_LIST_CAP,
+    parse_apt_simulate, parse_ip_addr_json, parse_needrestart_batch, parse_systemctl_failed,
+    NeedrestartBatch, NetSet, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -124,19 +124,24 @@ async fn dispatch(
             gitlab_backup(writer).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
+        SysOp::Reboot => reboot(writer).await,
     }
 }
 
 async fn status() -> anyhow::Result<Value> {
     let backend = detect_backend();
-    let interfaces = ip_addrs().await;
+    let (interfaces, leftovers, failed) =
+        tokio::join!(ip_addrs(), leftover_services(), failed_units());
     Ok(json!({
         "helper": true,
         "backend": backend,
-        "reboot_required": reboot_required(),
+        "reboot_required": reboot_required() || leftovers.kernel_pending,
+        "kernel_pending": leftovers.kernel_pending,
         "interfaces": interfaces,
         "net": net_snapshot(backend, &interfaces),
         "gitlab": { "kind": gitlab_kind() },
+        "restart_services": leftovers.services,
+        "failed_units": failed,
     }))
 }
 
@@ -185,6 +190,39 @@ async fn ip_addrs() -> Value {
                 .unwrap_or(json!([]))
         }
         _ => json!([]),
+    }
+}
+
+async fn leftover_services() -> NeedrestartBatch {
+    if !which("needrestart") {
+        return NeedrestartBatch::default();
+    }
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("needrestart")
+            .args(["-b", "--restart=l"])
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await;
+    match output {
+        Ok(Ok(o)) => parse_needrestart_batch(&String::from_utf8_lossy(&o.stdout)),
+        _ => NeedrestartBatch::default(),
+    }
+}
+
+async fn failed_units() -> Vec<String> {
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("systemctl")
+            .args(["--failed", "--plain", "--no-legend", "--no-pager"])
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await;
+    match output {
+        Ok(Ok(o)) => parse_systemctl_failed(&String::from_utf8_lossy(&o.stdout)),
+        _ => Vec::new(),
     }
 }
 
@@ -290,11 +328,17 @@ async fn updates_list() -> anyhow::Result<Value> {
     Ok(json!({"packages": pkgs, "capped": capped}))
 }
 
-async fn apt_list_upgradable() -> anyhow::Result<String> {
-    let out = Command::new("apt")
-        .args(["-qq", "list", "--upgradable"])
-        .env("DEBIAN_FRONTEND", "noninteractive")
+fn apply_apt_env(cmd: &mut Command) {
+    cmd.env("DEBIAN_FRONTEND", "noninteractive")
         .env("APT_LISTCHANGES_FRONTEND", "none")
+        .env("NEEDRESTART_MODE", "list");
+}
+
+async fn apt_list_upgradable() -> anyhow::Result<String> {
+    let mut cmd = Command::new("apt");
+    apply_apt_env(&mut cmd);
+    let out = cmd
+        .args(["-qq", "list", "--upgradable"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -324,10 +368,8 @@ async fn updates_apply(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow:
 
 async fn apt_cmd(args: &[&str], capture: bool) -> anyhow::Result<String> {
     let mut cmd = Command::new("apt-get");
-    cmd.args(args)
-        .env("DEBIAN_FRONTEND", "noninteractive")
-        .env("APT_LISTCHANGES_FRONTEND", "none")
-        .stdin(Stdio::null());
+    apply_apt_env(&mut cmd);
+    cmd.args(args).stdin(Stdio::null());
     if capture {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let out = cmd.output().await.context("apt-get")?;
@@ -350,10 +392,10 @@ async fn stream_apt(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     args: &[&str],
 ) -> anyhow::Result<()> {
-    let mut child = Command::new("apt-get")
+    let mut cmd = Command::new("apt-get");
+    apply_apt_env(&mut cmd);
+    let mut child = cmd
         .args(args)
-        .env("DEBIAN_FRONTEND", "noninteractive")
-        .env("APT_LISTCHANGES_FRONTEND", "none")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -494,6 +536,18 @@ async fn net_set(req: &NetSet) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn reboot(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("reboot is not invoked in tests");
+    }
+    write_json(writer, &json!({"ok": true, "payload": {"rebooting": true}})).await?;
+    tokio::spawn(async {
+        let _ = Command::new("systemctl").arg("reboot").status().await;
+    });
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    Ok(())
+}
+
 async fn nm_connection_for_iface(iface: &str) -> anyhow::Result<String> {
     let out = Command::new("nmcli")
         .args(["-t", "-f", "NAME,DEVICE", "connection", "show", "--active"])
@@ -570,6 +624,21 @@ mod tests {
         assert!(
             kind == Some("omnibus") || kind == Some("none"),
             "status must report gitlab.kind, got {line}"
+        );
+        let payload = v.get("payload").expect("payload");
+        assert!(
+            payload
+                .get("restart_services")
+                .and_then(|x| x.as_array())
+                .is_some(),
+            "status must include leftover services, got {line}"
+        );
+        assert!(
+            payload
+                .get("failed_units")
+                .and_then(|x| x.as_array())
+                .is_some(),
+            "status must include failed units, got {line}"
         );
         server.await.unwrap();
     }
@@ -681,6 +750,99 @@ mod tests {
         assert!(
             !apply.contains("dist-upgrade"),
             "Apply stays apt-get upgrade, not dist-upgrade"
+        );
+    }
+
+    #[test]
+    fn apt_invocations_set_needrestart_mode_list() {
+        let src = include_str!("sys_helper.rs");
+        let env = src
+            .split("fn apply_apt_env")
+            .nth(1)
+            .expect("apply_apt_env")
+            .split("async fn")
+            .next()
+            .expect("apply_apt_env body");
+        assert!(
+            env.contains("NEEDRESTART_MODE") && env.contains("\"list\""),
+            "Ubuntu 24.04 needrestart must list, not auto-restart docker/ssh mid-upgrade"
+        );
+        let apt_cmd = src
+            .split("async fn apt_cmd")
+            .nth(1)
+            .expect("apt_cmd")
+            .split("async fn stream_apt")
+            .next()
+            .expect("apt_cmd body");
+        assert!(apt_cmd.contains("apply_apt_env"), "{apt_cmd}");
+        let stream = src
+            .split("async fn stream_apt")
+            .nth(1)
+            .expect("stream_apt")
+            .split("async fn gitlab_backup")
+            .next()
+            .expect("stream_apt body");
+        assert!(stream.contains("apply_apt_env"), "{stream}");
+        let list = src
+            .split("async fn apt_list_upgradable")
+            .nth(1)
+            .expect("apt_list_upgradable")
+            .split("async fn updates_apply")
+            .next()
+            .expect("apt_list_upgradable body");
+        assert!(list.contains("apply_apt_env"), "{list}");
+    }
+
+    #[test]
+    fn leftover_observe_does_not_restart_units() {
+        let src = include_str!("sys_helper.rs");
+        let leftover = src
+            .split("async fn leftover_services")
+            .nth(1)
+            .expect("leftover_services")
+            .split("async fn failed_units")
+            .next()
+            .expect("leftover_services body");
+        assert!(leftover.contains("needrestart"));
+        assert!(leftover.contains("\"-b\""));
+        assert!(
+            leftover.contains("--restart=l"),
+            "needrestart observe must list only, not auto-restart"
+        );
+        assert!(!leftover.contains("--restart=a"));
+        assert!(!leftover.contains("--restart=i"));
+        let failed = src
+            .split("async fn failed_units")
+            .nth(1)
+            .expect("failed_units")
+            .split("fn net_snapshot")
+            .next()
+            .expect("failed_units body");
+        assert!(failed.contains("systemctl"));
+        assert!(failed.contains("--failed"));
+        assert!(!failed.contains("restart"));
+        assert!(!failed.contains("apt-get"));
+    }
+
+    #[test]
+    fn reboot_is_systemctl_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn reboot")
+            .nth(1)
+            .expect("reboot")
+            .split("async fn nm_connection_for_iface")
+            .next()
+            .expect("reboot body");
+        assert!(body.contains("systemctl"));
+        assert!(body.contains("\"reboot\""));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("poweroff"));
+        assert!(!body.contains("halt"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(
+            !body.contains(".arg(") || body.contains(".arg(\"reboot\")"),
+            "reboot argv must be hardcoded systemctl reboot"
         );
     }
 

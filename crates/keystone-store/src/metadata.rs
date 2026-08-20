@@ -284,6 +284,17 @@ impl Metadata {
         Ok(rec)
     }
 
+    /// Sliding idle expiry for a finished login. `pending_2fa` rows stay on
+    /// their original clock (password step is five minutes).
+    pub fn touch_session(&self, id: &str, expires_unix: i64) -> anyhow::Result<bool> {
+        let conn = self.conn.lock();
+        let n = conn.execute(
+            "UPDATE sessions SET expires_unix = ?1 WHERE id = ?2 AND pending_2fa = 0",
+            params![expires_unix, id],
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn delete_session(&self, id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
@@ -594,6 +605,26 @@ mod tests {
             .unwrap();
         let sess = db.get_session("sid").unwrap().unwrap();
         assert!(sess.pending_2fa);
+        let pending_exp = sess.expires_unix;
+        assert!(
+            !db.touch_session("sid", now_unix() + 7200).unwrap(),
+            "idle slide must not extend a pending 2FA row"
+        );
+        assert_eq!(
+            db.get_session("sid").unwrap().unwrap().expires_unix,
+            pending_exp
+        );
+        db.put_session("live", "admin", now_unix() + 60, false)
+            .unwrap();
+        let later = now_unix() + 7200;
+        assert!(db.touch_session("live", later).unwrap());
+        assert_eq!(db.get_session("live").unwrap().unwrap().expires_unix, later);
+        db.put_session("stale", "admin", now_unix() - 1, false)
+            .unwrap();
+        assert!(
+            db.get_session("stale").unwrap().is_none(),
+            "expired sessions must be dropped on read"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

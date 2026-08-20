@@ -731,7 +731,7 @@ async fn handle_sys(
             }
             Ok(local)
         }
-        SysOp::UpdatesList | SysOp::NetSet => crate::sys::call(op, payload).await,
+        SysOp::UpdatesList | SysOp::NetSet | SysOp::Reboot => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
         SysOp::GitlabBackup => anyhow::bail!("gitlab_backup is streamed from the backup page"),
     }
@@ -891,27 +891,34 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("manage"), "{err}");
+        let reboot = handle_sys(&runtime, SysOp::Reboot, serde_json::json!({}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(reboot.contains("manage"), "{reboot}");
     }
 
     #[test]
     fn sys_ops_are_not_docker_ops() {
         for op in [
-            "status",
-            "updates_list",
-            "updates_apply",
-            "net_set",
-            "gitlab_backup",
+            SysOp::Status,
+            SysOp::UpdatesList,
+            SysOp::UpdatesApply,
+            SysOp::NetSet,
+            SysOp::GitlabBackup,
+            SysOp::Reboot,
         ] {
             assert!(
-                DockerOp::from_str(op).is_err(),
-                "sys op {op} must not parse as DockerOp"
+                DockerOp::from_str(op.as_str()).is_err(),
+                "sys op {} must not parse as DockerOp",
+                op.as_str()
             );
         }
-        assert!(DockerOp::from_str("updates_apply").is_err());
         assert!(SysOp::from_str("compose_update").is_err());
         assert!(SysOp::from_str("compose_pull").is_err());
         assert!(SysOp::from_str("compose_stop").is_err());
         assert!(SysOp::from_str("container_prune").is_err());
+        assert!(SysOp::from_str("poweroff").is_err());
     }
 
     #[test]

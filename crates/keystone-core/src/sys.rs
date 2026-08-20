@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Host system-admin ops (apt, IPv4, GitLab Omnibus backup). No I/O — the
-//! helper and agent run them. Keep `docs/dev/src/system.md` in sync.
+//! Host system-admin ops (apt, leftover services, failed units, reboot,
+//! IPv4, GitLab Omnibus backup). No I/O — the helper and agent run them.
+//! Keep `docs/dev/src/system.md` in sync.
 
 use std::net::Ipv4Addr;
 
@@ -39,6 +40,7 @@ pub enum SysOp {
     UpdatesApply,
     NetSet,
     GitlabBackup,
+    Reboot,
 }
 
 impl SysOp {
@@ -48,16 +50,22 @@ impl SysOp {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::Status => "Host snapshot (addresses, reboot-needed, helper)",
+            Self::Status => {
+                "Host snapshot (addresses, reboot-needed, leftover services, failed units, helper)"
+            }
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
             Self::NetSet => "Set IPv4 DHCP or static on one interface",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
+            Self::Reboot => "Reboot the node (systemctl reboot)",
         }
     }
 
     pub fn mutating(self) -> bool {
-        matches!(self, Self::UpdatesApply | Self::NetSet | Self::GitlabBackup)
+        matches!(
+            self,
+            Self::UpdatesApply | Self::NetSet | Self::GitlabBackup | Self::Reboot
+        )
     }
 
     pub fn permission(self) -> Permission {
@@ -256,6 +264,9 @@ pub fn nmcli_modify_args(req: &NetSet) -> Result<Vec<String>, SysError> {
 
 /// Max packages returned by Check for updates (UI table).
 pub const UPDATES_LIST_CAP: usize = 500;
+
+/// Max leftover / failed unit names returned in `status`.
+pub const HOST_UNIT_LIST_CAP: usize = 32;
 
 /// `Inst pkg [old] (new …)` lines from `apt-get -s upgrade` / `dist-upgrade`,
 /// plus apt 2.9+ `Upgrading:` sections and `kept back` names.
@@ -463,9 +474,96 @@ struct IpAddrInfo {
     prefixlen: u8,
 }
 
+/// Parsed `needrestart -b` (observe only). Services that still have old
+/// libraries mapped; kernel pending when `NEEDRESTART-KSTA` is 2 or 3.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NeedrestartBatch {
+    pub services: Vec<String>,
+    pub kernel_pending: bool,
+}
+
+/// `needrestart -b` stdout. Unknown / injected unit names are dropped.
+pub fn parse_needrestart_batch(stdout: &str) -> NeedrestartBatch {
+    let mut services = Vec::new();
+    let mut kernel_pending = false;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("NEEDRESTART-KSTA:") {
+            kernel_pending = rest.trim().parse::<u8>().ok().is_some_and(|n| n >= 2);
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("NEEDRESTART-SVC:") else {
+            continue;
+        };
+        let name = rest.trim().trim_matches('"').trim_matches('\'');
+        if !unit_name_ok(name) {
+            continue;
+        }
+        if !services.iter().any(|s| s == name) {
+            services.push(name.to_string());
+        }
+        if services.len() >= HOST_UNIT_LIST_CAP {
+            break;
+        }
+    }
+    services.sort();
+    services.truncate(HOST_UNIT_LIST_CAP);
+    NeedrestartBatch {
+        services,
+        kernel_pending,
+    }
+}
+
+/// `systemctl --failed --plain --no-legend --no-pager` (first column).
+pub fn parse_systemctl_failed(stdout: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim().trim_start_matches(['●', '*', '○', '•']).trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some(name) = line.split_whitespace().next() else {
+            continue;
+        };
+        if !unit_name_ok(name) {
+            continue;
+        }
+        if !out.iter().any(|s| s == name) {
+            out.push(name.to_string());
+        }
+        if out.len() >= HOST_UNIT_LIST_CAP {
+            break;
+        }
+    }
+    out.sort();
+    out.truncate(HOST_UNIT_LIST_CAP);
+    out
+}
+
+/// systemd unit token for display. No path, no shell.
+pub fn unit_name_ok(name: &str) -> bool {
+    let b = name.as_bytes();
+    if b.is_empty() || b.len() > 256 || name.contains("..") || name.contains('/') {
+        return false;
+    }
+    let Some((prefix, kind)) = name.rsplit_once('.') else {
+        return false;
+    };
+    if prefix.is_empty() || kind.is_empty() || kind.len() > 16 {
+        return false;
+    }
+    if !kind.bytes().all(|c| c.is_ascii_lowercase()) {
+        return false;
+    }
+    b.iter().all(|&c| {
+        c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_' | b'@' | b':' | b'\\')
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strum::IntoEnumIterator;
 
     #[test]
     fn mutating_ops_need_manage() {
@@ -474,30 +572,47 @@ mod tests {
         assert!(SysOp::UpdatesApply.mutating());
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::GitlabBackup.mutating());
+        assert!(SysOp::Reboot.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::GitlabBackup.permission(), Permission::SysManage);
+        assert_eq!(SysOp::Reboot.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
         assert!(SysOp::GitlabBackup.streams());
         assert!(!SysOp::Status.streams());
+        assert!(!SysOp::Reboot.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
+        assert_eq!(SysOp::Reboot.as_str(), "reboot");
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
     }
 
     #[test]
     fn mutating_sys_ops_are_in_the_ui() {
         let js = include_str!("../../keystone-server/src/static/app.js");
+        for op in SysOp::iter() {
+            if !op.mutating() {
+                continue;
+            }
+            let needle = match op {
+                SysOp::UpdatesApply => "/sys/updates",
+                SysOp::NetSet => "/sys/net_set",
+                SysOp::GitlabBackup => "/sys/gitlab-backup",
+                SysOp::Reboot => "/sys/reboot",
+                SysOp::Status | SysOp::UpdatesList => unreachable!("not mutating"),
+            };
+            assert!(
+                js.contains(needle),
+                "{} must appear in the System tab as {needle}",
+                op.as_str()
+            );
+        }
         assert!(
-            js.contains("/sys/net_set"),
-            "IPv4 changes must POST net_set from the System tab"
+            !js.contains("/sys/poweroff"),
+            "poweroff stays out of this slice"
         );
         assert!(
-            js.contains("/sys/updates"),
-            "apt apply must open the updates stream page"
-        );
-        assert!(
-            js.contains("/sys/gitlab-backup"),
-            "GitLab Omnibus backup must open the backup stream page"
+            !js.contains("/sys/shutdown"),
+            "shutdown stays out of this slice"
         );
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
@@ -638,5 +753,47 @@ mod tests {
             "gitlab_backup".parse::<SysOp>().unwrap(),
             SysOp::GitlabBackup
         );
+        assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
+        assert!("poweroff".parse::<SysOp>().is_err());
+        assert!("shutdown".parse::<SysOp>().is_err());
+    }
+
+    #[test]
+    fn parse_needrestart_batch_lists_services_and_kernel() {
+        let parsed = parse_needrestart_batch(
+            "NEEDRESTART-VER: 3.6\nNEEDRESTART-KCUR: 6.8.0-40-generic\nNEEDRESTART-KEXP: 6.8.0-41-generic\nNEEDRESTART-KSTA: 3\nNEEDRESTART-SVC: ssh.service\nNEEDRESTART-SVC: docker.service\nNEEDRESTART-CONT: some-container\nNEEDRESTART-SVC: ssh.service;rm\nNEEDRESTART-SVC: ../../etc/passwd\nNEEDRESTART-UCSTA: 0\n",
+        );
+        assert!(parsed.kernel_pending);
+        assert_eq!(parsed.services, vec!["docker.service", "ssh.service"]);
+        let idle = parse_needrestart_batch("NEEDRESTART-KSTA: 1\n");
+        assert!(!idle.kernel_pending);
+        assert!(idle.services.is_empty());
+    }
+
+    #[test]
+    fn parse_systemctl_failed_strips_bullet_and_rejects_shell() {
+        let units = parse_systemctl_failed(
+            "● apparmor.service loaded failed failed Load AppArmor profiles\nssh.service loaded failed failed OpenBSD Secure Shell\nfoo.service;reboot loaded failed failed nope\n",
+        );
+        assert_eq!(units, vec!["apparmor.service", "ssh.service"]);
+        assert!(parse_systemctl_failed("").is_empty());
+        assert!(!unit_name_ok("ssh.service;rm"));
+        assert!(!unit_name_ok("../escape.service"));
+        assert!(unit_name_ok("user@1000.service"));
+    }
+
+    #[test]
+    fn host_unit_lists_cap() {
+        let mut nr = String::from("NEEDRESTART-KSTA: 1\n");
+        let mut failed = String::new();
+        for i in 0..(HOST_UNIT_LIST_CAP + 8) {
+            nr.push_str(&format!("NEEDRESTART-SVC: pkg{i}.service\n"));
+            failed.push_str(&format!("pkg{i}.service loaded failed failed x\n"));
+        }
+        assert_eq!(
+            parse_needrestart_batch(&nr).services.len(),
+            HOST_UNIT_LIST_CAP
+        );
+        assert_eq!(parse_systemctl_failed(&failed).len(), HOST_UNIT_LIST_CAP);
     }
 }

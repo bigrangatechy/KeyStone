@@ -33,7 +33,12 @@ use crate::state::AppState;
 use crate::totp;
 
 const SESSION_COOKIE: &str = "keystone_session";
-const SESSION_SECS: i64 = 86400 * 7;
+/// Idle lifetime for a finished login. Each UI hit slides this window so
+/// an open dashboard stays signed in; a copied cookie dies after this
+/// much quiet. Pending 2FA stays on [`PENDING_2FA_SECS`].
+const SESSION_IDLE_SECS: i64 = 2 * 60 * 60;
+/// Do not rewrite SQLite/Set-Cookie on every 1s fleet poll.
+const SESSION_TOUCH_EVERY_SECS: i64 = 10 * 60;
 const PENDING_2FA_SECS: i64 = 5 * 60;
 
 fn forwarded_https(headers: &HeaderMap) -> bool {
@@ -43,15 +48,33 @@ fn forwarded_https(headers: &HeaderMap) -> bool {
         .is_some_and(|s| s.eq_ignore_ascii_case("https"))
 }
 
-fn session_cookie(id: String, headers: &HeaderMap, ui_https: bool) -> Cookie<'static> {
+fn cookie_secure(headers: &HeaderMap, ui_https: bool) -> bool {
+    ui_https || forwarded_https(headers)
+}
+
+fn session_cookie(id: String, secure: bool, max_age_secs: Option<i64>) -> Cookie<'static> {
     let mut cookie = Cookie::new(SESSION_COOKIE, id);
     cookie.set_http_only(true);
     cookie.set_path("/");
     cookie.set_same_site(SameSite::Lax);
-    if ui_https || forwarded_https(headers) {
+    if let Some(secs) = max_age_secs {
+        cookie.set_max_age(cookie::time::Duration::seconds(secs));
+    }
+    if secure {
         cookie.set_secure(true);
     }
     cookie
+}
+
+fn session_needs_touch(expires_unix: i64, now: i64) -> bool {
+    expires_unix.saturating_sub(now) <= SESSION_IDLE_SECS - SESSION_TOUCH_EVERY_SECS
+}
+
+fn attach_session_cookie(response: &mut Response, id: String, secure: bool) {
+    let cookie = session_cookie(id, secure, None);
+    if let Ok(value) = header::HeaderValue::from_str(&cookie.to_string()) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
 }
 
 fn expiry_unix(secs: i64) -> i64 {
@@ -109,6 +132,7 @@ pub fn router(state: AppState) -> Router {
         .route("/help", get(help_index))
         .route("/help/{slug}", get(help_section))
         .route("/api/v1/catalog", get(catalog_api))
+        .route("/api/v1/session", get(session_api))
         .route("/api/v1/alerts", get(alerts_api))
         .route("/api/v1/nodes", get(nodes_api))
         .route("/api/v1/dockerhub/search", get(crate::dockerhub::search))
@@ -142,6 +166,10 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn session_api() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "ok": true }))
 }
 
 async fn css() -> impl IntoResponse {
@@ -184,7 +212,9 @@ async fn require_session(
                 if path != "/login/totp" && path != "/logout" {
                     return Redirect::to("/login/totp").into_response();
                 }
-            } else if state
+                return next.run(request).await;
+            }
+            if state
                 .stores
                 .metadata
                 .user_must_change_password(&sess.username)
@@ -194,7 +224,20 @@ async fn require_session(
             {
                 return Redirect::to("/password").into_response();
             }
-            next.run(request).await
+            let slide = path != "/logout" && session_needs_touch(sess.expires_unix, expiry_unix(0));
+            let sid = sess.id.clone();
+            let secure = cookie_secure(request.headers(), state.config.tls.ui_https());
+            let mut response = next.run(request).await;
+            if slide
+                && state
+                    .stores
+                    .metadata
+                    .touch_session(&sid, expiry_unix(SESSION_IDLE_SECS))
+                    .unwrap_or(false)
+            {
+                attach_session_cookie(&mut response, sid, secure);
+            }
+            response
         }
         _ => Redirect::to("/login").into_response(),
     }
@@ -266,17 +309,22 @@ async fn login_post(
         .user_totp_enabled(&form.username)
         .unwrap_or(false);
     let sid = auth::new_session_id();
-    let (expires, pending, next) = if totp_on {
-        (expiry_unix(PENDING_2FA_SECS), true, "/login/totp")
+    let (expires, pending, next, cookie_age) = if totp_on {
+        (
+            expiry_unix(PENDING_2FA_SECS),
+            true,
+            "/login/totp",
+            Some(PENDING_2FA_SECS),
+        )
     } else if state
         .stores
         .metadata
         .user_must_change_password(&form.username)
         .unwrap_or(false)
     {
-        (expiry_unix(SESSION_SECS), false, "/password")
+        (expiry_unix(SESSION_IDLE_SECS), false, "/password", None)
     } else {
-        (expiry_unix(SESSION_SECS), false, "/")
+        (expiry_unix(SESSION_IDLE_SECS), false, "/", None)
     };
     let _ = state
         .stores
@@ -286,7 +334,11 @@ async fn login_post(
         state.login_gate.lock().clear(&form.username);
     }
     (
-        jar.add(session_cookie(sid, &headers, state.config.tls.ui_https())),
+        jar.add(session_cookie(
+            sid,
+            cookie_secure(&headers, state.config.tls.ui_https()),
+            cookie_age,
+        )),
         Redirect::to(next),
     )
         .into_response()
@@ -397,16 +449,20 @@ async fn totp_login_post(
     } else {
         "/"
     };
-    let _ =
-        state
-            .stores
-            .metadata
-            .put_session(&sid, &sess.username, expiry_unix(SESSION_SECS), false);
+    let _ = state.stores.metadata.put_session(
+        &sid,
+        &sess.username,
+        expiry_unix(SESSION_IDLE_SECS),
+        false,
+    );
     let mut old = Cookie::from(SESSION_COOKIE);
     old.set_path("/");
     (
-        jar.remove(old)
-            .add(session_cookie(sid, &headers, state.config.tls.ui_https())),
+        jar.remove(old).add(session_cookie(
+            sid,
+            cookie_secure(&headers, state.config.tls.ui_https()),
+            None,
+        )),
         Redirect::to(next),
     )
         .into_response()
@@ -1274,6 +1330,27 @@ fn slug_node_id(hostname: &str, node_id: &str) -> Result<String, String> {
     }
 }
 
+/// Compare node id / hostname to this UI process, ignoring `.local`.
+fn host_token_eq(a: &str, b: &str) -> bool {
+    fn norm(s: &str) -> String {
+        s.trim()
+            .trim_end_matches('.')
+            .trim_end_matches(".local")
+            .to_ascii_lowercase()
+    }
+    let a = norm(a);
+    let b = norm(b);
+    !a.is_empty() && a == b
+}
+
+fn node_is_this_ui_host(node_id: &str, hostname: &str) -> bool {
+    let me = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_default();
+    host_token_eq(&me, node_id) || host_token_eq(&me, hostname)
+}
+
 async fn add_node_page(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     Html(
         node_new_page(&headers, &state.config, String::new())
@@ -1457,6 +1534,7 @@ struct NodeTemplate {
     sys_reason: String,
     sys_json: String,
     sys_error: String,
+    sys_ui_host: bool,
 }
 
 #[derive(Deserialize)]
@@ -1594,6 +1672,7 @@ async fn node_page(
         .collect();
     nics.sort();
     nics.dedup();
+    let sys_ui_host = node_is_this_ui_host(&id, &node.hostname);
     Html(
         NodeTemplate {
             node_id: node.node_id,
@@ -1634,6 +1713,7 @@ async fn node_page(
             sys_reason,
             sys_json,
             sys_error,
+            sys_ui_host,
         }
         .render()
         .unwrap_or_else(|e| e.to_string()),
@@ -2547,6 +2627,27 @@ mod tests {
     }
 
     #[test]
+    fn ui_host_token_matches_mdns_suffix() {
+        assert!(host_token_eq("ranga", "ranga.local"));
+        assert!(host_token_eq("Ranga", "ranga"));
+        assert!(!host_token_eq("ranga", "pi"));
+        assert!(!host_token_eq("", "ranga"));
+        let me = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_default();
+        if me.is_empty() {
+            return;
+        }
+        assert!(node_is_this_ui_host(&me, "other-node"));
+        assert!(node_is_this_ui_host("other-id", &me));
+        assert!(!node_is_this_ui_host(
+            "definitely-not-this-ui-host",
+            "also-not-this-ui-host"
+        ));
+    }
+
+    #[test]
     fn docker_form_payload_prefers_json_then_fields() {
         let json = DockerForm {
             payload: Some(r#"{"name":"nginx"}"#.into()),
@@ -2876,11 +2977,14 @@ mod tests {
         assert!(js.contains("/sys/net_set"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/gitlab-backup"));
+        assert!(js.contains("/sys/reboot"));
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::UpdatesApply.mutating());
         assert!(SysOp::GitlabBackup.mutating());
+        assert!(SysOp::Reboot.mutating());
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
+        assert!(!SysOp::Reboot.streams());
     }
 
     fn host_headers(host: &str) -> HeaderMap {
@@ -2915,6 +3019,76 @@ mod tests {
     }
 
     #[test]
+    fn session_idle_slides_and_is_not_a_week() {
+        let src = include_str!("http.rs");
+        let head = src.split("#[cfg(test)]").next().expect("router source");
+        assert!(
+            head.contains("SESSION_IDLE_SECS: i64 = 2 * 60 * 60"),
+            "finished logins idle out after two hours"
+        );
+        assert!(
+            !head.contains("86400 * 7"),
+            "sessions must not last a week without UI traffic"
+        );
+        let require = head
+            .split("async fn require_session")
+            .nth(1)
+            .expect("require_session")
+            .split("async fn login_page")
+            .next()
+            .expect("require_session body");
+        assert!(
+            require.contains("touch_session") && require.contains("session_needs_touch"),
+            "authed hits must slide idle expiry so an open UI stays signed in"
+        );
+        assert!(
+            require.contains("pending_2fa"),
+            "pending 2FA must not get the two-hour idle window"
+        );
+        let now = 1_700_000_000;
+        assert!(
+            !session_needs_touch(now + SESSION_IDLE_SECS, now),
+            "fresh login must not rewrite SQLite on every poll"
+        );
+        assert!(session_needs_touch(
+            now + SESSION_IDLE_SECS - SESSION_TOUCH_EVERY_SECS,
+            now
+        ));
+        let cookie = session_cookie("sid".into(), false, None);
+        let set = cookie.to_string().to_ascii_lowercase();
+        assert!(
+            !set.contains("max-age"),
+            "finished login is a session cookie so the browser drops it on close, got {set}"
+        );
+        assert!(set.contains("httponly"));
+        let pending = session_cookie("p".into(), false, Some(PENDING_2FA_SECS));
+        assert!(
+            pending
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("max-age=300"),
+            "pending 2FA still expires in five minutes"
+        );
+    }
+
+    #[test]
+    fn last_tab_close_logs_out_and_heartbeat_keeps_logs_alive() {
+        let js = include_str!("static/app.js");
+        assert!(
+            js.contains("sendBeacon(\"/logout\""),
+            "closing the last UI tab must POST logout so a copied cookie dies"
+        );
+        assert!(
+            js.contains("keystone_tabs"),
+            "in-app clicks must not look like the last tab closing"
+        );
+        assert!(
+            js.contains("/api/v1/session"),
+            "an open logs page must heartbeat so idle does not kick a sitting operator"
+        );
+    }
+
+    #[test]
     fn dockerhub_api_is_behind_the_session_cookie() {
         let src = include_str!("http.rs");
         let head = src.split("#[cfg(test)]").next().expect("router source");
@@ -2926,6 +3100,11 @@ mod tests {
         assert!(
             !head[authed_end..].contains("/api/v1/dockerhub"),
             "Hub lookup must not be on the public router"
+        );
+        let session_api = head.find("/api/v1/session").expect("session heartbeat");
+        assert!(
+            session_api < authed_end,
+            "session heartbeat must require a UI cookie"
         );
         let usage = head
             .find("/api/v1/nodes/{id}/container-usage")
@@ -3006,6 +3185,42 @@ mod tests {
         assert!(
             js.contains("Apply pending apt upgrades"),
             "Apply updates must ask before apt-get upgrade"
+        );
+        assert!(
+            js.contains("Ubuntu will not auto-restart docker or ssh"),
+            "Apply confirm must say needrestart will not bounce docker during upgrade"
+        );
+        assert!(
+            js.contains("Services still using old libraries"),
+            "System tab must list leftover needrestart services"
+        );
+        assert!(
+            js.contains("this tab does not restart individual units"),
+            "leftover services must not offer a restart-this-unit form"
+        );
+        assert!(
+            js.contains("Failed systemd units"),
+            "System tab must list failed units"
+        );
+        assert!(
+            js.contains("Reboot this node now?"),
+            "reboot must ask before systemctl reboot"
+        );
+        assert!(
+            js.contains("This node is serving the KeyStone UI"),
+            "rebooting the UI host must warn that the session will drop"
+        );
+        assert!(js.contains("/sys/reboot"));
+        assert!(!js.contains("/sys/poweroff"));
+        assert!(!js.contains("systemctl restart"));
+        let html = include_str!("../templates/node.html");
+        assert!(
+            html.contains("data-ui-host"),
+            "System tab must know if this node serves the UI"
+        );
+        assert!(
+            html.contains("and reboot"),
+            "Settings manage checkbox must mention reboot"
         );
         assert!(
             js.contains("Backup GitLab"),

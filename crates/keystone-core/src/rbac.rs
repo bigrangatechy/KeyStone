@@ -32,7 +32,7 @@ pub enum Permission {
     DockerExec,
     /// View host system-admin snapshot (apt list, addresses).
     SysView,
-    /// Apply apt upgrades and set IPv4 (opt-in root helper).
+    /// Apply apt upgrades, reboot, and set IPv4 (opt-in root helper).
     SysManage,
 }
 
@@ -50,7 +50,7 @@ impl Permission {
             }
             Self::DockerExec => "Execute a process inside a container (root-equivalent)",
             Self::SysView => "View host updates and addressing on a node",
-            Self::SysManage => "Apply apt upgrades and set IPv4 on a node",
+            Self::SysManage => "Apply apt upgrades, reboot, and set IPv4 on a node",
         }
     }
 

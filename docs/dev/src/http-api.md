@@ -7,7 +7,12 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 Axum router in `crates/keystone-server/src/http.rs`. Cookie `keystone_session` on almost everything. `HttpOnly`, `SameSite=Lax`.
 `Secure` when in-tree UI TLS is on, or when `X-Forwarded-Proto: https`.
-Static CSS/JS are `include_str!`’d into the binary. A `pending_2fa` session
+Finished logins are a session cookie (no `Max-Age`) so the browser drops
+them on quit. They also expire after **two hours idle** (`SESSION_IDLE_SECS`);
+`require_session` slides `expires_unix` about every ten minutes of traffic.
+`GET /api/v1/session` is a cookie heartbeat so an open logs page counts as
+traffic. Closing the last UI tab `sendBeacon`s `POST /logout`. `pending_2fa`
+is still five minutes (`Max-Age=300`) and is not slid. Static CSS/JS are `include_str!`’d into the binary. A `pending_2fa` session
 may only hit `/login/totp` and `/logout`. After a good code the pending row
 is deleted and a new session id is issued.
 
@@ -42,7 +47,7 @@ is deleted and a new session id is issued.
 | POST | `/settings/totp/confirm` | 6-digit code; enables TOTP, shows backup codes once. |
 | POST | `/settings/totp/disable` | Password + TOTP or backup; clears TOTP columns. |
 | POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`. Redirect keeps `?panel=`. Audit log. Streaming ops are 400. |
-| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields. Audit log. Streaming ops redirect to the apply page. |
+| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields. Audit log. Streaming ops redirect to the apply page. `reboot` is mutating and not streamed. |
 | GET | `/nodes/{id}/sys/updates` | HTML follow page for `apt-get upgrade`. |
 | GET | `/nodes/{id}/sys/updates/stream` | SSE for `updates_apply`. Cancel on drop. |
 | GET | `/nodes/{id}/sys/gitlab-backup` | HTML follow page for Omnibus `gitlab-backup create`. |
@@ -59,6 +64,7 @@ is deleted and a new session id is issued.
 
 | Method | Path | Body / result |
 |---|---|---|
+| GET | `/api/v1/session` | `{ ok: true }`. Cookie heartbeat. |
 | GET | `/api/v1/catalog` | `{ "metrics": [ { name, metric_type, unit, help, labels } ] }` from `catalog()`. |
 | GET | `/api/v1/alerts` | `{ "alerts": [ { node_id, hostname, chip, label, severity, display, hint } ] }`. Live firing chips (`warn`/`crit`). Header badge polls this at 2s. |
 | GET | `/api/v1/nodes` | `{ "nodes": [ { node_id, hostname, os, status, last_seen, chips, alert_count } ] }`. `chips` are CPU/RAM/disk/temp (`id`, `label`, `display`, `tone`, optional `hint`). `alert_count` is how many chips are firing. Home page polls this at 1s. |

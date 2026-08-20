@@ -25,7 +25,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
   (JSON array of Argon2 hashes), `totp_last_step` (replay).
   `set_user_password` updates only hash + `must_change_password`.
 - `sessions` — cookie id, username, expiry (purged on read), `pending_2fa`
-  (0/1). `put_session(..., pending_2fa)`.
+  (0/1). `put_session(..., pending_2fa)`. Finished logins are two hours
+  idle; `touch_session` slides `expires_unix` and refuses `pending_2fa`
+  rows.
 - `audit` — mutating Docker and System ops with username, node, op, target,
   ok, detail. Header **Audit** (`GET /audit`) lists the newest 200.
   Settings retention does not prune this table.

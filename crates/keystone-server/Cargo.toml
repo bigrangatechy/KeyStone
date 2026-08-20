@@ -24,6 +24,7 @@ axum-extra.workspace = true
 axum-server.workspace = true
 chrono.workspace = true
 clap.workspace = true
+cookie = "0.18"
 futures-util.workspace = true
 hex.workspace = true
 http-body-util.workspace = true

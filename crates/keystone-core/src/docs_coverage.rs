@@ -132,6 +132,47 @@ fn operator_audit_page_is_documented() {
 }
 
 #[test]
+fn operator_docs_cover_idle_session() {
+    let security = include_str!("../../../docs/src/security.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    for (name, body) in [
+        ("security.md", security),
+        ("using.md", using),
+        ("troubleshooting.md", trouble),
+        ("http-api.md", http),
+    ] {
+        assert!(
+            body.contains("two hours"),
+            "{name} must say the UI session idles out after two hours"
+        );
+    }
+    assert!(
+        security.contains("copied from DevTools"),
+        "security.md must say closing the last tab kills a stolen cookie"
+    );
+}
+
+#[test]
+fn operator_docs_cover_headless_system_manage() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    assert!(
+        system.contains("TrueNAS") && system.contains("Proxmox"),
+        "System chapter must say NAS/hypervisors are not the manage target"
+    );
+    assert!(
+        system.contains("Observe"),
+        "appliance hosts stay on Observe"
+    );
+    assert!(
+        using.contains("stay on Observe"),
+        "using.md must point Proxmox/TrueNAS at Observe"
+    );
+}
+
+#[test]
 fn operator_docs_cover_boot_compose_and_updates_list() {
     let install = include_str!("../../../docs/src/install.md");
     let trouble = include_str!("../../../docs/src/troubleshooting.md");
@@ -165,5 +206,51 @@ fn operator_docs_cover_boot_compose_and_updates_list() {
     assert!(
         http.contains("500"),
         "HTTP API must mention the updates list cap"
+    );
+}
+
+#[test]
+fn operator_docs_cover_needrestart_and_reboot() {
+    let system = include_str!("../../../docs/src/system.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("NEEDRESTART_MODE=list"),
+        "System chapter must say Apply will not auto-restart docker/ssh"
+    );
+    assert!(
+        system.contains("needrestart -b") && system.contains("systemctl --failed"),
+        "System chapter must document leftover services and failed units"
+    );
+    assert!(
+        system.contains("systemctl reboot") && system.contains("Poweroff"),
+        "System chapter must document confirmed reboot and that poweroff stays out"
+    );
+    assert!(
+        trouble.contains("NEEDRESTART_MODE=list"),
+        "troubleshooting must mention leftover services after Apply"
+    );
+    assert!(
+        security.contains("reboot"),
+        "security.md must treat reboot as the same trust class as apt apply"
+    );
+    assert!(
+        audit.contains("confirmed reboot"),
+        "Audit must list reboot as a System mutation"
+    );
+    assert!(
+        http.contains("`reboot`"),
+        "HTTP API must mention the reboot POST"
+    );
+    assert!(
+        !arch.contains("System reboot/shutdown"),
+        "architecture.md must not list reboot as still out of this slice"
+    );
+    assert!(
+        arch.contains("System shutdown from the UI"),
+        "shutdown stays out; reboot is in"
     );
 }

@@ -26,6 +26,9 @@ the package.
   backup code (`XXXX-XXXX`).
 - “too many attempts”: eight failed password or TOTP tries in 15 minutes
   for that username. Wait for the window to pass.
+- Sent back to login after leaving the tab: closing the last KeyStone tab
+  signs you out. A session also dies after two hours with no UI traffic
+  (a tab left in the background counts). Sign in again.
 
 ## Stuck on “Choose a password”
 
@@ -148,12 +151,17 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade, IPv4 changes, and GitLab backup**
+- Manage refused: turn **Allow apt upgrade, IPv4, GitLab backup, and reboot**
   on and save.
 - `apt-get` failed: read the apply stream; the helper only runs `upgrade`,
   not `dist-upgrade`. Debian / Ubuntu / Raspberry Pi OS only. Check for
   updates lists `apt list --upgradable` plus a simulated dist-upgrade
   (held-back / phased included); Apply still will not install new deps.
+  Ubuntu 24.04 will not auto-restart docker or ssh during Apply
+  (`NEEDRESTART_MODE=list`); leftover services stay listed on the tab.
+- Reboot dropped the UI: you rebooted the node that serves KeyStone. Wait
+  for `keystone-server` to come back, then sign in again. Poweroff is not
+  in this UI.
 - Static IPv4 dropped the session: that address is now on the interface.
   Use a console if you cannot reach the new IP.
 

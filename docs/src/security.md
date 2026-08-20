@@ -10,13 +10,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - The **server** holds admin sessions, the ingest token, metric history, and
   the audit log. Anyone who can write `data_dir` or log in as the admin owns
 the lab view and can send Docker commands to connected agents that allow
-them. The same session can apply apt upgrades and change IPv4 when System
+them. The same session can apply apt upgrades, reboot, and change IPv4 when System
 Manage and the opt-in root helper are on.
 - Each **agent** runs as a system user. With Docker Observe enabled it can
   use the engine socket — that is root-equivalent on **that** host.
 - The **ingest token** proves an agent is allowed to push. It does **not**
   grant UI login and cannot start, stop, or exec containers, apply apt
-  upgrades, or change IPv4.
+  upgrades, reboot a node, or change IPv4.
 
 ## UI account
 
@@ -55,6 +55,14 @@ When `[tls]` cert and key are set, the session cookie is marked `Secure`.
 It is also `Secure` when the request carries `X-Forwarded-Proto: https`
 (typical behind a tunnel or TLS proxy) so LAN HTTP still works without
 in-tree certs. The cookie is `HttpOnly` and `SameSite=Lax`.
+
+A finished login is a **session cookie** (the browser drops it when that
+browser actually quits) plus **two hours of idle** on the server. Using
+the UI, including an open logs page, slides the idle window. Closing the
+**last** KeyStone tab signs you out so a cookie copied from DevTools dies
+with that tab. Clicking around inside the UI does not. The
+password-then-TOTP step is still five minutes and does not get the idle
+slide. The ingest token is not this cookie and is not expired by it.
 
 Lost phone: use a backup code, then enroll again from Settings. Lost both:
 you need filesystem access to `data_dir` on the server host — there is no

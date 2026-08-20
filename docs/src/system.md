@@ -5,14 +5,21 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # System
 
-The **System** tab is the machine, not Docker: pending apt upgrades, apply
-them, and IPv4 DHCP vs static. Cloudflare Tunnel and other containers stay
-on **Compose** (use **Update** = pull then up).
+The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
+Pi OS** boxes (apt, leftover services, failed units, confirmed reboot,
+IPv4, GitLab Omnibus backup). It is not a TrueNAS,
+Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
+agent on them for **Overview metrics** (and Docker Observe if they run
+Engine). Leave **System manage** off.
+
+Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
+= pull then up).
 
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, IPv4 changes, and GitLab backup** if you want Apply.
+   and **Allow apt upgrade, IPv4, GitLab backup, and reboot** if you want Apply
+   or Reboot.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
 
@@ -31,21 +38,35 @@ Missing socket → the tab shows that `systemctl` line. Observe off → it
 points at Settings (the socket unit alone does not turn the tab on). The
 helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
 It only runs allowlisted ops (`apt-get update` / `upgrade`, `apt list
---upgradable`, simulated `dist-upgrade`, netplan or
+--upgradable`, simulated `dist-upgrade`, `needrestart -b`,
+`systemctl --failed`, `systemctl reboot`, netplan or
 `nmcli`, Omnibus `gitlab-backup create`). There is no shell string.
 
 ## Updates
 
 **Check for updates** runs `apt-get update` on **this** node, then lists
 what `apt list --upgradable` and a simulated `apt-get dist-upgrade` agree
-is pending (Debian / Ubuntu / Raspberry Pi OS). Held-back packages and
+is pending (Debian / Ubuntu / Raspberry Pi OS). Fedora Server can **Observe**
+the host; this version does not run `dnf`. Held-back packages and
 Ubuntu phased updates are included. The table is capped at 500 names.
 
 **Apply updates** still runs `apt-get -y upgrade` (not `dist-upgrade`, not
 autoremove) and streams the log. Leave the page to cancel follow. Apply
 will not install new packages that only `dist-upgrade` would pull, and
-Ubuntu may still skip a phased package. A reboot-needed flag is shown when
-`/run/reboot-required` exists; this version does not reboot for you.
+Ubuntu may still skip a phased package. On Ubuntu 24.04, Apply sets
+`NEEDRESTART_MODE=list` so needrestart does **not** auto-restart docker or
+ssh in the middle of the upgrade.
+
+After Apply, the System tab lists **services still using old libraries**
+(`needrestart -b`) and **failed systemd units** (`systemctl --failed`).
+There is no “restart this unit” button — use a shell if you want a
+targeted restart.
+
+A reboot-needed flag is shown when `/run/reboot-required` exists or
+needrestart reports a pending kernel. **Reboot node** is a confirmed
+`systemctl reboot` (manage on). Poweroff is not in this UI. If this node
+is the machine serving the KeyStone UI, the tab warns that the session
+will drop until the server is back.
 
 Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
 are enabled for boot (`WantedBy=multi-user.target`). After a kernel or

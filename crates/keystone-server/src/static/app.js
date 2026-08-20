@@ -803,8 +803,53 @@
     if (data.backend) bits.push(data.backend);
     meta.textContent = bits.join(" · ") || "No host snapshot yet.";
     wrap.appendChild(meta);
+    const uiHost = host.getAttribute("data-ui-host") === "1";
     if (data.reboot_required) {
-      wrap.appendChild(el("p", "error", "Reboot required after package updates. This version does not reboot for you."));
+      wrap.appendChild(el("p", "error", data.kernel_pending
+        ? "Kernel update pending. Reboot this node when you are ready."
+        : "Reboot required after package updates."));
+    }
+    if (helperOn) {
+      const leftovers = Array.isArray(data.restart_services) ? data.restart_services : [];
+      wrap.appendChild(el("h3", null, "Services still using old libraries"));
+      wrap.appendChild(el("p", "muted", "Listed by needrestart after upgrades. Restart them from a shell if you want — this tab does not restart individual units."));
+      if (!leftovers.length) {
+        wrap.appendChild(el("p", "muted", "None right now."));
+      } else {
+        wrap.appendChild(unitNameTable(leftovers));
+      }
+      const failed = Array.isArray(data.failed_units) ? data.failed_units : [];
+      wrap.appendChild(el("h3", null, "Failed systemd units"));
+      if (!failed.length) {
+        wrap.appendChild(el("p", "muted", "None right now."));
+      } else {
+        wrap.appendChild(unitNameTable(failed));
+      }
+    }
+    if (manage && helperOn) {
+      const rebootHead = el("div", "compose-head");
+      rebootHead.appendChild(el("h3", null, "Reboot"));
+      wrap.appendChild(rebootHead);
+      if (uiHost) {
+        wrap.appendChild(el("p", "error", "This node is serving the KeyStone UI. Rebooting it will take this session down until the server is back."));
+      } else {
+        wrap.appendChild(el("p", "muted", "Hardcoded systemctl reboot. Poweroff is not in this UI. KeyStone units come back if they are enabled."));
+      }
+      const rebootForm = document.createElement("form");
+      rebootForm.method = "post";
+      rebootForm.action = "/nodes/" + encodeURIComponent(node) + "/sys/reboot";
+      rebootForm.addEventListener("submit", (ev) => {
+        const msg = uiHost
+          ? "This node is serving the KeyStone UI. Rebooting it will take this session down until the server is back. Continue?"
+          : "Reboot this node now? The agent session will drop. KeyStone units come back if they are enabled.";
+        if (!window.confirm(msg)) ev.preventDefault();
+      });
+      const rebootBtn = document.createElement("button");
+      rebootBtn.type = "submit";
+      rebootBtn.className = "danger";
+      rebootBtn.textContent = "Reboot node";
+      rebootForm.appendChild(rebootBtn);
+      wrap.appendChild(rebootForm);
     }
 
     const ifaces = Array.isArray(data.interfaces) ? data.interfaces : [];
@@ -865,7 +910,7 @@
         apply.className = "danger";
         apply.textContent = "Apply updates";
         apply.addEventListener("click", () => {
-          if (!window.confirm("Apply pending apt upgrades on this node? This can restart services.")) {
+          if (!window.confirm("Apply pending apt upgrades on this node? Ubuntu will not auto-restart docker or ssh during Apply; leftover services are listed after.")) {
             return;
           }
           window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/updates";
@@ -1012,6 +1057,19 @@
       }
     }
     host.replaceChildren(wrap);
+  }
+
+  function unitNameTable(names) {
+    const table = document.createElement("table");
+    table.appendChild(thead(["Unit"]));
+    const body = document.createElement("tbody");
+    names.forEach((name) => {
+      const tr = document.createElement("tr");
+      tr.appendChild(tdCode(name || ""));
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    return table;
   }
 
   function ethernetIface(name) {
@@ -1691,6 +1749,70 @@
     }, 400);
   }
 
+  function bindSessionLifetime() {
+    if (!document.querySelector("header.bar")) return;
+    const tabKey = "keystone_tabs";
+    const tabId = String(Math.random()).slice(2);
+    const ttlMs = 20000;
+    let stay = false;
+    function markStay() {
+      stay = true;
+    }
+    function readTabs() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(tabKey) || "[]");
+        return Array.isArray(raw) ? raw : [];
+      } catch (_) {
+        return [];
+      }
+    }
+    function writeTabs(list) {
+      localStorage.setItem(tabKey, JSON.stringify(list));
+    }
+    function pulse() {
+      const now = Date.now();
+      const list = readTabs().filter((t) => t && (t.id === tabId || now - t.t < ttlMs));
+      const i = list.findIndex((t) => t.id === tabId);
+      if (i >= 0) list[i].t = now;
+      else list.push({ id: tabId, t: now });
+      writeTabs(list);
+    }
+    function drop() {
+      writeTabs(readTabs().filter((t) => t && t.id !== tabId));
+    }
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest("a[href]");
+      if (!a || a.target === "_blank") return;
+      try {
+        if (new URL(a.href, location.href).origin === location.origin) markStay();
+      } catch (_) {}
+    });
+    document.addEventListener("submit", markStay);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")) {
+        markStay();
+      }
+    });
+    pulse();
+    setInterval(pulse, 5000);
+    window.addEventListener("pagehide", (e) => {
+      drop();
+      if (e.persisted || stay) return;
+      const live = readTabs().filter((t) => t && Date.now() - t.t < ttlMs);
+      if (live.length) return;
+      try {
+        navigator.sendBeacon("/logout", new Blob([], { type: "text/plain" }));
+      } catch (_) {}
+    });
+    function beat() {
+      if (document.visibilityState === "hidden") return;
+      fetch("/api/v1/session", { credentials: "same-origin" }).catch(() => {});
+    }
+    beat();
+    setInterval(beat, 30000);
+  }
+
+  bindSessionLifetime();
   if (document.querySelector("header.bar") && wantTour()) {
     setTimeout(startTour, 80);
   }
