@@ -49,7 +49,7 @@ impl Permission {
                 "Start/stop/remove containers, Compose, images, volumes, and networks"
             }
             Self::DockerExec => "Execute a process inside a container (root-equivalent)",
-            Self::SysView => "View host updates and addressing on a node",
+            Self::SysView => "View host updates, journals, NTP, and addressing on a node",
             Self::SysManage => "Apply apt upgrades, reboot, and set IPv4 on a node",
         }
     }

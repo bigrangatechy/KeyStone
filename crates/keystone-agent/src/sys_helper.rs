@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Root helper: allowlisted apt, leftover services, failed units, reboot,
-//! IPv4, and GitLab Omnibus backup. No `sh -c`. Started by systemd socket.
+//! journal follow, IPv4, and GitLab Omnibus backup. No `sh -c`. Started by
+//! systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -11,9 +12,10 @@ use std::process::Stdio;
 
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
-    merge_upgradable, netplan_yaml, nmcli_modify_args, parse_apt_list_upgradable,
-    parse_apt_simulate, parse_ip_addr_json, parse_needrestart_batch, parse_systemctl_failed,
-    NeedrestartBatch, NetSet, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH, UPDATES_LIST_CAP,
+    gitlab_backup_name_ok, journal_unit, merge_upgradable, netplan_yaml, newest_gitlab_backup,
+    nmcli_modify_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
+    parse_needrestart_batch, parse_ntp_sync, parse_systemctl_failed, NeedrestartBatch, NetSet,
+    SysOp, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, SYS_SOCKET_PATH, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -125,13 +127,14 @@ async fn dispatch(
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
         SysOp::Reboot => reboot(writer).await,
+        SysOp::Journal => journal_follow(&payload, writer).await,
     }
 }
 
 async fn status() -> anyhow::Result<Value> {
     let backend = detect_backend();
-    let (interfaces, leftovers, failed) =
-        tokio::join!(ip_addrs(), leftover_services(), failed_units());
+    let (interfaces, leftovers, failed, ntp) =
+        tokio::join!(ip_addrs(), leftover_services(), failed_units(), ntp_sync());
     Ok(json!({
         "helper": true,
         "backend": backend,
@@ -139,7 +142,8 @@ async fn status() -> anyhow::Result<Value> {
         "kernel_pending": leftovers.kernel_pending,
         "interfaces": interfaces,
         "net": net_snapshot(backend, &interfaces),
-        "gitlab": { "kind": gitlab_kind() },
+        "ntp": ntp,
+        "gitlab": gitlab_status(),
         "restart_services": leftovers.services,
         "failed_units": failed,
     }))
@@ -172,6 +176,51 @@ fn gitlab_kind() -> &'static str {
     } else {
         "none"
     }
+}
+
+fn gitlab_status() -> Value {
+    if gitlab_kind() != "omnibus" {
+        return json!({ "kind": "none" });
+    }
+    match newest_gitlab_backup(&read_gitlab_backup_entries(Path::new(GITLAB_BACKUP_DIR))) {
+        Some((backup_name, backup_unix)) => json!({
+            "kind": "omnibus",
+            "backup_name": backup_name,
+            "backup_unix": backup_unix,
+        }),
+        None => json!({ "kind": "omnibus" }),
+    }
+}
+
+fn read_gitlab_backup_entries(dir: &Path) -> Vec<(String, i64)> {
+    let mut entries = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return entries;
+    };
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if !gitlab_backup_name_ok(&name) {
+            continue;
+        }
+        let Ok(ft) = ent.file_type() else {
+            continue;
+        };
+        if ft.is_symlink() || !ft.is_file() {
+            continue;
+        }
+        let Ok(meta) = ent.metadata() else {
+            continue;
+        };
+        let Ok(mtime) = meta.modified() else {
+            continue;
+        };
+        let unix = mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        entries.push((name, unix));
+    }
+    entries
 }
 
 fn reboot_required() -> bool {
@@ -224,6 +273,26 @@ async fn failed_units() -> Vec<String> {
         Ok(Ok(o)) => parse_systemctl_failed(&String::from_utf8_lossy(&o.stdout)),
         _ => Vec::new(),
     }
+}
+
+async fn ntp_sync() -> Value {
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("timedatectl")
+            .args(["show", "-p", "NTPSynchronized", "--value"])
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await;
+    match output {
+        Ok(Ok(o)) if o.status.success() => {
+            if let Some(sync) = parse_ntp_sync(&String::from_utf8_lossy(&o.stdout)) {
+                return json!({ "available": true, "synchronized": sync });
+            }
+        }
+        _ => {}
+    }
+    json!({ "available": false, "synchronized": false })
 }
 
 fn net_snapshot(backend: &str, interfaces: &Value) -> Value {
@@ -548,6 +617,62 @@ async fn reboot(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result
     Ok(())
 }
 
+async fn journal_follow(
+    payload: &Value,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> anyhow::Result<()> {
+    let raw = payload.get("unit").and_then(|v| v.as_str()).unwrap_or("");
+    let unit = journal_unit(raw).map_err(|_| anyhow!("unknown journal unit"))?;
+    if cfg!(test) {
+        anyhow::bail!("journal follow is not invoked in tests");
+    }
+    let mut child = Command::new("journalctl")
+        .args([
+            "-u",
+            unit,
+            "-n",
+            "200",
+            "-f",
+            "--no-pager",
+            "--output=short-iso",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("journalctl")?;
+    let stdout = child.stdout.take().context("journalctl stdout")?;
+    let stderr = child.stderr.take().context("journalctl stderr")?;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+    let tx_out = tx.clone();
+    let tx_err = tx.clone();
+    drop(tx);
+    let h_out = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(l)) = lines.next_line().await {
+            if tx_out.send(l).await.is_err() {
+                break;
+            }
+        }
+    });
+    let h_err = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(l)) = lines.next_line().await {
+            if tx_err.send(l).await.is_err() {
+                break;
+            }
+        }
+    });
+    while let Some(l) = rx.recv().await {
+        write_json(writer, &json!({"t": l})).await?;
+    }
+    let _ = h_out.await;
+    let _ = h_err.await;
+    let _ = child.wait().await;
+    Ok(())
+}
+
 async fn nm_connection_for_iface(iface: &str) -> anyhow::Result<String> {
     let out = Command::new("nmcli")
         .args(["-t", "-f", "NAME,DEVICE", "connection", "show", "--active"])
@@ -639,6 +764,22 @@ mod tests {
                 .and_then(|x| x.as_array())
                 .is_some(),
             "status must include failed units, got {line}"
+        );
+        assert!(
+            payload
+                .get("ntp")
+                .and_then(|n| n.get("available"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status ntp.available must be a bool, got {line}"
+        );
+        assert!(
+            payload
+                .get("ntp")
+                .and_then(|n| n.get("synchronized"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status ntp.synchronized must be a bool, got {line}"
         );
         server.await.unwrap();
     }
@@ -815,7 +956,7 @@ mod tests {
             .split("async fn failed_units")
             .nth(1)
             .expect("failed_units")
-            .split("fn net_snapshot")
+            .split("async fn ntp_sync")
             .next()
             .expect("failed_units body");
         assert!(failed.contains("systemctl"));
@@ -831,7 +972,7 @@ mod tests {
             .split("async fn reboot")
             .nth(1)
             .expect("reboot")
-            .split("async fn nm_connection_for_iface")
+            .split("async fn journal_follow")
             .next()
             .expect("reboot body");
         assert!(body.contains("systemctl"));
@@ -844,6 +985,99 @@ mod tests {
             !body.contains(".arg(") || body.contains(".arg(\"reboot\")"),
             "reboot argv must be hardcoded systemctl reboot"
         );
+    }
+
+    #[test]
+    fn journal_follow_is_allowlisted_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn journal_follow")
+            .nth(1)
+            .expect("journal_follow")
+            .split("async fn nm_connection_for_iface")
+            .next()
+            .expect("journal_follow body");
+        assert!(body.contains("journalctl"));
+        assert!(body.contains("journal_unit"));
+        assert!(body.contains("kill_on_drop"));
+        assert!(body.contains("\"-f\""));
+        assert!(body.contains("\"200\""));
+        assert!(body.contains("short-iso"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("vacuum"));
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_unknown_journal_unit_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"journal","payload":{"unit":"cron.service"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(err.contains("unknown journal unit"), "{err}");
+        assert!(
+            !err.contains("journalctl"),
+            "must reject before spawn: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_does_not_follow_journal_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"journal","payload":{"unit":"ssh.service"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "allowlisted journal must not spawn journalctl -f in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn gitlab_backup_dir_skips_noise_and_symlinks() {
+        let dir = std::env::temp_dir().join(format!("ks-gl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("keep_gitlab_backup.tar"), b"x").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"x").unwrap();
+        std::fs::write(dir.join("foo_gitlab_backup.tar;rm"), b"x").unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", dir.join("link_gitlab_backup.tar")).unwrap();
+        let names: Vec<String> = read_gitlab_backup_entries(&dir)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(names, vec!["keep_gitlab_backup.tar".to_string()]);
     }
 
     #[tokio::test]

@@ -20,7 +20,7 @@ use futures_util::Stream;
 use keystone_core::docker::DockerOp;
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
-use keystone_core::sys::SysOp;
+use keystone_core::sys::{journal_unit, SysOp};
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
 use keystone_proto::StreamChunk;
@@ -111,6 +111,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/nodes/{id}/sys/gitlab-backup/stream",
             get(sys_gitlab_backup_sse),
+        )
+        .route("/nodes/{id}/sys/journal/{unit}", get(sys_journal_page))
+        .route(
+            "/nodes/{id}/sys/journal/{unit}/stream",
+            get(sys_journal_sse),
         )
         .route(
             "/nodes/{id}/containers/{cid}/logs",
@@ -2155,6 +2160,7 @@ async fn sys_action(
     if parsed.streams() {
         let dest = match parsed {
             SysOp::GitlabBackup => format!("/nodes/{id}/sys/gitlab-backup"),
+            SysOp::Journal => format!("/nodes/{id}?panel=system"),
             _ => format!("/nodes/{id}/sys/updates"),
         };
         return Redirect::to(&dest).into_response();
@@ -2263,6 +2269,40 @@ async fn sys_gitlab_backup_sse(
         .metadata
         .audit(&username, &id, "gitlab_backup", "{}", true, "started");
     logs_sse_op(state, id, SysOp::GitlabBackup.as_str(), "{}".into())
+}
+
+async fn sys_journal_page(Path((id, unit)): Path<(String, String)>) -> Response {
+    let Ok(unit) = journal_unit(&unit) else {
+        return (StatusCode::BAD_REQUEST, "unknown journal unit").into_response();
+    };
+    Html(
+        LogsTemplate {
+            title: "Journal".into(),
+            node_id: id.clone(),
+            subtitle: unit.to_string(),
+            hint: "Live follow, last 200 lines. Leave this page to stop. Not a shell.".into(),
+            back_href: format!("/nodes/{id}?panel=system"),
+            stream_url: format!(
+                "/nodes/{}/sys/journal/{}/stream",
+                urlencoding_path(&id),
+                urlencoding_path(unit)
+            ),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+    .into_response()
+}
+
+async fn sys_journal_sse(
+    State(state): State<AppState>,
+    Path((id, unit)): Path<(String, String)>,
+) -> Response {
+    let Ok(unit) = journal_unit(&unit) else {
+        return (StatusCode::BAD_REQUEST, "unknown journal unit").into_response();
+    };
+    let payload = serde_json::json!({ "unit": unit }).to_string();
+    logs_sse_op(state, id, SysOp::Journal.as_str(), payload)
 }
 
 async fn sys_updates_api(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -2772,22 +2812,58 @@ mod tests {
             .split("async fn sys_gitlab_backup_sse")
             .nth(1)
             .expect("sys_gitlab_backup_sse")
-            .split("async fn sys_updates_api")
+            .split("async fn sys_journal_page")
             .next()
             .expect("sys_gitlab_backup_sse body");
         assert!(
             gitlab.contains(".audit(") && gitlab.contains("gitlab_backup"),
             "GitLab backup must write audit when the stream starts"
         );
+        let journal = src
+            .split("async fn sys_journal_sse")
+            .nth(1)
+            .expect("sys_journal_sse")
+            .split("async fn sys_updates_api")
+            .next()
+            .expect("sys_journal_sse body");
         assert!(
-            src.split("async fn sys_action")
-                .nth(1)
-                .expect("sys_action")
-                .split("async fn sys_updates_page")
-                .next()
-                .expect("sys_action body")
-                .contains("/sys/gitlab-backup"),
+            !journal.contains(".audit("),
+            "journal follow is observe and must not write audit"
+        );
+        let streams = src
+            .split("async fn sys_action")
+            .nth(1)
+            .expect("sys_action")
+            .split("async fn sys_updates_page")
+            .next()
+            .expect("sys_action body")
+            .split("if parsed.streams()")
+            .nth(1)
+            .expect("sys streams")
+            .split("let payload = sys_form_payload")
+            .next()
+            .expect("sys streams body");
+        assert!(
+            streams.contains("/sys/gitlab-backup"),
             "streaming gitlab_backup must not redirect to apt apply"
+        );
+        let journal_arm = streams
+            .split("SysOp::Journal")
+            .nth(1)
+            .expect("Journal arm")
+            .split("=>")
+            .nth(1)
+            .expect("Journal dest")
+            .split(',')
+            .next()
+            .expect("Journal dest expr");
+        assert!(
+            journal_arm.contains("?panel=system"),
+            "journal POST must return to the System tab, got {journal_arm}"
+        );
+        assert!(
+            !journal_arm.contains("/sys/updates"),
+            "journal must not redirect to apt apply, got {journal_arm}"
         );
     }
 
@@ -2984,7 +3060,9 @@ mod tests {
         assert!(SysOp::Reboot.mutating());
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
+        assert!(!SysOp::Journal.mutating());
         assert!(!SysOp::Reboot.streams());
+        assert!(SysOp::Journal.streams());
     }
 
     fn host_headers(host: &str) -> HeaderMap {
@@ -3138,12 +3216,16 @@ mod tests {
         let backup = head
             .find("/nodes/{id}/sys/gitlab-backup")
             .expect("gitlab backup page");
+        let journal = head
+            .find("/nodes/{id}/sys/journal/{unit}")
+            .expect("journal follow page");
         let api = head
             .find("/api/v1/nodes/{id}/sys/updates")
             .expect("sys updates API");
         assert!(post < authed_end);
         assert!(apply < authed_end);
         assert!(backup < authed_end);
+        assert!(journal < authed_end);
         assert!(api < authed_end);
         let public = head[authed_end..]
             .split("async fn health()")
@@ -3201,6 +3283,24 @@ mod tests {
         assert!(
             js.contains("Failed systemd units"),
             "System tab must list failed units"
+        );
+        assert!(
+            js.contains("Clock synchronized") && js.contains("Clock not synchronized"),
+            "System tab must show NTP yes/no"
+        );
+        assert!(
+            js.contains("/sys/journal/"),
+            "System tab must link to journal follow pages"
+        );
+        for unit in keystone_core::sys::JOURNAL_UNITS {
+            assert!(
+                js.contains(unit),
+                "System tab must offer {unit} (no unit-name textbox)"
+            );
+        }
+        assert!(
+            js.contains("Last dump") && js.contains("No dump on disk"),
+            "GitLab Omnibus block must show dump age"
         );
         assert!(
             js.contains("Reboot this node now?"),

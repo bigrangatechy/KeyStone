@@ -87,4 +87,5 @@ thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, Docker Hub login, System shutdown from the UI, hostname /
 timezone / users / SSH / firewall editors, Wi-Fi / VLAN / IPv6, Fedora /
 Arch host updates, unattended-upgrades config, Watchtower, GitLab restore,
-Docker GitLab backup.
+Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
+this slice; a unit-name textbox is not.

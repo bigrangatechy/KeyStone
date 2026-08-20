@@ -6,7 +6,9 @@
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use keystone_core::sys::{parse_ip_addr_json, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH};
+use keystone_core::sys::{
+    parse_ip_addr_json, parse_ntp_sync, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
+};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -29,6 +31,7 @@ fn call_budget(op: SysOp) -> Duration {
         SysOp::Reboot => Duration::from_secs(15),
         SysOp::UpdatesList | SysOp::UpdatesApply => Duration::from_secs(120),
         SysOp::GitlabBackup => Duration::from_secs(1800),
+        SysOp::Journal => Duration::from_secs(3),
     }
 }
 
@@ -118,7 +121,7 @@ pub async fn local_status() -> Value {
         .and_then(|h| h.into_string().ok())
         .unwrap_or_default();
     let kernel = sysinfo::System::kernel_version().unwrap_or_default();
-    let interfaces = local_addrs().await;
+    let (interfaces, ntp) = tokio::join!(local_addrs(), local_ntp());
     json!({
         "hostname": hostname,
         "kernel": kernel,
@@ -126,6 +129,7 @@ pub async fn local_status() -> Value {
         "reboot_required": std::path::Path::new("/run/reboot-required").is_file()
             || std::path::Path::new("/var/run/reboot-required").is_file(),
         "interfaces": interfaces,
+        "ntp": ntp,
         "gitlab": {
             "kind": if std::path::Path::new(GITLAB_BACKUP_BIN).is_file() {
                 "omnibus"
@@ -137,6 +141,25 @@ pub async fn local_status() -> Value {
         "failed_units": [],
         "kernel_pending": false,
     })
+}
+
+async fn local_ntp() -> Value {
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("timedatectl")
+            .args(["show", "-p", "NTPSynchronized", "--value"])
+            .output(),
+    )
+    .await;
+    match output {
+        Ok(Ok(o)) if o.status.success() => {
+            if let Some(sync) = parse_ntp_sync(&String::from_utf8_lossy(&o.stdout)) {
+                return json!({ "available": true, "synchronized": sync });
+            }
+        }
+        _ => {}
+    }
+    json!({ "available": false, "synchronized": false })
 }
 
 async fn local_addrs() -> Value {

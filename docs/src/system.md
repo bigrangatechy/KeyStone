@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
 Pi OS** boxes (apt, leftover services, failed units, confirmed reboot,
-IPv4, GitLab Omnibus backup). It is not a TrueNAS,
+allowlisted journals, NTP, IPv4, GitLab Omnibus backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
 agent on them for **Overview metrics** (and Docker Observe if they run
 Engine). Leave **System manage** off.
@@ -39,8 +39,10 @@ points at Settings (the socket unit alone does not turn the tab on). The
 helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
 It only runs allowlisted ops (`apt-get update` / `upgrade`, `apt list
 --upgradable`, simulated `dist-upgrade`, `needrestart -b`,
-`systemctl --failed`, `systemctl reboot`, netplan or
-`nmcli`, Omnibus `gitlab-backup create`). There is no shell string.
+`systemctl --failed`, `timedatectl`, `journalctl -u` for five named
+units, `systemctl reboot`, netplan or
+`nmcli`, Omnibus `gitlab-backup create`). There is no shell string and no
+unit-name textbox.
 
 ## Updates
 
@@ -68,6 +70,12 @@ needrestart reports a pending kernel. **Reboot node** is a confirmed
 is the machine serving the KeyStone UI, the tab warns that the session
 will drop until the server is back.
 
+With the helper on, the tab also shows whether the clock is synchronized
+(`timedatectl`) and follow links for `keystone-agent.service`,
+`keystone-server.service`, `docker.service`, `ssh.service`, and
+`gitlab-runsvdir.service`. Same idea as Compose logs: last 200 lines, live
+follow, leave the page to stop. Not a PTY and not a unit-name textbox.
+
 Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
 are enabled for boot (`WantedBy=multi-user.target`). After a kernel or
 `apt upgrade` reboot they should come back on their own. Confirm with
@@ -89,8 +97,10 @@ Wi-Fi, VLANs, and IPv6 are not in this version.
 If this node has Omnibus GitLab (`/opt/gitlab/bin/gitlab-backup`), the
 System tab shows **Backup GitLab**. That runs `gitlab-backup create` on
 the machine (GitLab’s own dump, not a volume tar) and streams the log.
-Copy `/etc/gitlab` (`gitlab.rb` and `gitlab-secrets.json`) next to the
-archive yourself. Restore is not in this UI. Docker GitLab is not this
+The tab shows the age of the newest `*_gitlab_backup.tar` in
+`/var/opt/gitlab/backups` when one is on disk. Copy `/etc/gitlab`
+(`gitlab.rb` and `gitlab-secrets.json`) next to the archive yourself.
+Restore is not in this UI. Docker GitLab is not this
 button.
 
 Anyone who can sign in to the UI and who turned Manage on can change that

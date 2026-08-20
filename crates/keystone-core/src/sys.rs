@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Host system-admin ops (apt, leftover services, failed units, reboot,
-//! IPv4, GitLab Omnibus backup). No I/O — the helper and agent run them.
-//! Keep `docs/dev/src/system.md` in sync.
+//! journal follow, IPv4, GitLab Omnibus backup). No I/O — the helper and
+//! agent run them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::Ipv4Addr;
 
@@ -18,6 +18,19 @@ pub const SYS_SOCKET_PATH: &str = "/run/keystone/sys.sock";
 
 /// Omnibus GitLab backup binary. Docker GitLab is not this path.
 pub const GITLAB_BACKUP_BIN: &str = "/opt/gitlab/bin/gitlab-backup";
+
+/// Omnibus default dump directory. Restore is not a SysOp.
+pub const GITLAB_BACKUP_DIR: &str = "/var/opt/gitlab/backups";
+
+/// Units the System tab may follow. Not a textbox — stolen cookie reads
+/// these journals only.
+pub const JOURNAL_UNITS: &[&str] = &[
+    "keystone-agent.service",
+    "keystone-server.service",
+    "docker.service",
+    "ssh.service",
+    "gitlab-runsvdir.service",
+];
 
 #[derive(
     Debug,
@@ -41,6 +54,7 @@ pub enum SysOp {
     NetSet,
     GitlabBackup,
     Reboot,
+    Journal,
 }
 
 impl SysOp {
@@ -51,13 +65,14 @@ impl SysOp {
     pub fn description(self) -> &'static str {
         match self {
             Self::Status => {
-                "Host snapshot (addresses, reboot-needed, leftover services, failed units, helper)"
+                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, helper)"
             }
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
             Self::NetSet => "Set IPv4 DHCP or static on one interface",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::Reboot => "Reboot the node (systemctl reboot)",
+            Self::Journal => "Follow journalctl for one allowlisted unit",
         }
     }
 
@@ -77,7 +92,10 @@ impl SysOp {
     }
 
     pub fn streams(self) -> bool {
-        matches!(self, Self::UpdatesApply | Self::GitlabBackup)
+        matches!(
+            self,
+            Self::UpdatesApply | Self::GitlabBackup | Self::Journal
+        )
     }
 }
 
@@ -560,6 +578,56 @@ pub fn unit_name_ok(name: &str) -> bool {
     })
 }
 
+/// Exact allowlist match. No suffix folding, no shell string.
+pub fn journal_unit(raw: &str) -> Result<&'static str, SysError> {
+    let s = raw.trim();
+    JOURNAL_UNITS
+        .iter()
+        .copied()
+        .find(|u| *u == s)
+        .ok_or(SysError::Op)
+}
+
+/// `timedatectl show -p NTPSynchronized --value` (`yes`/`no`) or status text.
+pub fn parse_ntp_sync(stdout: &str) -> Option<bool> {
+    let t = stdout.trim();
+    if t.eq_ignore_ascii_case("yes") {
+        return Some(true);
+    }
+    if t.eq_ignore_ascii_case("no") {
+        return Some(false);
+    }
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(v) = line.strip_prefix("NTPSynchronized=") {
+            return Some(v.trim().eq_ignore_ascii_case("yes"));
+        }
+        if let Some(v) = line.strip_prefix("System clock synchronized:") {
+            return Some(v.trim().eq_ignore_ascii_case("yes"));
+        }
+    }
+    None
+}
+
+pub fn gitlab_backup_name_ok(name: &str) -> bool {
+    if name.is_empty() || name.len() > 256 || name.contains('/') || name.contains("..") {
+        return false;
+    }
+    name.ends_with("_gitlab_backup.tar")
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
+
+/// Newest dump among `(filename, mtime_unix)` rows from the backups dir.
+pub fn newest_gitlab_backup(entries: &[(String, i64)]) -> Option<(String, i64)> {
+    entries
+        .iter()
+        .filter(|(name, _)| gitlab_backup_name_ok(name))
+        .max_by_key(|(_, unix)| *unix)
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,8 +650,13 @@ mod tests {
         assert!(!SysOp::Status.streams());
         assert!(!SysOp::Reboot.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
-        assert_eq!(SysOp::Reboot.as_str(), "reboot");
+        assert!(!SysOp::Journal.mutating());
+        assert_eq!(SysOp::Journal.permission(), Permission::SysView);
+        assert!(SysOp::Journal.streams());
+        assert_eq!(SysOp::Journal.as_str(), "journal");
+        assert_eq!(GITLAB_BACKUP_DIR, "/var/opt/gitlab/backups");
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
+        assert_eq!(JOURNAL_UNITS.len(), 5);
     }
 
     #[test]
@@ -598,7 +671,9 @@ mod tests {
                 SysOp::NetSet => "/sys/net_set",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
                 SysOp::Reboot => "/sys/reboot",
-                SysOp::Status | SysOp::UpdatesList => unreachable!("not mutating"),
+                SysOp::Status | SysOp::UpdatesList | SysOp::Journal => {
+                    unreachable!("not mutating")
+                }
             };
             assert!(
                 js.contains(needle),
@@ -616,6 +691,42 @@ mod tests {
         );
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
+    }
+
+    #[test]
+    fn journal_units_are_fixed_and_in_the_ui() {
+        let js = include_str!("../../keystone-server/src/static/app.js");
+        assert!(
+            js.contains("/sys/journal/"),
+            "System tab must link to journal follow pages"
+        );
+        assert_eq!(journal_unit(" ssh.service\n").unwrap(), "ssh.service");
+        assert_eq!(journal_unit("ssh.service;rm"), Err(SysError::Op));
+        assert_eq!(journal_unit("cron.service"), Err(SysError::Op));
+        assert_eq!(journal_unit("sshd.service"), Err(SysError::Op));
+        assert_eq!(journal_unit("SSH.service"), Err(SysError::Op));
+        assert_eq!(journal_unit("ssh"), Err(SysError::Op));
+        let block = js
+            .split("el(\"h3\", null, \"Journals\")")
+            .nth(1)
+            .expect("Journals heading")
+            .split(".forEach((unit)")
+            .next()
+            .expect("journal unit array");
+        let listed: Vec<&str> = block
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .filter(|s| s.ends_with(".service"))
+            .collect();
+        assert_eq!(
+            listed, JOURNAL_UNITS,
+            "System tab unit list must match JOURNAL_UNITS in order"
+        );
+        assert!(
+            !js.contains("name=\"unit\""),
+            "journal must not be a textbox"
+        );
     }
 
     #[test]
@@ -754,6 +865,7 @@ mod tests {
             SysOp::GitlabBackup
         );
         assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
+        assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
         assert!("poweroff".parse::<SysOp>().is_err());
         assert!("shutdown".parse::<SysOp>().is_err());
     }
@@ -795,5 +907,43 @@ mod tests {
             HOST_UNIT_LIST_CAP
         );
         assert_eq!(parse_systemctl_failed(&failed).len(), HOST_UNIT_LIST_CAP);
+    }
+
+    #[test]
+    fn parse_ntp_sync_yes_no_and_status_text() {
+        assert_eq!(parse_ntp_sync("yes\n"), Some(true));
+        assert_eq!(parse_ntp_sync("no"), Some(false));
+        assert_eq!(parse_ntp_sync("NTPSynchronized=yes\n"), Some(true));
+        assert_eq!(parse_ntp_sync("NTPSynchronized=no"), Some(false));
+        assert_eq!(
+            parse_ntp_sync("               Local time: Thu 2026-08-20 10:00:00 UTC\nSystem clock synchronized: yes\nNTP service: active\n"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_ntp_sync("System clock synchronized: no\n"),
+            Some(false)
+        );
+        assert_eq!(parse_ntp_sync("YES"), Some(true));
+        assert_eq!(parse_ntp_sync("timedatectl: command not found"), None);
+        assert_eq!(parse_ntp_sync("yes, later"), None);
+    }
+
+    #[test]
+    fn newest_gitlab_backup_picks_mtime_and_rejects_paths() {
+        assert!(gitlab_backup_name_ok(
+            "1712345678_2026_04_05_16.11.3_gitlab_backup.tar"
+        ));
+        assert!(!gitlab_backup_name_ok("../escape_gitlab_backup.tar"));
+        assert!(!gitlab_backup_name_ok("foo_gitlab_backup.tar;rm"));
+        assert!(!gitlab_backup_name_ok("notes.txt"));
+        let newest = newest_gitlab_backup(&[
+            ("old_gitlab_backup.tar".into(), 100),
+            ("new_gitlab_backup.tar".into(), 200),
+            ("skip.txt".into(), 999),
+        ])
+        .expect("newest");
+        assert_eq!(newest.0, "new_gitlab_backup.tar");
+        assert_eq!(newest.1, 200);
+        assert!(newest_gitlab_backup(&[]).is_none());
     }
 }

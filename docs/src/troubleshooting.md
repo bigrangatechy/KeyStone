@@ -164,6 +164,13 @@ token does not.
   in this UI.
 - Static IPv4 dropped the session: that address is now on the interface.
   Use a console if you cannot reach the new IP.
+- Journal page 400: that unit is not on the allowlist (`keystone-agent`,
+  `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`). There is no
+  unit-name textbox.
+- Clock not synchronized: `timedatectl` on the node. The System tab does
+  not set the timezone.
+- GitLab dump age missing: no `*_gitlab_backup.tar` under
+  `/var/opt/gitlab/backups` yet. Restore stays SSH.
 
 ## Did not start after reboot
 

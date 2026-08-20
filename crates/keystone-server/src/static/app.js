@@ -803,6 +803,16 @@
     if (data.backend) bits.push(data.backend);
     meta.textContent = bits.join(" · ") || "No host snapshot yet.";
     wrap.appendChild(meta);
+    const ntp = data.ntp || {};
+    if (ntp.available) {
+      const ntpLine = document.createElement("p");
+      ntpLine.appendChild(el(
+        "span",
+        ntp.synchronized ? "chip tone-ok" : "chip tone-warn",
+        ntp.synchronized ? "Clock synchronized" : "Clock not synchronized"
+      ));
+      wrap.appendChild(ntpLine);
+    }
     const uiHost = host.getAttribute("data-ui-host") === "1";
     if (data.reboot_required) {
       wrap.appendChild(el("p", "error", data.kernel_pending
@@ -825,6 +835,24 @@
       } else {
         wrap.appendChild(unitNameTable(failed));
       }
+      wrap.appendChild(el("h3", null, "Journals"));
+      wrap.appendChild(el("p", "muted", "Follow journalctl for these units. Leave the page to stop. Not a shell."));
+      const journals = document.createElement("ul");
+      [
+        "keystone-agent.service",
+        "keystone-server.service",
+        "docker.service",
+        "ssh.service",
+        "gitlab-runsvdir.service"
+      ].forEach((unit) => {
+        const li = document.createElement("li");
+        const a = document.createElement("a");
+        a.href = "/nodes/" + encodeURIComponent(node) + "/sys/journal/" + encodeURIComponent(unit);
+        a.textContent = unit;
+        li.appendChild(a);
+        journals.appendChild(li);
+      });
+      wrap.appendChild(journals);
     }
     if (manage && helperOn) {
       const rebootHead = el("div", "compose-head");
@@ -946,6 +974,13 @@
       glHead.appendChild(el("h3", null, "GitLab"));
       wrap.appendChild(glHead);
       wrap.appendChild(el("p", "muted", "Omnibus gitlab-backup create on this node (not Docker GitLab). Copy /etc/gitlab next to the archive. Restore is not in this UI."));
+      if (helperOn) {
+        if (typeof gitlab.backup_unix === "number") {
+          wrap.appendChild(el("p", "muted", "Last dump " + relativeUnix(gitlab.backup_unix) + (gitlab.backup_name ? " (" + gitlab.backup_name + ")" : "") + "."));
+        } else {
+          wrap.appendChild(el("p", "muted", "No dump on disk."));
+        }
+      }
       if (helperOn && manage) {
         const backup = document.createElement("button");
         backup.type = "button";
@@ -1070,6 +1105,16 @@
     });
     table.appendChild(body);
     return table;
+  }
+
+  function relativeUnix(unix) {
+    const n = Number(unix);
+    if (!Number.isFinite(n) || n <= 0) return "unknown";
+    const secs = Math.max(0, Math.floor(Date.now() / 1000 - n));
+    if (secs < 60) return "just now";
+    if (secs < 3600) return Math.floor(secs / 60) + "m ago";
+    if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
+    return Math.floor(secs / 86400) + "d ago";
   }
 
   function ethernetIface(name) {

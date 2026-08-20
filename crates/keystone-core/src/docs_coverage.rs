@@ -254,3 +254,44 @@ fn operator_docs_cover_needrestart_and_reboot() {
         "shutdown stays out; reboot is in"
     );
 }
+
+#[test]
+fn operator_docs_cover_journal_ntp_gitlab_age() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    assert!(
+        system.contains("journalctl") && system.contains("timedatectl"),
+        "System chapter must document journal follow and NTP"
+    );
+    assert!(
+        system.contains("ssh.service") && system.contains("keystone-agent.service"),
+        "System chapter must name the allowlisted units"
+    );
+    assert!(
+        system.contains("unit-name textbox"),
+        "System chapter must say journal is not a unit-name textbox"
+    );
+    assert!(
+        system.contains("/var/opt/gitlab/backups"),
+        "System chapter must say dump age comes from the Omnibus backups dir"
+    );
+    assert!(
+        using.contains("journals") && using.contains("NTP"),
+        "using.md must mention journals and NTP on the System tab"
+    );
+    assert!(
+        trouble.contains("unit-name textbox") && trouble.contains("timedatectl"),
+        "troubleshooting must cover unknown journal units and clock sync"
+    );
+    assert!(
+        http.contains("/sys/journal/"),
+        "HTTP API must list journal follow routes"
+    );
+    assert!(
+        dev.contains("`journal`"),
+        "developer system.md must list the journal op"
+    );
+}
