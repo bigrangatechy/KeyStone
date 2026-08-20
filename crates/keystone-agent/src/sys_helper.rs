@@ -11,8 +11,9 @@ use std::process::Stdio;
 
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
-    netplan_yaml, nmcli_modify_args, parse_apt_simulate, parse_ip_addr_json, NetSet, SysOp,
-    GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
+    merge_upgradable, netplan_yaml, nmcli_modify_args, parse_apt_list_upgradable,
+    parse_apt_simulate, parse_ip_addr_json, NetSet, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
+    UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -270,8 +271,39 @@ fn netplan_method(iface: &str) -> String {
 
 async fn updates_list() -> anyhow::Result<Value> {
     apt_cmd(&["update"], false).await?;
-    let stdout = apt_cmd(&["-s", "upgrade"], true).await?;
-    Ok(json!({"packages": parse_apt_simulate(&stdout)}))
+    let mut pkgs = parse_apt_list_upgradable(&apt_list_upgradable().await.unwrap_or_default());
+    let sim = apt_cmd(
+        &[
+            "-s",
+            "-o",
+            "APT::Get::Always-Include-Phased-Updates=true",
+            "dist-upgrade",
+        ],
+        true,
+    )
+    .await
+    .unwrap_or_default();
+    merge_upgradable(&mut pkgs, parse_apt_simulate(&sim));
+    let capped = pkgs.len() > UPDATES_LIST_CAP;
+    pkgs.sort_by(|a, b| a.name.cmp(&b.name));
+    pkgs.truncate(UPDATES_LIST_CAP);
+    Ok(json!({"packages": pkgs, "capped": capped}))
+}
+
+async fn apt_list_upgradable() -> anyhow::Result<String> {
+    let out = Command::new("apt")
+        .args(["-qq", "list", "--upgradable"])
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .env("APT_LISTCHANGES_FRONTEND", "none")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .context("apt list")?;
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    Ok(s)
 }
 
 async fn updates_apply(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
@@ -614,6 +646,42 @@ mod tests {
         assert!(body.contains("GITLAB_BACKUP_BIN"));
         assert!(body.contains(".arg(\"create\")"));
         assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+    }
+
+    #[test]
+    fn updates_list_uses_upgradable_and_dist_upgrade_simulate() {
+        let src = include_str!("sys_helper.rs");
+        let list = src
+            .split("async fn updates_list")
+            .nth(1)
+            .expect("updates_list")
+            .split("async fn updates_apply")
+            .next()
+            .expect("updates_list body");
+        assert!(
+            list.contains("list") && list.contains("upgradable"),
+            "Check for updates must use apt list --upgradable, not only apt-get -s upgrade"
+        );
+        assert!(
+            list.contains("dist-upgrade"),
+            "simulate dist-upgrade so held-back packages are listed"
+        );
+        assert!(
+            !list.contains("\"upgrade\""),
+            "listing must not use apt-get -s upgrade (misses kept-back and new apt output)"
+        );
+        let apply = src
+            .split("async fn updates_apply")
+            .nth(1)
+            .expect("updates_apply")
+            .split("async fn apt_cmd")
+            .next()
+            .expect("updates_apply body");
+        assert!(apply.contains("upgrade"));
+        assert!(
+            !apply.contains("dist-upgrade"),
+            "Apply stays apt-get upgrade, not dist-upgrade"
+        );
     }
 
     #[tokio::test]

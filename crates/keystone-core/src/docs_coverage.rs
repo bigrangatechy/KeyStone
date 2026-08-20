@@ -130,3 +130,40 @@ fn operator_audit_page_is_documented() {
         "HTTP API must match the audit row cap"
     );
 }
+
+#[test]
+fn operator_docs_cover_boot_compose_and_updates_list() {
+    let install = include_str!("../../../docs/src/install.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let docker = include_str!("../../../docs/src/docker.md");
+    let system = include_str!("../../../docs/src/system.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    assert!(
+        install.contains("is-enabled"),
+        "install must tell operators to enable units for reboot"
+    );
+    assert!(
+        trouble.contains("Did not start after reboot"),
+        "troubleshooting must cover a missing KeyStone after apt/kernel reboot"
+    );
+    assert!(
+        docker.contains("stays on this tab"),
+        "operator Docker doc must say Down does not drop the Compose project"
+    );
+    assert!(
+        docker.contains("Stop") && docker.contains("Restart"),
+        "operator Docker doc must list Compose stop/restart"
+    );
+    assert!(
+        system.contains("apt list --upgradable"),
+        "System tab must list apt list --upgradable, not only apt-get -s upgrade"
+    );
+    assert!(
+        system.contains("Restart=always"),
+        "System tab must say units come back after reboot before Apply is safe"
+    );
+    assert!(
+        http.contains("500"),
+        "HTTP API must mention the updates list cap"
+    );
+}

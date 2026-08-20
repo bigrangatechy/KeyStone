@@ -22,7 +22,10 @@ setuid).
 `NodeSettings.sys_enabled` / `sys_manage` are pushed in `set_runtime`.
 The agent refuses mutating `SysOp` unless manage is on. Helper RPCs have a
 read deadline (`status` 5s) so a stuck socket cannot block Docker Commands
-on the ingest loop. Tests must not run live `apt-get` or `gitlab-backup`.
+on the ingest loop. `updates_list` runs `apt-get update`, `apt list
+--upgradable`, and `apt-get -s dist-upgrade` (phased updates included).
+Apply is still `apt-get upgrade`, not `dist-upgrade`. Tests must not run
+live `apt-get` or `gitlab-backup`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|

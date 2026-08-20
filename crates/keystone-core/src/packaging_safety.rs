@@ -122,6 +122,33 @@ fn systemd_units_must_not_bind_docker() {
 }
 
 #[test]
+fn packaged_units_start_on_boot_and_keep_running() {
+    for (name, unit) in [("agent", AGENT_UNIT), ("server", SERVER_UNIT)] {
+        let active: String = unit
+            .lines()
+            .filter(|l| !l.trim().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            active.contains("WantedBy=multi-user.target"),
+            "{name} must install into multi-user.target"
+        );
+        assert!(
+            active.contains("Restart=always"),
+            "{name} must come back after a reboot or crash; on-failure plus a start limit leaves the UI down"
+        );
+        assert!(
+            !active.contains("Restart=on-failure"),
+            "{name} Restart=on-failure does not start a unit that exited cleanly or hit StartLimit"
+        );
+        assert!(
+            active.contains("StartLimitIntervalSec=0"),
+            "{name} must not enter failed after a burst of boot-time starts"
+        );
+    }
+}
+
+#[test]
 fn agent_stays_unprivileged() {
     let active: String = AGENT_UNIT
         .lines()
@@ -142,6 +169,14 @@ fn agent_stays_unprivileged() {
         "ReadWritePaths must allow the directory; ignore-if-missing on the sock file hides a later enable"
     );
     assert!(active.contains("User=keystone"));
+    assert!(
+        active.contains("ProtectHome=read-only"),
+        "agent must be able to read Compose files under /home; ProtectHome=true hides them"
+    );
+    assert!(
+        !active.contains("ProtectHome=true"),
+        "ProtectHome=true makes docker compose -f /home/... fail"
+    );
 }
 
 #[test]

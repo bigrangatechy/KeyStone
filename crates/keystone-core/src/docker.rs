@@ -31,11 +31,17 @@ pub enum DockerOp {
     ContainerRestart,
     ContainerKill,
     ContainerRemove,
+    ContainerPause,
+    ContainerUnpause,
+    ContainerPrune,
     ContainerLogs,
     ContainerStats,
     ContainerExec,
     ComposePs,
     ComposeUp,
+    ComposeStop,
+    ComposeStart,
+    ComposeRestart,
     ComposeDown,
     ComposeLogs,
     ComposePull,
@@ -49,15 +55,23 @@ pub enum DockerOp {
     VolumeInspect,
     VolumeCreate,
     VolumeRemove,
+    VolumePrune,
     NetworkList,
     NetworkInspect,
     NetworkCreate,
     NetworkRemove,
+    NetworkPrune,
 }
 
 impl DockerOp {
     pub fn as_str(self) -> &'static str {
         self.into()
+    }
+
+    /// Every op. Prefer this over depending on `strum` in other crates.
+    pub fn all() -> impl Iterator<Item = Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
     }
 
     pub fn description(self) -> &'static str {
@@ -69,6 +83,9 @@ impl DockerOp {
             Self::ContainerRestart => "Restart a container",
             Self::ContainerKill => "Kill a container",
             Self::ContainerRemove => "Remove a container",
+            Self::ContainerPause => "Pause a container",
+            Self::ContainerUnpause => "Unpause a container",
+            Self::ContainerPrune => "Prune stopped containers",
             Self::ContainerLogs => "Stream container logs (on-demand)",
             Self::ContainerStats => "Stream live container stats (on-demand)",
             Self::ContainerExec => {
@@ -76,6 +93,9 @@ impl DockerOp {
             }
             Self::ComposePs => "List Compose project services",
             Self::ComposeUp => "Compose up",
+            Self::ComposeStop => "Compose stop",
+            Self::ComposeStart => "Compose start",
+            Self::ComposeRestart => "Compose restart",
             Self::ComposeDown => "Compose down",
             Self::ComposeLogs => "Compose logs",
             Self::ComposePull => "Compose pull",
@@ -89,10 +109,12 @@ impl DockerOp {
             Self::VolumeInspect => "Inspect a volume",
             Self::VolumeCreate => "Create a volume",
             Self::VolumeRemove => "Remove a volume",
+            Self::VolumePrune => "Prune unused volumes",
             Self::NetworkList => "List networks",
             Self::NetworkInspect => "Inspect a network",
             Self::NetworkCreate => "Create a network",
             Self::NetworkRemove => "Remove a network",
+            Self::NetworkPrune => "Prune unused networks",
         }
     }
 
@@ -104,8 +126,14 @@ impl DockerOp {
                 | Self::ContainerRestart
                 | Self::ContainerKill
                 | Self::ContainerRemove
+                | Self::ContainerPause
+                | Self::ContainerUnpause
+                | Self::ContainerPrune
                 | Self::ContainerExec
                 | Self::ComposeUp
+                | Self::ComposeStop
+                | Self::ComposeStart
+                | Self::ComposeRestart
                 | Self::ComposeDown
                 | Self::ComposePull
                 | Self::ComposeUpdate
@@ -114,8 +142,10 @@ impl DockerOp {
                 | Self::ImageRemove
                 | Self::VolumeCreate
                 | Self::VolumeRemove
+                | Self::VolumePrune
                 | Self::NetworkCreate
                 | Self::NetworkRemove
+                | Self::NetworkPrune
         )
     }
 
@@ -253,5 +283,26 @@ mod tests {
                 "mutating {name} must be reachable from the Docker UI"
             );
         }
+    }
+
+    #[test]
+    fn new_manage_ops_are_mutations_not_streams() {
+        for op in [
+            DockerOp::ContainerPause,
+            DockerOp::ContainerUnpause,
+            DockerOp::ContainerPrune,
+            DockerOp::ComposeStop,
+            DockerOp::ComposeStart,
+            DockerOp::ComposeRestart,
+            DockerOp::VolumePrune,
+            DockerOp::NetworkPrune,
+        ] {
+            assert!(op.mutating(), "{} must audit", op.as_str());
+            assert!(!op.streams(), "{} is not a log stream", op.as_str());
+            assert_eq!(op.permission(), Permission::DockerManage);
+        }
+        assert!(!DockerOp::ComposePs.mutating());
+        assert_eq!(DockerOp::ComposeStop.as_str(), "compose_stop");
+        assert_eq!(DockerOp::ContainerPause.as_str(), "container_pause");
     }
 }

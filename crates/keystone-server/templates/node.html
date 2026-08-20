@@ -49,6 +49,13 @@
 
 <section class="tab-panel" data-panel="containers">
   <h2>Containers</h2>
+  {% if docker_manage && docker_reason.is_empty() %}
+  <div class="docker-toolbar">
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/container_prune" data-confirm="Remove all stopped containers on this node?">
+      <button type="submit" class="danger">Prune stopped</button>
+    </form>
+  </div>
+  {% endif %}
   <div id="containers" data-json="{{ containers_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}" data-poll-secs="{{ poll_secs }}"></div>
 </section>
 <section class="tab-panel" data-panel="compose">
@@ -80,6 +87,9 @@
       <input name="name" placeholder="data" size="24" required>
       <button type="submit">Create</button>
     </form>
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/volume_prune" data-confirm="Remove unused volumes? This cannot be undone.">
+      <button type="submit" class="danger">Prune unused</button>
+    </form>
   </div>
   {% endif %}
   <div id="volumes" data-json="{{ volumes_json }}" data-node="{{ node_id }}" data-manage="{% if docker_manage %}1{% else %}0{% endif %}" data-reason="{{ docker_reason }}"></div>
@@ -91,6 +101,9 @@
     <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/network_create">
       <input name="name" placeholder="appnet" size="24" required>
       <button type="submit">Create</button>
+    </form>
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/network_prune" data-confirm="Remove unused networks on this node?">
+      <button type="submit" class="danger">Prune unused</button>
     </form>
   </div>
   {% endif %}
@@ -134,7 +147,7 @@
       <label class="check"><input type="checkbox" name="docker_allow_exec" value="on"{% if docker_allow_exec %} checked{% endif %}> Allow <code>docker exec</code> (root-equivalent)</label>
       <label>Compose files (one path per line)
         <textarea name="compose_paths" rows="3" placeholder="/home/user/stack/compose.yaml">{{ compose_paths_text }}</textarea>
-        <span class="muted">Passed as <code>docker compose -f</code> when a command does not specify a file. The engine socket stays in <code>agent.toml</code> (<code>docker.host</code>).</span>
+        <span class="muted">YAML paths for <code>docker compose -f</code>. Needed for Up after Down. Must be readable by user <code>keystone</code>. The engine socket stays in <code>agent.toml</code> (<code>docker.host</code>).</span>
       </label>
     </fieldset>
     <fieldset>

@@ -910,6 +910,8 @@ mod tests {
         assert!(DockerOp::from_str("updates_apply").is_err());
         assert!(SysOp::from_str("compose_update").is_err());
         assert!(SysOp::from_str("compose_pull").is_err());
+        assert!(SysOp::from_str("compose_stop").is_err());
+        assert!(SysOp::from_str("container_prune").is_err());
     }
 
     #[test]

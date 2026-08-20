@@ -64,7 +64,7 @@ is deleted and a new session id is issued.
 | GET | `/api/v1/nodes` | `{ "nodes": [ { node_id, hostname, os, status, last_seen, chips, alert_count } ] }`. `chips` are CPU/RAM/disk/temp (`id`, `label`, `display`, `tone`, optional `hint`). `alert_count` is how many chips are firing. Home page polls this at 1s. |
 | GET | `/api/v1/dockerhub/search` | Query Docker Hub (server-side). Cookie session. |
 | GET | `/api/v1/dockerhub/tags` | Hub tags for a repo. Cookie session. |
-| GET | `/api/v1/nodes/{id}/sys/updates` | `{ packages: [{ name, from, to }] }` from `updates_list` (`apt-get update` + simulate). Cookie session. |
+| GET | `/api/v1/nodes/{id}/sys/updates` | `{ packages: [{ name, from, to }], capped?: bool }` from `updates_list` (`apt-get update`, `apt list --upgradable`, simulated `dist-upgrade`). Cookie session. Cap 500. |
 | GET | `/api/v1/nodes/{id}/container-usage` | `{ "<short-id>": { cpu_ratio?, memory_bytes? }, … }` from latest pushed samples. 404 if unknown node. Cookie session. Does not talk to Docker Engine. |
 | GET | `/api/v1/nodes/{id}/dashboard` | `{ source, layout, widgets }` — hydrated for the grid. 404 if unknown node. |
 | PUT | `/api/v1/nodes/{id}/dashboard` | JSON `Dashboard`; `normalize()` then `validate()`; 204. |

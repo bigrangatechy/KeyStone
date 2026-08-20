@@ -9,6 +9,8 @@ Wants=network-online.target
 # docker is optional. After=docker.socket waits for the socket when Engine
 # is installed. Never Requires=/BindsTo=/PartOf= docker: a KeyStone upgrade
 # must not stop the engine or containers.
+# Do not give up after a boot race (docker.sock / network not ready yet).
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -16,11 +18,14 @@ User=keystone
 Group=keystone
 EnvironmentFile=-/etc/default/keystone-agent
 ExecStart=/usr/bin/keystone-agent --config /etc/keystone/agent.toml
-Restart=on-failure
+Restart=always
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+# read-only: Compose files often live under /home. ProtectHome=true hides
+# /home entirely so `docker compose -f` cannot read them. The keystone user
+# still needs read permission on those files.
+ProtectHome=read-only
 PrivateTmp=true
 # /run/keystone must be the directory (not -/run/keystone/sys.sock).
 # Ignore-if-missing on the sock file leaves /run read-only when the

@@ -254,8 +254,81 @@ pub fn nmcli_modify_args(req: &NetSet) -> Result<Vec<String>, SysError> {
     Ok(args)
 }
 
-/// `Inst pkg [old] (new …)` lines from `apt-get -s upgrade`.
+/// Max packages returned by Check for updates (UI table).
+pub const UPDATES_LIST_CAP: usize = 500;
+
+/// `Inst pkg [old] (new …)` lines from `apt-get -s upgrade` / `dist-upgrade`,
+/// plus apt 2.9+ `Upgrading:` sections and `kept back` names.
 pub fn parse_apt_simulate(stdout: &str) -> Vec<Upgradable> {
+    let mut out = parse_apt_inst_lines(stdout);
+    merge_upgradable(&mut out, parse_apt_named_section(stdout, "Upgrading:"));
+    merge_upgradable(
+        &mut out,
+        parse_apt_named_section(stdout, "The following packages will be upgraded:"),
+    );
+    merge_upgradable(
+        &mut out,
+        parse_apt_named_section(stdout, "The following packages have been kept back:"),
+    );
+    cap_upgradable(out)
+}
+
+/// `apt list --upgradable` lines (`pkg/suite version arch [upgradable from: old]`).
+pub fn parse_apt_list_upgradable(stdout: &str) -> Vec<Upgradable> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        let Some(from_at) = line.find("[upgradable from:") else {
+            continue;
+        };
+        let Some(slash) = line.find('/') else {
+            continue;
+        };
+        let name = line[..slash].trim();
+        if !package_name_ok(name) {
+            continue;
+        }
+        let after_suite = line[slash + 1..from_at].trim();
+        let mut fields = after_suite.split_whitespace();
+        let _suite = fields.next();
+        let to = fields.next().unwrap_or("").to_string();
+        let from_rest = line[from_at + "[upgradable from:".len()..].trim();
+        let from = from_rest.trim_end_matches(']').trim().to_string();
+        out.push(Upgradable {
+            name: name.to_string(),
+            from,
+            to,
+        });
+        if out.len() >= UPDATES_LIST_CAP {
+            break;
+        }
+    }
+    cap_upgradable(out)
+}
+
+/// Union by package name. Existing `from`/`to` win when the extra row is blank.
+pub fn merge_upgradable(into: &mut Vec<Upgradable>, extra: Vec<Upgradable>) {
+    for pkg in extra {
+        if let Some(existing) = into.iter_mut().find(|p| p.name == pkg.name) {
+            if existing.from.is_empty() {
+                existing.from = pkg.from;
+            }
+            if existing.to.is_empty() {
+                existing.to = pkg.to;
+            }
+        } else {
+            into.push(pkg);
+        }
+    }
+}
+
+fn cap_upgradable(mut pkgs: Vec<Upgradable>) -> Vec<Upgradable> {
+    pkgs.sort_by(|a, b| a.name.cmp(&b.name));
+    pkgs.truncate(UPDATES_LIST_CAP);
+    pkgs
+}
+
+fn parse_apt_inst_lines(stdout: &str) -> Vec<Upgradable> {
     let mut out = Vec::new();
     for line in stdout.lines() {
         let line = line.trim();
@@ -271,14 +344,13 @@ pub fn parse_apt_simulate(stdout: &str) -> Vec<Upgradable> {
         }
         let mut from = String::new();
         let mut to = String::new();
-        let joined = rest.to_string();
-        if let Some(start) = joined.find('[') {
-            if let Some(end) = joined[start + 1..].find(']') {
-                from = joined[start + 1..start + 1 + end].trim().to_string();
+        if let Some(start) = rest.find('[') {
+            if let Some(end) = rest[start + 1..].find(']') {
+                from = rest[start + 1..start + 1 + end].trim().to_string();
             }
         }
-        if let Some(start) = joined.find('(') {
-            if let Some(ver) = joined[start + 1..].split_whitespace().next() {
+        if let Some(start) = rest.find('(') {
+            if let Some(ver) = rest[start + 1..].split_whitespace().next() {
                 to = ver.trim().to_string();
             }
         }
@@ -287,8 +359,36 @@ pub fn parse_apt_simulate(stdout: &str) -> Vec<Upgradable> {
             from,
             to,
         });
-        if out.len() >= 200 {
+        if out.len() >= UPDATES_LIST_CAP {
             break;
+        }
+    }
+    out
+}
+
+fn parse_apt_named_section(stdout: &str, header: &str) -> Vec<Upgradable> {
+    let mut out = Vec::new();
+    let mut in_section = false;
+    for line in stdout.lines() {
+        let t = line.trim();
+        if t == header {
+            in_section = true;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if t.is_empty() || t.ends_with(':') {
+            break;
+        }
+        for name in t.split_whitespace() {
+            if package_name_ok(name) {
+                out.push(Upgradable {
+                    name: name.to_string(),
+                    from: String::new(),
+                    to: String::new(),
+                });
+            }
         }
     }
     out
@@ -466,6 +566,55 @@ mod tests {
         assert_eq!(pkgs[0].name, "git");
         assert_eq!(pkgs[0].from, "1:2.34.1-1");
         assert_eq!(pkgs[0].to, "1:2.34.1-2");
+    }
+
+    #[test]
+    fn parse_apt_list_upgradable_lines() {
+        let pkgs = parse_apt_list_upgradable(
+            "Listing...\ngit/noble-updates 1:2.43.0-1ubuntu7.3 amd64 [upgradable from: 1:2.43.0-1ubuntu7.1]\ncurl/noble-updates,noble-security 8.5.0-2ubuntu10.6 amd64 [upgradable from: 8.5.0-2ubuntu10.4]\n",
+        );
+        assert_eq!(pkgs.len(), 2);
+        assert_eq!(pkgs[0].name, "curl");
+        assert_eq!(pkgs[0].from, "8.5.0-2ubuntu10.4");
+        assert_eq!(pkgs[0].to, "8.5.0-2ubuntu10.6");
+        assert_eq!(pkgs[1].name, "git");
+        assert_eq!(pkgs[1].from, "1:2.43.0-1ubuntu7.1");
+        assert_eq!(pkgs[1].to, "1:2.43.0-1ubuntu7.3");
+    }
+
+    #[test]
+    fn parse_apt_new_upgrading_section_and_kept_back() {
+        let pkgs = parse_apt_simulate(
+            "Upgrading:\n  curl vim\n\nThe following packages have been kept back:\n  linux-generic\n",
+        );
+        let names: Vec<_> = pkgs.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"curl"));
+        assert!(names.contains(&"vim"));
+        assert!(names.contains(&"linux-generic"));
+    }
+
+    #[test]
+    fn merge_upgradable_fills_blank_versions() {
+        let mut into = parse_apt_simulate("Upgrading:\n  git\n");
+        merge_upgradable(
+            &mut into,
+            parse_apt_list_upgradable("git/noble 1:2.43.0 amd64 [upgradable from: 1:2.34.1]\n"),
+        );
+        assert_eq!(into.len(), 1);
+        assert_eq!(into[0].from, "1:2.34.1");
+        assert_eq!(into[0].to, "1:2.43.0");
+    }
+
+    #[test]
+    fn parse_apt_caps_at_updates_list_cap() {
+        let mut inst = String::new();
+        let mut list = String::new();
+        for i in 0..(UPDATES_LIST_CAP + 25) {
+            inst.push_str(&format!("Inst pkg{i} [1] (2 Debian [amd64])\n"));
+            list.push_str(&format!("pkg{i}/stable 2 amd64 [upgradable from: 1]\n"));
+        }
+        assert_eq!(parse_apt_simulate(&inst).len(), UPDATES_LIST_CAP);
+        assert_eq!(parse_apt_list_upgradable(&list).len(), UPDATES_LIST_CAP);
     }
 
     #[test]

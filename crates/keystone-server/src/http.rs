@@ -1908,18 +1908,35 @@ fn panel_for_op(op: DockerOp) -> &'static str {
         DockerOp::VolumeList
         | DockerOp::VolumeInspect
         | DockerOp::VolumeCreate
-        | DockerOp::VolumeRemove => "volumes",
+        | DockerOp::VolumeRemove
+        | DockerOp::VolumePrune => "volumes",
         DockerOp::NetworkList
         | DockerOp::NetworkInspect
         | DockerOp::NetworkCreate
-        | DockerOp::NetworkRemove => "networks",
+        | DockerOp::NetworkRemove
+        | DockerOp::NetworkPrune => "networks",
         DockerOp::ComposePs
         | DockerOp::ComposeUp
+        | DockerOp::ComposeStop
+        | DockerOp::ComposeStart
+        | DockerOp::ComposeRestart
         | DockerOp::ComposeDown
         | DockerOp::ComposeLogs
         | DockerOp::ComposePull
         | DockerOp::ComposeUpdate => "compose",
-        _ => "containers",
+        DockerOp::ContainerList
+        | DockerOp::ContainerInspect
+        | DockerOp::ContainerStart
+        | DockerOp::ContainerStop
+        | DockerOp::ContainerRestart
+        | DockerOp::ContainerKill
+        | DockerOp::ContainerRemove
+        | DockerOp::ContainerPause
+        | DockerOp::ContainerUnpause
+        | DockerOp::ContainerPrune
+        | DockerOp::ContainerLogs
+        | DockerOp::ContainerStats
+        | DockerOp::ContainerExec => "containers",
     }
 }
 
@@ -2559,12 +2576,21 @@ mod tests {
 
     #[test]
     fn panel_for_op_groups_resources() {
-        assert_eq!(panel_for_op(DockerOp::ImagePull), "images");
-        assert_eq!(panel_for_op(DockerOp::VolumeCreate), "volumes");
-        assert_eq!(panel_for_op(DockerOp::NetworkRemove), "networks");
-        assert_eq!(panel_for_op(DockerOp::ComposeDown), "compose");
-        assert_eq!(panel_for_op(DockerOp::ComposeUpdate), "compose");
-        assert_eq!(panel_for_op(DockerOp::ContainerStart), "containers");
+        for op in DockerOp::all() {
+            let panel = panel_for_op(op);
+            let name = op.as_str();
+            if name.starts_with("compose_") {
+                assert_eq!(panel, "compose", "{name}");
+            } else if name.starts_with("image_") {
+                assert_eq!(panel, "images", "{name}");
+            } else if name.starts_with("volume_") {
+                assert_eq!(panel, "volumes", "{name}");
+            } else if name.starts_with("network_") {
+                assert_eq!(panel, "networks", "{name}");
+            } else {
+                assert_eq!(panel, "containers", "{name}");
+            }
+        }
     }
 
     #[test]
@@ -2830,38 +2856,23 @@ mod tests {
     fn ui_docker_posts_are_mutating_and_skip_exec() {
         let js = include_str!("static/app.js");
         let html = include_str!("../templates/node.html");
-        for op in [
-            "container_start",
-            "container_stop",
-            "container_restart",
-            "container_kill",
-            "container_remove",
-            "compose_up",
-            "compose_down",
-            "compose_pull",
-            "compose_update",
-            "image_remove",
-            "image_pull",
-            "image_prune",
-            "volume_create",
-            "volume_remove",
-            "network_create",
-            "network_remove",
-        ] {
-            let parsed: DockerOp = op.parse().expect(op);
+        for op in DockerOp::all() {
+            if !op.mutating() {
+                continue;
+            }
+            let name = op.as_str();
+            if op == DockerOp::ContainerExec {
+                assert!(
+                    !js.contains(name) && !html.contains(name),
+                    "interactive exec must stay out of this UI"
+                );
+                continue;
+            }
             assert!(
-                parsed.mutating(),
-                "{op} posted by the UI must be a mutation"
-            );
-            assert!(
-                js.contains(op) || html.contains(&format!("docker/{op}")),
-                "{op} must appear in the Docker UI"
+                js.contains(name) || html.contains(&format!("docker/{name}")),
+                "{name} must appear in the Docker UI"
             );
         }
-        assert!(
-            !js.contains("container_exec") && !html.contains("container_exec"),
-            "interactive exec must stay out of this UI"
-        );
         assert!(js.contains("/sys/net_set"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/gitlab-backup"));

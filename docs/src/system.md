@@ -30,16 +30,29 @@ This is **off until you enable it**, twice:
 Missing socket → the tab shows that `systemctl` line. Observe off → it
 points at Settings (the socket unit alone does not turn the tab on). The
 helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
-It only runs allowlisted ops (`apt-get update` / `upgrade`, netplan or
+It only runs allowlisted ops (`apt-get update` / `upgrade`, `apt list
+--upgradable`, simulated `dist-upgrade`, netplan or
 `nmcli`, Omnibus `gitlab-backup create`). There is no shell string.
 
 ## Updates
 
-**Check for updates** runs `apt-get update` and a simulated upgrade on
-**this** node (Debian / Ubuntu / Raspberry Pi OS). **Apply updates** runs
-`apt-get -y upgrade` (not `dist-upgrade`, not autoremove) and streams the
-log. Leave the page to cancel follow. A reboot-needed flag is shown when
+**Check for updates** runs `apt-get update` on **this** node, then lists
+what `apt list --upgradable` and a simulated `apt-get dist-upgrade` agree
+is pending (Debian / Ubuntu / Raspberry Pi OS). Held-back packages and
+Ubuntu phased updates are included. The table is capped at 500 names.
+
+**Apply updates** still runs `apt-get -y upgrade` (not `dist-upgrade`, not
+autoremove) and streams the log. Leave the page to cancel follow. Apply
+will not install new packages that only `dist-upgrade` would pull, and
+Ubuntu may still skip a phased package. A reboot-needed flag is shown when
 `/run/reboot-required` exists; this version does not reboot for you.
+
+Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
+are enabled for boot (`WantedBy=multi-user.target`). After a kernel or
+`apt upgrade` reboot they should come back on their own. Confirm with
+`systemctl is-enabled keystone-server keystone-agent` (must print
+`enabled`) — `systemctl start` alone does not survive a reboot. See
+[Troubleshooting](troubleshooting.md).
 
 ## IPv4
 

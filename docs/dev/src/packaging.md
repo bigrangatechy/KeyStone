@@ -27,9 +27,10 @@ Docker’s data root or `/`. Invariants (enforced by
 
 - Never `Depends`/`Recommends` `docker.io`, `docker-ce`, `containerd`, or
   `podman`. Socket access is optional (`keystone` in group `docker`).
-- Never `Requires=` / `BindsTo=` / `PartOf=` Docker in the units (including
-  `keystone-sys`). The agent may `After=docker.socket` so the socket exists
-  when Engine is installed. The agent unit keeps `NoNewPrivileges=true`.
+- The agent unit keeps `NoNewPrivileges=true`. `ProtectHome=read-only` so
+  Compose YAML under `/home` is visible (the `keystone` user still needs
+  read permission). `Restart=always` and `StartLimitIntervalSec=0` so a
+  reboot after `apt upgrade` does not leave the unit failed.
 - `postinst` creates `/var/lib/keystone` (and `agent-buffer`) and `chown`s
   **that directory only**. No `chown -R`. Abort if the path is a symlink
   or is `/`, `/var/lib/docker`, etc.

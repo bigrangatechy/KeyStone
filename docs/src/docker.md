@@ -21,8 +21,9 @@ On the node **Settings** tab:
 
 1. **Observe Docker** — list containers, Compose projects, images, volumes,
    and networks; follow logs. No start/stop.
-2. **Allow mutations** — start, stop, restart, kill, remove; Compose
-   up/down/pull/**Update**; image pull/prune/remove; volume and network create/remove.
+2. **Allow mutations** — start, stop, restart, pause/resume, kill, remove,
+   prune stopped; Compose up/start/stop/restart/down/pull/**Update**; image
+   pull/prune/remove; volume and network create/remove/prune.
    Destructive actions ask for confirmation. The pull/create forms take a
    plain name, not JSON. Image pull can also be filled from a Docker Hub
    search on that same form.
@@ -48,20 +49,34 @@ If the agent is offline or Observe is off, the tab says so instead of
 showing stale lists. Manage buttons and pull/create toolbars are hidden
 when mutations are off.
 
-- **Containers** — name, image, CPU, memory, state, Compose project. CPU and
+- **Containers** — name, image, published ports, CPU, memory, state, Compose
+  project. CPU and
   memory come from the same background samples as Overview and update at
   that node’s poll interval while the tab is open (not a live Engine
   `stats` stream). **Logs** opens a follow view (last 200 lines, then live).
-  With Manage: start / stop / restart / kill / remove.
+  With Manage: start / stop / restart / pause / resume / kill / remove, and
+  **Prune stopped**.
 - **Compose** — projects discovered from `com.docker.compose.project`
-  labels, with a service table per project. **Logs** follows
-  `docker compose logs`. With Manage: up / down / pull / **Update** (pull
-  then up — use this for a Cloudflare Tunnel stack, not the System tab).
-  **Compose files** on Settings are extra `-f` paths when a command does
-  not name a file.
+  labels **and** from **Compose files** on Settings, with a service table
+  per project.   **Logs** follows `docker compose logs`. With Manage: **Up**, **Start**,
+  **Stop**, **Restart**, **Down**, **Pull**, **Update** (pull then up — use
+  this for a Cloudflare Tunnel stack, not the System tab). **Stop** keeps
+  the containers (exited) on this tab. **Restart** bounces them without
+  removing the project. **Down** removes that project’s
+  containers (Docker’s `compose down`). The project **stays on this tab**
+  so you can **Up** or **Start** it again; it is not gone. **Pull** uses that project’s
+  compose file when KeyStone can read it (labels
+  `com.docker.compose.project.config_files` / `working_dir`, or the
+  matching Settings path). If the file is missing, Pull still refreshes
+  images from the running/stopped containers. **Up** after Down needs a
+  readable compose file on Settings. The packaged agent user is
+  `keystone`: the YAML (and its directory) must be readable by that user.
+  Put stacks in `/opt/…` or `chmod`/`setfacl` a home path; `ProtectHome`
+  is read-only, not a hidden `/home`.
 - **Images** — tags, short id, size. With Manage: pull by name, search
   Docker Hub to fill that name, prune unused, remove.
-- **Volumes** and **Networks** — list; create/remove with Manage.
+- **Volumes** and **Networks** — list; create/remove and prune unused with
+  Manage.
 
 Mutations require a **logged-in UI session**. The ingest token used by
 agents cannot call these actions. Every mutation is written to

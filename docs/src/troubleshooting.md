@@ -151,9 +151,43 @@ token does not.
 - Manage refused: turn **Allow apt upgrade, IPv4 changes, and GitLab backup**
   on and save.
 - `apt-get` failed: read the apply stream; the helper only runs `upgrade`,
-  not `dist-upgrade`. Debian / Ubuntu / Raspberry Pi OS only.
+  not `dist-upgrade`. Debian / Ubuntu / Raspberry Pi OS only. Check for
+  updates lists `apt list --upgradable` plus a simulated dist-upgrade
+  (held-back / phased included); Apply still will not install new deps.
 - Static IPv4 dropped the session: that address is now on the interface.
   Use a console if you cannot reach the new IP.
+
+## Did not start after reboot
+
+`systemctl start` is not enough. The unit must be **enabled**:
+
+```
+systemctl is-enabled keystone-server keystone-agent
+sudo systemctl enable --now keystone-server keystone-agent
+```
+
+`is-enabled` should print `enabled`. Current packages use `Restart=always`
+and disable the start-limit so a boot race with Docker or the network does
+not leave the service `failed`. Then:
+
+```
+systemctl status keystone-server keystone-agent
+journalctl -u keystone-server -u keystone-agent -b --no-pager
+```
+
+Do not Apply host updates from the UI until those units are enabled, or a
+kernel upgrade reboot will take the UI down until you start it by hand.
+
+## Compose Pull fails / Down emptied the tab
+
+Pull needs that **project’s** compose file, not the first path on Settings.
+Set **Compose files** to the YAML for each stack (readable by user
+`keystone`). If containers are still there, Pull can refresh their images
+without the file. Prefer **Stop** / **Restart** when you want the stack to
+stay listed. **Down** is Docker `compose down`: containers go away, but
+the project should stay on the tab so you can Up it. Up after Down still
+needs the YAML path. `sudo -u keystone cat /path/to/compose.yaml` must
+work.
 
 ## Token rotate left every node red
 

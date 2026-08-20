@@ -90,7 +90,13 @@ Then:
 
 ```
 sudo systemctl enable --now keystone-server
+systemctl is-enabled keystone-server
 ```
+
+`is-enabled` must print `enabled`. The package turns the unit on for boot;
+`systemctl start` without `enable` does **not** come back after a reboot.
+Units use `Restart=always` so a crash or a boot race with the network does
+not leave the UI down.
 
 Open `http://<that-host>:8080` (not `https://` unless you enabled `[tls]`).
 First sign-in is **`admin` / `changeme`**. The UI then requires a new
@@ -123,7 +129,11 @@ URL (`mdns` on a typical LAN), token, and node id. Copy that file to
 
 ```
 sudo systemctl enable --now keystone-agent
+systemctl is-enabled keystone-agent
 ```
+
+Same as the server: **enable** for boot, not only `start`. After a system
+update reboot the agent should return on its own.
 
 If you skip the form, the packaged agent already uses mDNS. Set
 `ingest_token` to the value on **Settings** (not `change-me` if you

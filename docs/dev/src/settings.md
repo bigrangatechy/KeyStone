@@ -53,7 +53,7 @@ off).
 | `poll_secs` | 1–60, agent push + Overview poll. |
 | `docker_enabled`, `docker_manage`, `docker_allow_exec` | Agent policy. |
 | `sys_enabled`, `sys_manage` | Host system-admin observe / apply (opt-in `keystone-sys` socket). Default off. |
-| `compose_paths` | Extra `-f` files. |
+| `compose_paths` | Extra `-f` files; used for Up after Down. |
 | `labels` | Heartbeat labels; replace TOML labels once connected. |
 
 `agent_runtime()` is the payload for `set_runtime`. Add-node “runs Docker”

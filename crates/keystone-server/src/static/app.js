@@ -226,9 +226,14 @@
     container_start: "Start",
     container_stop: "Stop",
     container_restart: "Restart",
+    container_pause: "Pause",
+    container_unpause: "Resume",
     container_kill: "Kill",
     container_remove: "Remove",
     compose_up: "Up",
+    compose_start: "Start",
+    compose_stop: "Stop",
+    compose_restart: "Restart",
     compose_down: "Down",
     compose_pull: "Pull",
     compose_update: "Update",
@@ -240,12 +245,15 @@
   const CONFIRM = {
     container_kill: "Kill this container?",
     container_remove: "Remove this container? This cannot be undone.",
-    compose_down: "Compose down this project?",
+    container_prune: "Remove all stopped containers on this node?",
+    compose_down: "Compose down removes this project's containers (not the Compose file). The project stays on this tab so you can Up it again. Continue?",
     compose_update: "Pull images and recreate this Compose project?",
     image_remove: "Remove this image?",
     image_prune: "Prune unused images on this node?",
     volume_remove: "Remove this volume?",
-    network_remove: "Remove this network?"
+    volume_prune: "Remove unused volumes? This cannot be undone.",
+    network_remove: "Remove this network?",
+    network_prune: "Remove unused networks on this node?"
   };
 
   function manageOn(host) {
@@ -360,10 +368,10 @@
     const data = parse(containers);
     const node = containers.getAttribute("data-node");
     const table = document.createElement("table");
-    table.appendChild(thead(["Name", "Image", "CPU", "Memory", "State", "Project", ""]));
+    table.appendChild(thead(["Name", "Image", "Ports", "CPU", "Memory", "State", "Project", ""]));
     const body = document.createElement("tbody");
     if (!Array.isArray(data) || !data.length) {
-      body.appendChild(emptyRow(7, "No containers."));
+      body.appendChild(emptyRow(8, "No containers."));
     } else {
       data.forEach((c) => {
         const tr = document.createElement("tr");
@@ -378,13 +386,14 @@
         nameTd.appendChild(code);
         tr.appendChild(nameTd);
         tr.appendChild(tdText(c.image || ""));
+        tr.appendChild(tdCode(c.ports || "—"));
         tr.appendChild(tdUsage("cpu", formatCpuRatio(c.cpu_ratio)));
         tr.appendChild(tdUsage("mem", c.memory_bytes == null ? "—" : (formatBytes(c.memory_bytes) || "—")));
         tr.appendChild(stateCell(c.state, c.status));
         tr.appendChild(tdText(c.compose_project || ""));
         const acts = [];
         if (manageOn(containers)) {
-          ["container_start", "container_stop", "container_restart", "container_kill", "container_remove"].forEach((op) => {
+          ["container_start", "container_stop", "container_restart", "container_pause", "container_unpause", "container_kill", "container_remove"].forEach((op) => {
             acts.push(actionForm(node, op, { id: id }));
           });
         }
@@ -448,7 +457,7 @@
     const wrap = document.createElement("div");
     const projects = (data && typeof data === "object" && !Array.isArray(data)) ? Object.keys(data) : [];
     if (!projects.length) {
-      wrap.appendChild(el("p", "muted", "No Compose projects. Set Compose files on Settings, or start a stack that sets com.docker.compose.project."));
+      wrap.appendChild(el("p", "muted", "No Compose projects. Set Compose files on Settings (paths the keystone user can read), or start a stack that sets com.docker.compose.project."));
     } else {
       projects.forEach((project) => {
         const head = el("div", "compose-head");
@@ -456,6 +465,9 @@
         const tools = el("div", "actions");
         if (manageOn(compose)) {
           tools.appendChild(actionForm(node, "compose_up", { project: project }));
+          tools.appendChild(actionForm(node, "compose_start", { project: project }));
+          tools.appendChild(actionForm(node, "compose_stop", { project: project }));
+          tools.appendChild(actionForm(node, "compose_restart", { project: project }));
           tools.appendChild(actionForm(node, "compose_down", { project: project }));
           tools.appendChild(actionForm(node, "compose_pull", { project: project }));
           tools.appendChild(actionForm(node, "compose_update", { project: project }));
@@ -464,17 +476,18 @@
         head.appendChild(tools);
         wrap.appendChild(head);
         const table = document.createElement("table");
-        table.appendChild(thead(["Service", "Name", "Image", "State"]));
+        table.appendChild(thead(["Service", "Name", "Image", "Ports", "State"]));
         const body = document.createElement("tbody");
         const services = Array.isArray(data[project]) ? data[project] : [];
         if (!services.length) {
-          body.appendChild(emptyRow(4, "No services."));
+          body.appendChild(emptyRow(5, "No containers (Compose down removes them). Start or Up brings them back."));
         } else {
           services.forEach((s) => {
             const tr = document.createElement("tr");
             tr.appendChild(tdText(s.service || ""));
             tr.appendChild(tdText(s.name || ""));
             tr.appendChild(tdText(s.image || ""));
+            tr.appendChild(tdCode(s.ports || "—"));
             tr.appendChild(stateCell(s.state, s.status));
             body.appendChild(tr);
           });
@@ -835,7 +848,8 @@
             return;
           }
           data.packages = body.packages || [];
-          host.setAttribute("data-json", JSON.stringify(Object.assign({}, data, { packages: data.packages })));
+          data.capped = !!body.capped;
+          host.setAttribute("data-json", JSON.stringify(Object.assign({}, data, { packages: data.packages, capped: data.capped })));
           paintSystem(host);
         } catch (e) {
           window.alert("Could not list updates.");
@@ -864,6 +878,9 @@
     if (!pkgs.length) {
       wrap.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates runs apt-get update on the node."));
     } else {
+      if (data.capped) {
+        wrap.appendChild(el("p", "muted", "Showing the first 500 packages."));
+      }
       const pt = document.createElement("table");
       pt.appendChild(thead(["Package", "From", "To"]));
       const pb = document.createElement("tbody");

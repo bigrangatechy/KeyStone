@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::default::Default;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,11 +11,11 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use bollard::container::{
     InspectContainerOptions, KillContainerOptions, ListContainersOptions, LogsOptions,
-    RemoveContainerOptions, StatsOptions,
+    PruneContainersOptions, RemoveContainerOptions, StatsOptions,
 };
 use bollard::image::{ListImagesOptions, PruneImagesOptions, RemoveImageOptions};
-use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
-use bollard::volume::{CreateVolumeOptions, ListVolumesOptions};
+use bollard::network::{CreateNetworkOptions, ListNetworksOptions, PruneNetworksOptions};
+use bollard::volume::{CreateVolumeOptions, ListVolumesOptions, PruneVolumesOptions};
 use bollard::Docker;
 use futures_util::future::join_all;
 use futures_util::StreamExt;
@@ -23,11 +24,21 @@ use keystone_core::docker::DockerOp;
 use keystone_core::sample::Sample;
 use serde_json::{json, Value};
 use tokio::process::Command;
+use tracing::warn;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ComposeSpec {
+    project: String,
+    files: Vec<String>,
+    working_dir: Option<String>,
+    images: Vec<String>,
+}
 
 #[derive(Clone)]
 pub struct DockerHandle {
     docker: Docker,
     cfg: Arc<Mutex<DockerConfig>>,
+    known_compose: Arc<Mutex<HashMap<String, ComposeSpec>>>,
 }
 
 impl DockerHandle {
@@ -47,6 +58,7 @@ impl DockerHandle {
         Ok(Self {
             docker,
             cfg: Arc::new(Mutex::new(cfg.clone())),
+            known_compose: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -170,6 +182,23 @@ impl DockerHandle {
                     .await?;
                 Ok(json!({"ok": true}))
             }
+            DockerOp::ContainerPause => {
+                let id = str_field(&payload, "id")?;
+                self.docker.pause_container(id).await?;
+                Ok(json!({"ok": true}))
+            }
+            DockerOp::ContainerUnpause => {
+                let id = str_field(&payload, "id")?;
+                self.docker.unpause_container(id).await?;
+                Ok(json!({"ok": true}))
+            }
+            DockerOp::ContainerPrune => {
+                let report = self
+                    .docker
+                    .prune_containers(None::<PruneContainersOptions<String>>)
+                    .await?;
+                Ok(serde_json::to_value(report)?)
+            }
             DockerOp::ContainerLogs | DockerOp::ComposeLogs => {
                 Err(anyhow!("{} must be streamed (StreamChunk)", op.as_str()))
             }
@@ -246,6 +275,13 @@ impl DockerHandle {
                 self.docker.remove_volume(name, None).await?;
                 Ok(json!({"ok": true}))
             }
+            DockerOp::VolumePrune => {
+                let report = self
+                    .docker
+                    .prune_volumes(None::<PruneVolumesOptions<String>>)
+                    .await?;
+                Ok(serde_json::to_value(report)?)
+            }
             DockerOp::NetworkList => self.network_list().await,
             DockerOp::NetworkInspect => {
                 let id = str_field(&payload, "id")?;
@@ -268,8 +304,18 @@ impl DockerHandle {
                 self.docker.remove_network(id).await?;
                 Ok(json!({"ok": true}))
             }
+            DockerOp::NetworkPrune => {
+                let report = self
+                    .docker
+                    .prune_networks(None::<PruneNetworksOptions<String>>)
+                    .await?;
+                Ok(serde_json::to_value(report)?)
+            }
             DockerOp::ComposePs
             | DockerOp::ComposeUp
+            | DockerOp::ComposeStop
+            | DockerOp::ComposeStart
+            | DockerOp::ComposeRestart
             | DockerOp::ComposeDown
             | DockerOp::ComposePull
             | DockerOp::ComposeUpdate => self.compose(op, &payload).await,
@@ -298,6 +344,7 @@ impl DockerHandle {
                     "state": c.state,
                     "status": c.status,
                     "compose_project": compose_project,
+                    "ports": format_summary_ports(c.ports.as_deref().unwrap_or(&[])),
                 })
             })
             .collect();
@@ -305,71 +352,30 @@ impl DockerHandle {
     }
 
     async fn compose(&self, op: DockerOp, payload: &Value) -> anyhow::Result<Value> {
-        let project = payload
-            .get("project")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let file = payload.get("file").and_then(|v| v.as_str());
-        let paths = self.policy().compose_paths;
-        if matches!(op, DockerOp::ComposePs) && file.is_none() {
-            return self.compose_ps_from_labels(project).await;
+        if matches!(op, DockerOp::ComposePs) {
+            let project = payload
+                .get("project")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            return self.compose_ps_merged(project).await;
         }
-        let mut args = vec!["compose".to_string()];
-        if let Some(f) = file {
-            args.push("-f".into());
-            args.push(f.into());
-        } else if let Some(f) = paths.first() {
-            args.push("-f".into());
-            args.push(f.clone());
-        }
-        if !project.is_empty() {
-            args.push("-p".into());
-            args.push(project.into());
-        }
+        let spec = self.resolve_compose(payload).await?;
         match op {
-            DockerOp::ComposeUp => {
-                args.push("up".into());
-                args.push("-d".into());
-            }
-            DockerOp::ComposeDown => args.push("down".into()),
-            DockerOp::ComposePs => args.push("ps".into()),
-            DockerOp::ComposePull => args.push("pull".into()),
+            DockerOp::ComposeUp => self.compose_up_spec(&spec).await,
+            DockerOp::ComposeStop => self.run_compose_cli(&spec, &["stop"]).await,
+            DockerOp::ComposeStart => self.run_compose_cli(&spec, &["start"]).await,
+            DockerOp::ComposeRestart => self.run_compose_cli(&spec, &["restart"]).await,
+            DockerOp::ComposeDown => self.compose_down_spec(&spec).await,
+            DockerOp::ComposePull => self.compose_pull_spec(&spec).await,
             DockerOp::ComposeUpdate => {
-                let mut pull = args.clone();
-                pull.push("pull".into());
-                let output = Command::new("docker")
-                    .args(&pull)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .output()
-                    .await
-                    .context("docker compose pull")?;
-                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-                if !output.status.success() {
-                    anyhow::bail!("docker compose pull failed: {stderr}{stdout}");
-                }
-                args.push("up".into());
-                args.push("-d".into());
+                self.compose_pull_spec(&spec).await?;
+                self.compose_up_spec(&spec).await
             }
             _ => unreachable!(),
         }
-        let output = Command::new("docker")
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .context("docker compose")?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        if !output.status.success() {
-            anyhow::bail!("docker compose failed: {stderr}{stdout}");
-        }
-        Ok(json!({"stdout": stdout, "stderr": stderr}))
     }
 
-    async fn compose_ps_from_labels(&self, project_filter: &str) -> anyhow::Result<Value> {
+    async fn compose_ps_merged(&self, project_filter: &str) -> anyhow::Result<Value> {
         let list = self
             .docker
             .list_containers(Some(ListContainersOptions::<String> {
@@ -378,6 +384,7 @@ impl DockerHandle {
             }))
             .await?;
         let mut projects: HashMap<String, Vec<Value>> = HashMap::new();
+        let mut seen: HashMap<String, ComposeSpec> = HashMap::new();
         for c in list {
             let labels = c.labels.clone().unwrap_or_default();
             let Some(project) = labels.get("com.docker.compose.project").cloned() else {
@@ -396,6 +403,10 @@ impl DockerHandle {
                 .unwrap_or_default()
                 .trim_start_matches('/')
                 .to_string();
+            remember_compose(
+                &mut seen,
+                &spec_from_container_labels(&project, &labels, c.image.as_deref()),
+            );
             projects.entry(project).or_default().push(json!({
                 "id": id.clone(),
                 "id_short": short_id(&id),
@@ -404,9 +415,181 @@ impl DockerHandle {
                 "state": c.state,
                 "status": c.status,
                 "service": labels.get("com.docker.compose.service"),
+                "ports": format_summary_ports(c.ports.as_deref().unwrap_or(&[])),
             }));
         }
+        for path in &self.policy().compose_paths {
+            let spec = spec_from_compose_path(path);
+            if !project_filter.is_empty() && spec.project != project_filter {
+                continue;
+            }
+            remember_compose(&mut seen, &spec);
+            projects.entry(spec.project.clone()).or_default();
+        }
+        {
+            let mut known = self.known_compose.lock().unwrap_or_else(|e| e.into_inner());
+            for spec in seen.values() {
+                remember_compose(&mut known, spec);
+            }
+            for name in known.keys() {
+                if !project_filter.is_empty() && name != project_filter {
+                    continue;
+                }
+                projects.entry(name.clone()).or_default();
+            }
+        }
         Ok(json!(projects))
+    }
+
+    async fn resolve_compose(&self, payload: &Value) -> anyhow::Result<ComposeSpec> {
+        let project = payload
+            .get("project")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mut spec = ComposeSpec {
+            project: project.clone(),
+            ..Default::default()
+        };
+        {
+            let known = self.known_compose.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(prev) = known.get(&project) {
+                spec = prev.clone();
+                if spec.project.is_empty() {
+                    spec.project = project.clone();
+                }
+            }
+        }
+        if let Some(engine) = self.compose_spec_from_engine(&project).await? {
+            overlay_compose(&mut spec, &engine);
+        }
+        if let Some(f) = payload.get("file").and_then(|v| v.as_str()) {
+            overlay_compose(&mut spec, &spec_from_compose_path(f));
+        }
+        if spec.files.is_empty() {
+            if let Some(from_path) =
+                spec_matching_compose_path(&self.policy().compose_paths, &project)
+            {
+                overlay_compose(&mut spec, &from_path);
+            }
+        }
+        if spec.project.is_empty() {
+            spec.project = project;
+        }
+        {
+            let mut known = self.known_compose.lock().unwrap_or_else(|e| e.into_inner());
+            remember_compose(&mut known, &spec);
+        }
+        Ok(spec)
+    }
+
+    async fn compose_spec_from_engine(&self, project: &str) -> anyhow::Result<Option<ComposeSpec>> {
+        if project.is_empty() {
+            return Ok(None);
+        }
+        let list = self
+            .docker
+            .list_containers(Some(ListContainersOptions::<String> {
+                all: true,
+                ..Default::default()
+            }))
+            .await?;
+        let mut spec = ComposeSpec {
+            project: project.to_string(),
+            ..Default::default()
+        };
+        let mut found = false;
+        for c in list {
+            let labels = c.labels.clone().unwrap_or_default();
+            let Some(p) = labels.get("com.docker.compose.project") else {
+                continue;
+            };
+            if p != project {
+                continue;
+            }
+            found = true;
+            overlay_compose(
+                &mut spec,
+                &spec_from_container_labels(project, &labels, c.image.as_deref()),
+            );
+        }
+        Ok(found.then_some(spec))
+    }
+
+    async fn compose_pull_spec(&self, spec: &ComposeSpec) -> anyhow::Result<Value> {
+        if !spec.files.is_empty() {
+            match self.run_compose_cli(spec, &["pull"]).await {
+                Ok(v) => return Ok(v),
+                Err(e) if spec.images.is_empty() => return Err(e),
+                Err(e) => {
+                    warn!("docker compose pull via file failed, pulling images: {e}");
+                }
+            }
+        }
+        if !spec.images.is_empty() {
+            return self.pull_images(&spec.images).await;
+        }
+        anyhow::bail!(
+            "no Compose file or images for project {}. Add the compose YAML path on this node's Settings (readable by user keystone).",
+            spec.project
+        )
+    }
+
+    async fn compose_up_spec(&self, spec: &ComposeSpec) -> anyhow::Result<Value> {
+        if spec.files.is_empty() {
+            anyhow::bail!(
+                "no Compose file for project {}. Add the compose YAML path on this node's Settings so Up can recreate the stack after Down.",
+                spec.project
+            );
+        }
+        self.run_compose_cli(spec, &["up", "-d"]).await
+    }
+
+    async fn compose_down_spec(&self, spec: &ComposeSpec) -> anyhow::Result<Value> {
+        self.run_compose_cli(spec, &["down"]).await
+    }
+
+    async fn run_compose_cli(&self, spec: &ComposeSpec, extra: &[&str]) -> anyhow::Result<Value> {
+        let output = compose_command(spec, extra)
+            .output()
+            .await
+            .context("docker compose")?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        if !output.status.success() {
+            anyhow::bail!("docker compose failed: {stderr}{stdout}");
+        }
+        Ok(json!({"stdout": stdout, "stderr": stderr}))
+    }
+
+    async fn pull_images(&self, images: &[String]) -> anyhow::Result<Value> {
+        let mut unique = Vec::new();
+        for img in images {
+            let img = img.trim();
+            if img.is_empty() || img == "<none>" || img.contains("sha256:") {
+                continue;
+            }
+            if !unique.iter().any(|u: &String| u == img) {
+                unique.push(img.to_string());
+            }
+        }
+        if unique.is_empty() {
+            anyhow::bail!("no images to pull for this Compose project");
+        }
+        for name in &unique {
+            let mut stream = self.docker.create_image(
+                Some(bollard::image::CreateImageOptions {
+                    from_image: name.as_str(),
+                    ..Default::default()
+                }),
+                None,
+                None,
+            );
+            while let Some(item) = stream.next().await {
+                item.with_context(|| format!("pull {name}"))?;
+            }
+        }
+        Ok(json!({"ok": true, "pulled": unique}))
     }
 
     pub async fn execute_streaming(
@@ -462,34 +645,13 @@ impl DockerHandle {
         payload: &Value,
         chunk_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
     ) -> anyhow::Result<Value> {
-        let project = payload
-            .get("project")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let file = payload.get("file").and_then(|v| v.as_str());
-        let paths = self.policy().compose_paths;
-        let mut args = vec!["compose".to_string()];
-        if let Some(f) = file {
-            args.push("-f".into());
-            args.push(f.into());
-        } else if let Some(f) = paths.first() {
-            args.push("-f".into());
-            args.push(f.clone());
-        }
-        if !project.is_empty() {
-            args.push("-p".into());
-            args.push(project.into());
-        }
-        args.push("logs".into());
-        args.push("--tail".into());
-        args.push(tail_arg(payload));
+        let spec = self.resolve_compose(payload).await?;
+        let mut extra = vec!["logs".to_string(), "--tail".into(), tail_arg(payload)];
         if follow_arg(payload) {
-            args.push("-f".into());
+            extra.push("-f".into());
         }
-        let mut child = Command::new("docker")
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let extra_ref: Vec<&str> = extra.iter().map(|s| s.as_str()).collect();
+        let mut child = compose_command(&spec, &extra_ref)
             .kill_on_drop(true)
             .spawn()
             .context("docker compose logs")?;
@@ -577,6 +739,225 @@ impl DockerHandle {
             .collect();
         Ok(json!(rows))
     }
+}
+
+fn remember_compose(map: &mut HashMap<String, ComposeSpec>, spec: &ComposeSpec) {
+    if spec.project.is_empty() {
+        return;
+    }
+    let entry = map
+        .entry(spec.project.clone())
+        .or_insert_with(|| ComposeSpec {
+            project: spec.project.clone(),
+            ..Default::default()
+        });
+    if !spec.files.is_empty() {
+        entry.files = spec.files.clone();
+    }
+    if spec.working_dir.is_some() {
+        entry.working_dir = spec.working_dir.clone();
+    }
+    for img in &spec.images {
+        if !img.is_empty() && !entry.images.iter().any(|e| e == img) {
+            entry.images.push(img.clone());
+        }
+    }
+}
+
+fn overlay_compose(base: &mut ComposeSpec, other: &ComposeSpec) {
+    if base.project.is_empty() {
+        base.project = other.project.clone();
+    }
+    if !other.files.is_empty() {
+        base.files = other.files.clone();
+    }
+    if other.working_dir.is_some() {
+        base.working_dir = other.working_dir.clone();
+    }
+    for img in &other.images {
+        if !img.is_empty() && !base.images.iter().any(|e| e == img) {
+            base.images.push(img.clone());
+        }
+    }
+}
+
+fn split_compose_config_files(raw: &str) -> Vec<String> {
+    raw.split([',', '|'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn project_name_from_compose_path(path: &str) -> String {
+    let p = Path::new(path);
+    let looks_like_file = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| matches!(e, "yml" | "yaml" | "YML" | "YAML"))
+        .unwrap_or(false);
+    let dir = if looks_like_file {
+        p.parent().unwrap_or(p)
+    } else {
+        p
+    };
+    dir.file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default")
+        .to_string()
+}
+
+fn compose_project_name_from_yaml(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("name:") {
+            let rest = rest.trim().trim_matches('"').trim_matches('\'');
+            if !rest.is_empty()
+                && rest
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+            {
+                return Some(rest.to_string());
+            }
+            return None;
+        }
+        if line.ends_with(':') && !line.starts_with('-') {
+            return None;
+        }
+    }
+    None
+}
+
+fn spec_from_compose_path(path: &str) -> ComposeSpec {
+    let mut project = project_name_from_compose_path(path);
+    if let Ok(text) = std::fs::read_to_string(path) {
+        if let Some(n) = compose_project_name_from_yaml(&text) {
+            project = n;
+        }
+    }
+    let working_dir = Path::new(path)
+        .parent()
+        .and_then(|p| p.to_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    ComposeSpec {
+        project,
+        files: vec![path.to_string()],
+        working_dir,
+        images: Vec::new(),
+    }
+}
+
+fn spec_from_container_labels(
+    project: &str,
+    labels: &HashMap<String, String>,
+    image: Option<&str>,
+) -> ComposeSpec {
+    let files = labels
+        .get("com.docker.compose.project.config_files")
+        .map(|s| split_compose_config_files(s))
+        .unwrap_or_default();
+    let working_dir = labels
+        .get("com.docker.compose.project.working_dir")
+        .cloned()
+        .filter(|s| !s.is_empty());
+    let mut images = Vec::new();
+    if let Some(img) = image {
+        if !img.is_empty() {
+            images.push(img.to_string());
+        }
+    }
+    ComposeSpec {
+        project: project.to_string(),
+        files,
+        working_dir,
+        images,
+    }
+}
+
+fn spec_matching_compose_path(paths: &[String], project: &str) -> Option<ComposeSpec> {
+    let specs: Vec<ComposeSpec> = paths.iter().map(|p| spec_from_compose_path(p)).collect();
+    if let Some(spec) = specs.iter().find(|s| s.project == project) {
+        return Some(spec.clone());
+    }
+    if !project.is_empty() {
+        for path in paths {
+            if Path::new(path)
+                .components()
+                .any(|c| c.as_os_str() == project)
+            {
+                return Some(spec_from_compose_path(path));
+            }
+        }
+    }
+    if specs.len() == 1 && (project.is_empty() || specs[0].project == project) {
+        return specs.into_iter().next();
+    }
+    None
+}
+
+fn compose_cli_args(spec: &ComposeSpec) -> Vec<String> {
+    let mut args = vec!["compose".to_string()];
+    for f in &spec.files {
+        args.push("-f".into());
+        args.push(f.clone());
+    }
+    if !spec.project.is_empty() {
+        args.push("-p".into());
+        args.push(spec.project.clone());
+    }
+    args
+}
+
+fn compose_command(spec: &ComposeSpec, extra: &[&str]) -> Command {
+    let mut args = compose_cli_args(spec);
+    args.extend(extra.iter().map(|s| (*s).to_string()));
+    let mut cmd = Command::new("docker");
+    if let Some(dir) = spec
+        .working_dir
+        .as_deref()
+        .filter(|d| Path::new(d).is_dir())
+    {
+        cmd.current_dir(dir);
+    } else if let Some(f) = spec.files.first() {
+        if let Some(parent) = Path::new(f).parent() {
+            if parent.is_dir() {
+                cmd.current_dir(parent);
+            }
+        }
+    }
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd
+}
+
+fn format_one_port(ip: Option<&str>, private: u16, public: Option<u16>, proto: &str) -> String {
+    let proto = if proto.is_empty() { "tcp" } else { proto };
+    match public {
+        Some(host_port) => {
+            let host = ip.filter(|s| !s.is_empty()).unwrap_or("0.0.0.0");
+            format!("{host}:{host_port}->{private}/{proto}")
+        }
+        None => format!("{private}/{proto}"),
+    }
+}
+
+fn format_summary_ports(ports: &[bollard::models::Port]) -> String {
+    ports
+        .iter()
+        .map(|p| {
+            format_one_port(
+                p.ip.as_deref(),
+                p.private_port,
+                p.public_port,
+                &p.typ.as_ref().map(|t| t.to_string()).unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn str_field<'a>(payload: &'a Value, key: &str) -> anyhow::Result<&'a str> {
@@ -691,6 +1072,10 @@ mod tests {
             "Containers tab still needs the compose project"
         );
         assert!(
+            fn_src.contains("ports"),
+            "Containers tab must show published ports"
+        );
+        assert!(
             !fn_src.contains("\"labels\": labels"),
             "full label maps on every container blow the ingest Result past the page wait"
         );
@@ -744,9 +1129,191 @@ mod tests {
             .find("DockerOp::ComposeUpdate => {")
             .expect("compose_update arm");
         let arm = &src[idx..src.len().min(idx + 1200)];
-        assert!(arm.contains("\"pull\""), "must pull first");
-        assert!(arm.contains("\"up\""), "then compose up");
+        assert!(arm.contains("compose_pull_spec"), "must pull first");
+        assert!(arm.contains("compose_up_spec"), "then compose up");
         assert!(!arm.contains("watchtower"));
         assert!(!arm.contains("apt-get"));
+    }
+
+    #[test]
+    fn compose_pull_does_not_use_the_first_settings_path() {
+        let src = include_str!("docker.rs");
+        let needle = format!("{}{}", "paths.", "first(");
+        assert!(
+            !src.contains(&needle),
+            "every compose command used the first Settings path, so Pull/Up hit the wrong stack"
+        );
+        assert!(src.contains("com.docker.compose.project.config_files"));
+        assert!(src.contains("com.docker.compose.project.working_dir"));
+        assert!(src.contains("compose_ps_merged"));
+        assert!(src.contains("pull_images"));
+    }
+
+    #[test]
+    fn compose_path_project_name() {
+        assert_eq!(
+            project_name_from_compose_path("/home/user/tunnel/compose.yaml"),
+            "tunnel"
+        );
+        assert_eq!(
+            compose_project_name_from_yaml("# comment\nname: cloudflared\nservices:\n  app:\n"),
+            Some("cloudflared".into())
+        );
+        assert_eq!(
+            compose_project_name_from_yaml("services:\n  web:\n    image: nginx\n"),
+            None
+        );
+        assert_eq!(
+            split_compose_config_files("/opt/a/compose.yml,/opt/a/compose.override.yml"),
+            vec![
+                "/opt/a/compose.yml".to_string(),
+                "/opt/a/compose.override.yml".to_string()
+            ]
+        );
+        let spec = spec_matching_compose_path(
+            &[
+                "/opt/stacks/alpha/compose.yaml".into(),
+                "/opt/stacks/beta/compose.yaml".into(),
+            ],
+            "beta",
+        )
+        .expect("beta");
+        assert_eq!(spec.project, "beta");
+        assert_eq!(spec.files, vec!["/opt/stacks/beta/compose.yaml"]);
+        assert!(spec_matching_compose_path(
+            &[
+                "/opt/stacks/alpha/compose.yaml".into(),
+                "/opt/stacks/beta/compose.yaml".into(),
+            ],
+            "gamma",
+        )
+        .is_none());
+        let args = compose_cli_args(&ComposeSpec {
+            project: "beta".into(),
+            files: vec!["/opt/stacks/beta/compose.yaml".into()],
+            working_dir: Some("/opt/stacks/beta".into()),
+            images: vec![],
+        });
+        assert_eq!(
+            args,
+            vec![
+                "compose",
+                "-f",
+                "/opt/stacks/beta/compose.yaml",
+                "-p",
+                "beta"
+            ]
+        );
+        assert_eq!(
+            compose_cli_args(&ComposeSpec {
+                project: "beta".into(),
+                ..Default::default()
+            }),
+            vec!["compose", "-p", "beta"]
+        );
+        assert_eq!(
+            project_name_from_compose_path("/opt/stacks/pihole/compose.yml"),
+            "pihole"
+        );
+        assert_eq!(
+            compose_project_name_from_yaml("name: \"cf-tunnel\"\nservices:\n  app:\n"),
+            Some("cf-tunnel".into())
+        );
+        assert_eq!(
+            compose_project_name_from_yaml("name: 'cf-tunnel'\nservices:\n"),
+            Some("cf-tunnel".into())
+        );
+    }
+
+    #[test]
+    fn compose_stop_start_restart_keep_containers() {
+        let src = include_str!("docker.rs");
+        let compose = src
+            .split("async fn compose(")
+            .nth(1)
+            .expect("compose")
+            .split("async fn compose_ps_merged")
+            .next()
+            .expect("compose body");
+        assert!(compose.contains("ComposeStop") && compose.contains("\"stop\""));
+        assert!(compose.contains("ComposeStart") && compose.contains("\"start\""));
+        assert!(compose.contains("ComposeRestart") && compose.contains("\"restart\""));
+        assert!(
+            compose.contains("run_compose_cli(&spec, &[\"stop\"])")
+                || compose.contains("&[\"stop\"]"),
+            "Stop must be docker compose stop, not down"
+        );
+        let up = src
+            .split("async fn compose_up_spec")
+            .nth(1)
+            .expect("compose_up_spec");
+        assert!(up.contains("files.is_empty()"));
+        let down = src
+            .split("async fn compose_down_spec")
+            .nth(1)
+            .expect("compose_down_spec")
+            .split("async fn run_compose_cli")
+            .next()
+            .expect("down body");
+        assert!(
+            !down.contains("files.is_empty()"),
+            "Down must still run with only -p so a label-discovered stack can be removed"
+        );
+    }
+
+    #[test]
+    fn remember_compose_keeps_files_when_later_row_has_only_images() {
+        let mut map = HashMap::new();
+        remember_compose(
+            &mut map,
+            &ComposeSpec {
+                project: "p".into(),
+                files: vec!["/a.yml".into()],
+                working_dir: Some("/a".into()),
+                images: vec![],
+            },
+        );
+        remember_compose(
+            &mut map,
+            &ComposeSpec {
+                project: "p".into(),
+                images: vec!["nginx:1".into()],
+                ..Default::default()
+            },
+        );
+        let spec = map.get("p").expect("p");
+        assert_eq!(spec.files, vec!["/a.yml"]);
+        assert_eq!(spec.working_dir.as_deref(), Some("/a"));
+        assert_eq!(spec.images, vec!["nginx:1"]);
+        let mut base = spec.clone();
+        overlay_compose(
+            &mut base,
+            &ComposeSpec {
+                project: "p".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(base.files, vec!["/a.yml"]);
+    }
+
+    #[test]
+    fn compose_paths_keep_a_project_with_no_containers() {
+        let mut projects: HashMap<String, Vec<Value>> = HashMap::new();
+        let spec = spec_from_compose_path("/opt/stacks/tunnel/compose.yaml");
+        projects.entry(spec.project.clone()).or_default();
+        assert!(projects.get("tunnel").expect("tunnel").is_empty());
+    }
+
+    #[test]
+    fn published_ports_format_host_and_unpublished() {
+        assert_eq!(
+            format_one_port(Some("0.0.0.0"), 80, Some(8080), "tcp"),
+            "0.0.0.0:8080->80/tcp"
+        );
+        assert_eq!(
+            format_one_port(None, 53, Some(53), "udp"),
+            "0.0.0.0:53->53/udp"
+        );
+        assert_eq!(format_one_port(None, 443, None, ""), "443/tcp");
     }
 }

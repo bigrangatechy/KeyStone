@@ -6,6 +6,9 @@ Description=KeyStone server (UI and ingest)
 Documentation=https://git.bigrangatech.com/Ranga/keystone
 After=network-online.target
 Wants=network-online.target
+# Keep retrying after a boot race so a kernel/apt reboot does not leave the
+# UI down until someone systemctl starts it by hand.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -13,7 +16,7 @@ User=keystone
 Group=keystone
 EnvironmentFile=-/etc/default/keystone-server
 ExecStart=/usr/bin/keystone serve --config /etc/keystone/server.toml
-Restart=on-failure
+Restart=always
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -19,9 +19,9 @@ prune audit rows.
 
 ## What is logged
 
-- Docker Manage: start, stop, restart, kill, remove, Compose up / down /
-  pull / Update, image pull / remove / prune, volume and network
-  create / remove.
+- Docker Manage: start, stop, restart, pause/resume, kill, remove, prune
+  stopped; Compose up / start / stop / restart / down / pull / Update;
+  image pull / remove / prune; volume and network create / remove / prune.
 - System Manage: apt apply, IPv4 DHCP vs static, GitLab Omnibus backup.
 
 Observe-only lists and live logs are not rows. There is no interactive

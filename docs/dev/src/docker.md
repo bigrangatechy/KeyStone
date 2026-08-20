@@ -79,12 +79,15 @@ is a one-shot JSON GET, not wired in the UI.
 
 List payloads the UI tables expect:
 
-- containers: `[{id, id_full, names, image, state, status, compose_project, cpu_ratio?, memory_bytes?}]`
+- containers: `[{id, id_full, names, image, state, status, compose_project, ports, cpu_ratio?, memory_bytes?}]`
   (`cpu_ratio` / `memory_bytes` are joined from pushed
   `container_cpu_usage_ratio` / `container_memory_usage_bytes` at page load;
   the tab then polls `GET /api/v1/nodes/{id}/container-usage`. Not a live
-  `container_stats` stream)
-- compose ps: `{ "<project>": [{id, id_short, name, image, state, status, service}] }`
+  `container_stats` stream. `ports` is a host publish string, e.g.
+  `0.0.0.0:8080->80/tcp`)
+- compose ps: `{ "<project>": [{id, id_short, name, image, state, status, service, ports}] }`
+  (union of engine labels, Settings `compose_paths`, and last-seen projects
+  so Down does not drop the tab)
 - images: `[{id, id_short, tags, size}]`
 - volumes: `[{name, driver, mountpoint}]`
 - networks: `[{id, id_short, name, driver, scope}]`
@@ -100,11 +103,17 @@ List payloads the UI tables expect:
 | `container_restart` | yes | `docker_manage` | Restart a container |
 | `container_kill` | yes | `docker_manage` | Kill a container |
 | `container_remove` | yes | `docker_manage` | Remove a container |
+| `container_pause` | yes | `docker_manage` | Pause a container |
+| `container_unpause` | yes | `docker_manage` | Unpause a container |
+| `container_prune` | yes | `docker_manage` | Prune stopped containers |
 | `container_logs` | no | `docker_view` | Stream container logs (on-demand) |
 | `container_stats` | no | `docker_view` | Stream live container stats (on-demand) |
 | `container_exec` | yes | `docker_exec` | Exec a command in a container (disabled unless allow_exec) |
 | `compose_ps` | no | `docker_view` | List Compose project services |
 | `compose_up` | yes | `docker_manage` | Compose up |
+| `compose_stop` | yes | `docker_manage` | Compose stop |
+| `compose_start` | yes | `docker_manage` | Compose start |
+| `compose_restart` | yes | `docker_manage` | Compose restart |
 | `compose_down` | yes | `docker_manage` | Compose down |
 | `compose_logs` | no | `docker_view` | Compose logs |
 | `compose_pull` | yes | `docker_manage` | Compose pull |
@@ -118,10 +127,12 @@ List payloads the UI tables expect:
 | `volume_inspect` | no | `docker_view` | Inspect a volume |
 | `volume_create` | yes | `docker_manage` | Create a volume |
 | `volume_remove` | yes | `docker_manage` | Remove a volume |
+| `volume_prune` | yes | `docker_manage` | Prune unused volumes |
 | `network_list` | no | `docker_view` | List networks |
 | `network_inspect` | no | `docker_view` | Inspect a network |
 | `network_create` | yes | `docker_manage` | Create a network |
 | `network_remove` | yes | `docker_manage` | Remove a network |
+| `network_prune` | yes | `docker_manage` | Prune unused networks |
 
 When adding an op: extend the enum, `description`, `mutating`,
 `permission`, implement it in `keystone-agent/src/docker.rs`, wire the
