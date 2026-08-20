@@ -43,11 +43,11 @@ Git LFS for them). See [docs/src/install.md](docs/src/install.md).
 
 ```
 # Match dpkg --print-architecture (amd64 on typical Ubuntu, arm64 on a 64-bit Pi)
-sudo apt install ./keystone-server_0.1.0-15_amd64.deb ./keystone-agent_0.1.0-12_amd64.deb
+sudo apt install ./keystone-server_0.1.0-16_amd64.deb ./keystone-agent_0.1.0-13_amd64.deb
 sudo systemctl enable --now keystone-server keystone-agent
 
 # Every other node
-sudo apt install ./keystone-agent_0.1.0-12_amd64.deb
+sudo apt install ./keystone-agent_0.1.0-13_amd64.deb
 sudo systemctl enable --now keystone-agent
 ```
 
