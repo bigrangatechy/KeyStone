@@ -77,10 +77,12 @@ SSE events: JSON `{"t":"<text>"}` as default `message`; `event: done` on
 eof. Dropping the SSE connection cancels the agent stream. `container_stats`
 is a one-shot JSON GET, not wired in the UI.
 
-List payloads the UI tables expect:
+List payloads the UI expects:
 
 - containers: `[{id, id_full, names, image, state, status, compose_project, ports, cpu_ratio?, memory_bytes?}]`
-  (`cpu_ratio` / `memory_bytes` are joined from pushed
+  (cards; click loads summarized `container_inspect` via
+  `GET /api/v1/nodes/{id}/containers/{cid}`. That summary drops `Env`.
+  `cpu_ratio` / `memory_bytes` are joined from pushed
   `container_cpu_usage_ratio` / `container_memory_usage_bytes` at page load;
   the tab then polls `GET /api/v1/nodes/{id}/container-usage`. Not a live
   `container_stats` stream. `ports` is a host publish string, e.g.

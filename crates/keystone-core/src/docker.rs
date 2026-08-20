@@ -214,6 +214,165 @@ pub fn merge_container_usage(list: &mut [serde_json::Value], samples: &[crate::S
     }
 }
 
+fn json_field<'a>(v: &'a serde_json::Value, names: &[&str]) -> Option<&'a serde_json::Value> {
+    let obj = v.as_object()?;
+    for name in names {
+        if let Some(x) = obj.get(*name) {
+            if !x.is_null() {
+                return Some(x);
+            }
+        }
+    }
+    None
+}
+
+fn json_str(v: &serde_json::Value, names: &[&str]) -> Option<String> {
+    json_field(v, names).and_then(|x| match x {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    })
+}
+
+fn json_bool(v: &serde_json::Value, names: &[&str]) -> Option<bool> {
+    json_field(v, names).and_then(|x| x.as_bool())
+}
+
+/// Hex / name token the UI may put in a container inspect URL.
+pub fn docker_ref_ok(id: &str) -> bool {
+    let t = id.trim();
+    !t.is_empty()
+        && t.len() <= 128
+        && !t.contains("..")
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+}
+
+/// Map Engine inspect JSON to what the Containers detail pane may show.
+/// Drops `Env` and other secret-shaped fields.
+pub fn summarize_container_inspect(raw: &serde_json::Value) -> serde_json::Value {
+    let config = json_field(raw, &["Config", "config"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let host = json_field(raw, &["HostConfig", "host_config"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let state = json_field(raw, &["State", "state"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let nets = json_field(raw, &["NetworkSettings", "network_settings"])
+        .and_then(|n| json_field(n, &["Networks", "networks"]))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let labels = json_field(&config, &["Labels", "labels"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let name = json_str(raw, &["Name", "name"]).map(|n| n.trim_start_matches('/').to_string());
+    let image =
+        json_str(&config, &["Image", "image"]).or_else(|| json_str(raw, &["Image", "image"]));
+    let mut command: Vec<String> = Vec::new();
+    if let Some(cmd) = json_field(&config, &["Cmd", "cmd"]).and_then(|c| c.as_array()) {
+        command = cmd
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
+    }
+    if command.is_empty() {
+        if let Some(path) = json_str(raw, &["Path", "path"]) {
+            command.push(path);
+        }
+        if let Some(args) = json_field(raw, &["Args", "args"]).and_then(|a| a.as_array()) {
+            command.extend(args.iter().filter_map(|x| x.as_str().map(str::to_string)));
+        }
+    }
+
+    let restart = json_field(&host, &["RestartPolicy", "restart_policy"])
+        .and_then(|p| json_str(p, &["Name", "name"]))
+        .filter(|s| !s.is_empty() && s != "no");
+
+    let mut mounts = Vec::new();
+    if let Some(arr) = json_field(raw, &["Mounts", "mounts"]).and_then(|m| m.as_array()) {
+        for m in arr {
+            let dest = json_str(m, &["Destination", "destination"]).unwrap_or_default();
+            if dest.is_empty() {
+                continue;
+            }
+            mounts.push(serde_json::json!({
+                "type": json_str(m, &["Type", "type"]).unwrap_or_else(|| "bind".into()),
+                "source": json_str(m, &["Source", "source"]).unwrap_or_default(),
+                "destination": dest,
+                "rw": json_bool(m, &["RW", "rw"]).unwrap_or(true),
+            }));
+        }
+    }
+
+    let mut networks = Vec::new();
+    if let Some(obj) = nets.as_object() {
+        for (net_name, n) in obj {
+            let ip = json_str(n, &["IPAddress", "ip_address"]).unwrap_or_default();
+            networks.push(serde_json::json!({
+                "name": net_name,
+                "ip": ip,
+            }));
+        }
+    }
+
+    let mut out = serde_json::Map::new();
+    if let Some(id) = json_str(raw, &["Id", "id"]) {
+        out.insert("id".into(), serde_json::json!(id));
+    }
+    if let Some(n) = name {
+        out.insert("name".into(), serde_json::json!(n));
+    }
+    if let Some(img) = image {
+        out.insert("image".into(), serde_json::json!(img));
+    }
+    if let Some(created) = json_str(raw, &["Created", "created"]) {
+        out.insert("created".into(), serde_json::json!(created));
+    }
+    if let Some(st) = json_str(&state, &["Status", "status"]) {
+        out.insert("status".into(), serde_json::json!(st));
+    }
+    if let Some(pid) = json_field(&state, &["Pid", "pid"]).and_then(|p| p.as_i64()) {
+        out.insert("pid".into(), serde_json::json!(pid));
+    }
+    if let Some(started) = json_str(&state, &["StartedAt", "started_at"]) {
+        out.insert("started_at".into(), serde_json::json!(started));
+    }
+    if let Some(err) = json_str(&state, &["Error", "error"]) {
+        if !err.is_empty() {
+            out.insert("error".into(), serde_json::json!(err));
+        }
+    }
+    if !command.is_empty() {
+        out.insert("command".into(), serde_json::json!(command));
+    }
+    if let Some(r) = restart {
+        out.insert("restart".into(), serde_json::json!(r));
+    }
+    if json_bool(&host, &["Privileged", "privileged"]) == Some(true) {
+        out.insert("privileged".into(), serde_json::json!(true));
+    }
+    if let Some(mode) = json_str(&host, &["NetworkMode", "network_mode"]) {
+        out.insert("network_mode".into(), serde_json::json!(mode));
+    }
+    if let Some(project) = json_str(&labels, &["com.docker.compose.project"]) {
+        out.insert("compose_project".into(), serde_json::json!(project));
+    }
+    if let Some(svc) = json_str(&labels, &["com.docker.compose.service"]) {
+        out.insert("compose_service".into(), serde_json::json!(svc));
+    }
+    if !mounts.is_empty() {
+        out.insert("mounts".into(), serde_json::json!(mounts));
+    }
+    if !networks.is_empty() {
+        out.insert("networks".into(), serde_json::json!(networks));
+    }
+    serde_json::Value::Object(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +418,59 @@ mod tests {
             Some(0.25)
         );
         assert!(!map.contains_key("other0000000"));
+    }
+
+    #[test]
+    fn summarize_container_inspect_drops_env_and_keeps_mounts() {
+        assert!(docker_ref_ok("abc123def456"));
+        assert!(docker_ref_ok("gitlab"));
+        assert!(!docker_ref_ok(""));
+        assert!(!docker_ref_ok("id;rm"));
+        assert!(!docker_ref_ok("../etc"));
+        let raw = serde_json::json!({
+            "Id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "Name": "/gitlab",
+            "Created": "2026-01-01T00:00:00Z",
+            "Config": {
+                "Image": "gitlab/gitlab-ce:latest",
+                "Cmd": ["gitlab"],
+                "Env": ["SECRET=hunter2", "PATH=/usr/bin"],
+                "Labels": {
+                    "com.docker.compose.project": "gitlab",
+                    "com.docker.compose.service": "web"
+                }
+            },
+            "HostConfig": {
+                "RestartPolicy": { "Name": "unless-stopped" },
+                "Privileged": false,
+                "NetworkMode": "bridge"
+            },
+            "State": { "Status": "running", "Pid": 42, "Error": "" },
+            "Mounts": [{
+                "Type": "bind",
+                "Source": "/opt/gitlab",
+                "Destination": "/var/opt/gitlab",
+                "RW": true
+            }],
+            "NetworkSettings": {
+                "Networks": { "bridge": { "IPAddress": "172.17.0.2" } }
+            }
+        });
+        let out = summarize_container_inspect(&raw);
+        let dumped = out.to_string();
+        assert!(
+            !dumped.contains("hunter2"),
+            "Env must never reach the UI JSON"
+        );
+        assert!(!dumped.contains("Env"), "{dumped}");
+        assert_eq!(out["name"], "gitlab");
+        assert_eq!(out["image"], "gitlab/gitlab-ce:latest");
+        assert_eq!(out["compose_project"], "gitlab");
+        assert_eq!(out["compose_service"], "web");
+        assert_eq!(out["restart"], "unless-stopped");
+        assert_eq!(out["networks"][0]["ip"], "172.17.0.2");
+        assert_eq!(out["mounts"][0]["destination"], "/var/opt/gitlab");
+        assert!(out.get("privileged").is_none());
     }
 
     #[test]

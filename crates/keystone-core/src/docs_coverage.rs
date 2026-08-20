@@ -351,3 +351,37 @@ fn operator_docs_cover_autoremove_and_unattended() {
         "architecture.md must keep the unattended config editor out"
     );
 }
+
+#[test]
+fn operator_docs_cover_container_cards_and_system_split() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let system = include_str!("../../../docs/src/system.md");
+    let config = include_str!("../../../docs/src/configuration.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    assert!(
+        docker.contains("cards") && docker.contains("`Env`"),
+        "operator Docker doc must describe container cards and that Env is not shown"
+    );
+    assert!(
+        using.contains("cards") && using.contains("health vs actions"),
+        "using.md must mention container cards and the System split"
+    );
+    assert!(
+        system.contains("Health is on the left") && system.contains("Actions"),
+        "System chapter must describe the health vs actions columns"
+    );
+    assert!(
+        system.contains("warning") && config.contains("warning"),
+        "Settings must document the System Manage warning"
+    );
+    assert!(
+        http.contains("/api/v1/nodes/{id}/containers/{cid}") && http.contains("Env"),
+        "HTTP API must list summarized inspect and say Env is dropped"
+    );
+    assert!(
+        dev.contains("summarized") && dev.contains("Env"),
+        "developer docker.md must say inspect is summarized without Env"
+    );
+}

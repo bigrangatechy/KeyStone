@@ -177,12 +177,6 @@
     return n;
   }
 
-  function tdUsage(kind, text) {
-    const n = tdText(text);
-    n.className = "usage-" + kind;
-    return n;
-  }
-
   function tdCode(text) {
     const n = document.createElement("td");
     const c = document.createElement("code");
@@ -367,53 +361,165 @@
   if (containers && !dockerBlocked(containers)) {
     const data = parse(containers);
     const node = containers.getAttribute("data-node");
-    const table = document.createElement("table");
-    table.appendChild(thead(["Name", "Image", "Ports", "CPU", "Memory", "State", "Project", ""]));
-    const body = document.createElement("tbody");
+    const board = el("div", "container-board");
+    const grid = el("div", "container-grid");
+    const detail = el("div", "container-detail");
+    detail.hidden = true;
+    let selectedId = "";
+
+    function containerDisplayName(c) {
+      if (c.names && c.names[0]) return String(c.names[0]).replace(/^\//, "");
+      return c.id || "";
+    }
+
+    function kvRow(label, value) {
+      if (value == null || value === "") return null;
+      const row = el("p", "detail-kv");
+      row.appendChild(el("span", "muted", label));
+      row.appendChild(document.createTextNode(" " + value));
+      return row;
+    }
+
+    function showListDetail(c) {
+      const name = containerDisplayName(c);
+      const id = c.id_full || c.id || "";
+      detail.hidden = false;
+      board.classList.add("has-detail");
+      detail.replaceChildren();
+      detail.appendChild(el("h3", null, name || "Container"));
+      const st = (c.state || "").toLowerCase();
+      detail.appendChild(el("span", "state state-" + (st || "unknown"), (c.state || "") + (c.status ? " · " + c.status : "")));
+      [
+        kvRow("Id", c.id || ""),
+        kvRow("Image", c.image || ""),
+        kvRow("Ports", c.ports || ""),
+        kvRow("Project", c.compose_project || "")
+      ].forEach((n) => { if (n) detail.appendChild(n); });
+      const inspectHost = el("div", "inspect-extra");
+      inspectHost.appendChild(el("p", "muted", "Loading details…"));
+      detail.appendChild(inspectHost);
+      const acts = el("div", "actions");
+      if (manageOn(containers)) {
+        ["container_start", "container_stop", "container_restart", "container_pause", "container_unpause", "container_kill", "container_remove"].forEach((op) => {
+          acts.appendChild(actionForm(node, op, { id: id }));
+        });
+      }
+      acts.appendChild(logsLink("/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id) + "/logs"));
+      detail.appendChild(acts);
+      return inspectHost;
+    }
+
+    function applyInspect(host, info) {
+      host.replaceChildren();
+      if (!info || typeof info !== "object") {
+        host.appendChild(el("p", "muted", "Could not inspect this container."));
+        return;
+      }
+      if (info.privileged) {
+        host.appendChild(el("p", "error", "This container is privileged."));
+      }
+      if (info.error) {
+        host.appendChild(el("p", "error", String(info.error)));
+      }
+      [
+        kvRow("Service", info.compose_service || ""),
+        kvRow("Created", info.created || ""),
+        kvRow("Started", info.started_at || ""),
+        kvRow("Pid", info.pid != null ? String(info.pid) : ""),
+        kvRow("Restart", info.restart || ""),
+        kvRow("Network mode", info.network_mode || ""),
+        kvRow("Command", Array.isArray(info.command) ? info.command.join(" ") : "")
+      ].forEach((n) => { if (n) host.appendChild(n); });
+      const nets = Array.isArray(info.networks) ? info.networks : [];
+      if (nets.length) {
+        host.appendChild(el("p", "muted", "Networks"));
+        nets.forEach((n) => {
+          host.appendChild(el("p", null, (n.name || "") + (n.ip ? " · " + n.ip : "")));
+        });
+      }
+      const mounts = Array.isArray(info.mounts) ? info.mounts : [];
+      if (mounts.length) {
+        const mt = document.createElement("table");
+        mt.appendChild(thead(["Mount", "Source"]));
+        const mb = document.createElement("tbody");
+        mounts.forEach((m) => {
+          const tr = document.createElement("tr");
+          tr.appendChild(tdCode(m.destination || ""));
+          tr.appendChild(tdText((m.source || "") + (m.rw === false ? " (ro)" : "")));
+          mb.appendChild(tr);
+        });
+        mt.appendChild(mb);
+        host.appendChild(mt);
+      }
+    }
+
+    async function loadInspect(id, host) {
+      try {
+        const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id));
+        const body = await r.json().catch(() => ({}));
+        if (selectedId !== id) return;
+        if (!r.ok) {
+          host.replaceChildren(el("p", "muted", body.error || "Could not inspect this container."));
+          return;
+        }
+        applyInspect(host, body);
+      } catch (e) {
+        if (selectedId !== id) return;
+        host.replaceChildren(el("p", "muted", "Could not inspect this container."));
+      }
+    }
+
+    function selectContainer(c) {
+      const id = c.id_full || c.id || "";
+      if (selectedId === id) {
+        selectedId = "";
+        detail.hidden = true;
+        board.classList.remove("has-detail");
+        grid.querySelectorAll(".container-card").forEach((card) => card.classList.remove("is-open"));
+        return;
+      }
+      selectedId = id;
+      grid.querySelectorAll(".container-card").forEach((card) => {
+        card.classList.toggle("is-open", card.getAttribute("data-id-full") === id);
+      });
+      const extra = showListDetail(c);
+      loadInspect(id, extra);
+    }
+
     if (!Array.isArray(data) || !data.length) {
-      body.appendChild(emptyRow(8, "No containers."));
+      board.appendChild(el("p", "muted", "No containers."));
     } else {
       data.forEach((c) => {
-        const tr = document.createElement("tr");
-        const name = (c.names && c.names[0]) ? c.names[0].replace(/^\//, "") : (c.id || "");
         const id = c.id_full || c.id || "";
-        if (c.id) tr.setAttribute("data-id", c.id);
-        const nameTd = document.createElement("td");
-        nameTd.appendChild(document.createTextNode(name));
-        nameTd.appendChild(document.createElement("br"));
-        const code = document.createElement("code");
-        code.textContent = c.id || "";
-        nameTd.appendChild(code);
-        tr.appendChild(nameTd);
-        tr.appendChild(tdText(c.image || ""));
-        tr.appendChild(tdCode(c.ports || "—"));
-        tr.appendChild(tdUsage("cpu", formatCpuRatio(c.cpu_ratio)));
-        tr.appendChild(tdUsage("mem", c.memory_bytes == null ? "—" : (formatBytes(c.memory_bytes) || "—")));
-        tr.appendChild(stateCell(c.state, c.status));
-        tr.appendChild(tdText(c.compose_project || ""));
-        const acts = [];
-        if (manageOn(containers)) {
-          ["container_start", "container_stop", "container_restart", "container_pause", "container_unpause", "container_kill", "container_remove"].forEach((op) => {
-            acts.push(actionForm(node, op, { id: id }));
-          });
-        }
-        acts.push(logsLink("/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id) + "/logs"));
-        tr.appendChild(actionsCell(acts));
-        body.appendChild(tr);
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "container-card";
+        if (c.id) card.setAttribute("data-id", c.id);
+        card.setAttribute("data-id-full", id);
+        card.appendChild(el("h3", null, containerDisplayName(c)));
+        const st = (c.state || "").toLowerCase();
+        card.appendChild(el("span", "state state-" + (st || "unknown"), c.state || "unknown"));
+        const metrics = el("div", "container-metrics");
+        metrics.appendChild(el("span", "usage-cpu", "CPU " + (formatCpuRatio(c.cpu_ratio) || "—")));
+        metrics.appendChild(el("span", "usage-mem", "Mem " + (c.memory_bytes == null ? "—" : (formatBytes(c.memory_bytes) || "—"))));
+        card.appendChild(metrics);
+        card.addEventListener("click", () => selectContainer(c));
+        grid.appendChild(card);
       });
+      board.appendChild(grid);
+      board.appendChild(detail);
     }
-    table.appendChild(body);
-    containers.replaceChildren(table);
+    containers.replaceChildren(board);
 
     function applyContainerUsage(map) {
       if (!map || typeof map !== "object") return;
-      containers.querySelectorAll("tr[data-id]").forEach((tr) => {
-        const u = map[tr.getAttribute("data-id")];
+      containers.querySelectorAll(".container-card[data-id]").forEach((card) => {
+        const u = map[card.getAttribute("data-id")];
         if (!u) return;
-        const cpu = tr.querySelector(".usage-cpu");
-        const mem = tr.querySelector(".usage-mem");
-        if (cpu && u.cpu_ratio != null) cpu.textContent = formatCpuRatio(u.cpu_ratio);
-        if (mem && u.memory_bytes != null) mem.textContent = formatBytes(u.memory_bytes) || "—";
+        const cpu = card.querySelector(".usage-cpu");
+        const mem = card.querySelector(".usage-mem");
+        if (cpu && u.cpu_ratio != null) cpu.textContent = "CPU " + formatCpuRatio(u.cpu_ratio);
+        if (mem && u.memory_bytes != null) mem.textContent = "Mem " + (formatBytes(u.memory_bytes) || "—");
       });
     }
 
@@ -796,13 +902,18 @@
       wrap.appendChild(pre);
       wrap.appendChild(el("p", "muted", "If that unit is already enabled, restart keystone-agent so it can use /run/keystone/sys.sock, then reload this tab. The metrics agent stays unprivileged."));
     }
+    const split = el("div", "sys-split");
+    const health = el("div", "sys-health");
+    const actions = el("div", "sys-actions");
+    health.appendChild(el("p", "sys-col-label", "Health"));
+    actions.appendChild(el("p", "sys-col-label", "Actions"));
     const meta = el("p", "muted");
     const bits = [];
     if (data.hostname) bits.push(data.hostname);
     if (data.kernel) bits.push("kernel " + data.kernel);
     if (data.backend) bits.push(data.backend);
     meta.textContent = bits.join(" · ") || "No host snapshot yet.";
-    wrap.appendChild(meta);
+    health.appendChild(meta);
     const ntp = data.ntp || {};
     if (ntp.available) {
       const ntpLine = document.createElement("p");
@@ -811,7 +922,7 @@
         ntp.synchronized ? "chip tone-ok" : "chip tone-warn",
         ntp.synchronized ? "Clock synchronized" : "Clock not synchronized"
       ));
-      wrap.appendChild(ntpLine);
+      health.appendChild(ntpLine);
     }
     const uiHost = host.getAttribute("data-ui-host") === "1";
     if (data.reboot_required) {
@@ -821,22 +932,22 @@
     }
     if (helperOn) {
       const leftovers = Array.isArray(data.restart_services) ? data.restart_services : [];
-      wrap.appendChild(el("h3", null, "Services still using old libraries"));
-      wrap.appendChild(el("p", "muted", "Listed by needrestart after upgrades. Restart them from a shell if you want — this tab does not restart individual units."));
+      health.appendChild(el("h3", null, "Services still using old libraries"));
+      health.appendChild(el("p", "muted", "Listed by needrestart after upgrades. Restart them from a shell if you want — this tab does not restart individual units."));
       if (!leftovers.length) {
-        wrap.appendChild(el("p", "muted", "None right now."));
+        health.appendChild(el("p", "muted", "None right now."));
       } else {
-        wrap.appendChild(unitNameTable(leftovers));
+        health.appendChild(unitNameTable(leftovers));
       }
       const failed = Array.isArray(data.failed_units) ? data.failed_units : [];
-      wrap.appendChild(el("h3", null, "Failed systemd units"));
+      health.appendChild(el("h3", null, "Failed systemd units"));
       if (!failed.length) {
-        wrap.appendChild(el("p", "muted", "None right now."));
+        health.appendChild(el("p", "muted", "None right now."));
       } else {
-        wrap.appendChild(unitNameTable(failed));
+        health.appendChild(unitNameTable(failed));
       }
-      wrap.appendChild(el("h3", null, "Journals"));
-      wrap.appendChild(el("p", "muted", "Follow journalctl for these units. Leave the page to stop. Not a shell."));
+      health.appendChild(el("h3", null, "Journals"));
+      health.appendChild(el("p", "muted", "Follow journalctl for these units. Leave the page to stop. Not a shell."));
       const journals = document.createElement("ul");
       [
         "keystone-agent.service",
@@ -852,9 +963,9 @@
         li.appendChild(a);
         journals.appendChild(li);
       });
-      wrap.appendChild(journals);
+      health.appendChild(journals);
       const unattended = data.unattended || {};
-      wrap.appendChild(el("h3", null, "Unattended upgrades"));
+      health.appendChild(el("h3", null, "Unattended upgrades"));
       if (unattended.available) {
         const unLine = document.createElement("p");
         unLine.appendChild(el(
@@ -862,25 +973,25 @@
           unattended.enabled ? "chip tone-ok" : "chip",
           unattended.enabled ? "enabled" : "off"
         ));
-        wrap.appendChild(unLine);
+        health.appendChild(unLine);
         if (typeof unattended.last_unix === "number") {
-          wrap.appendChild(el("p", "muted", "Last unattended run " + relativeUnix(unattended.last_unix) + "."));
+          health.appendChild(el("p", "muted", "Last unattended run " + relativeUnix(unattended.last_unix) + "."));
         } else {
-          wrap.appendChild(el("p", "muted", "No unattended run on disk"));
+          health.appendChild(el("p", "muted", "No unattended run on disk"));
         }
-        wrap.appendChild(el("p", "muted", "Glance only. This tab does not edit unattended-upgrades or turn it on."));
+        health.appendChild(el("p", "muted", "Glance only. This tab does not edit unattended-upgrades or turn it on."));
       } else {
-        wrap.appendChild(el("p", "muted", "unattended-upgrades is not installed on this node."));
+        health.appendChild(el("p", "muted", "unattended-upgrades is not installed on this node."));
       }
     }
     if (manage && helperOn) {
       const rebootHead = el("div", "compose-head");
       rebootHead.appendChild(el("h3", null, "Reboot"));
-      wrap.appendChild(rebootHead);
+      actions.appendChild(rebootHead);
       if (uiHost) {
-        wrap.appendChild(el("p", "error", "This node is serving the KeyStone UI. Rebooting it will take this session down until the server is back."));
+        actions.appendChild(el("p", "error", "This node is serving the KeyStone UI. Rebooting it will take this session down until the server is back."));
       } else {
-        wrap.appendChild(el("p", "muted", "Hardcoded systemctl reboot. Poweroff is not in this UI. KeyStone units come back if they are enabled."));
+        actions.appendChild(el("p", "muted", "Hardcoded systemctl reboot. Poweroff is not in this UI. KeyStone units come back if they are enabled."));
       }
       const rebootForm = document.createElement("form");
       rebootForm.method = "post";
@@ -896,7 +1007,7 @@
       rebootBtn.className = "danger";
       rebootBtn.textContent = "Reboot node";
       rebootForm.appendChild(rebootBtn);
-      wrap.appendChild(rebootForm);
+      actions.appendChild(rebootForm);
     }
 
     const ifaces = Array.isArray(data.interfaces) ? data.interfaces : [];
@@ -918,7 +1029,8 @@
       });
     }
     table.appendChild(body);
-    wrap.appendChild(table);
+    health.appendChild(el("h3", null, "Addresses"));
+    health.appendChild(table);
 
     const listed = Array.isArray(data.packages);
     const pkgs = listed ? data.packages : [];
@@ -976,12 +1088,12 @@
       }
       pkgHead.appendChild(tools);
     }
-    wrap.appendChild(pkgHead);
+    actions.appendChild(pkgHead);
     if (!pkgs.length) {
-      wrap.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates runs apt-get update on the node."));
+      actions.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates runs apt-get update on the node."));
     } else {
       if (data.capped) {
-        wrap.appendChild(el("p", "muted", "Showing the first 500 packages."));
+        actions.appendChild(el("p", "muted", "Showing the first 500 packages."));
       }
       const pt = document.createElement("table");
       pt.appendChild(thead(["Package", "From", "To"]));
@@ -994,22 +1106,25 @@
         pb.appendChild(tr);
       });
       pt.appendChild(pb);
-      wrap.appendChild(pt);
+      actions.appendChild(pt);
     }
 
     const gitlab = data.gitlab || {};
     if (gitlab.kind === "omnibus") {
-      const glHead = el("div", "compose-head");
-      glHead.appendChild(el("h3", null, "GitLab"));
-      wrap.appendChild(glHead);
-      wrap.appendChild(el("p", "muted", "Omnibus gitlab-backup create on this node (not Docker GitLab). Copy /etc/gitlab next to the archive. Restore is not in this UI."));
+      health.appendChild(el("h3", null, "GitLab dump"));
       if (helperOn) {
         if (typeof gitlab.backup_unix === "number") {
-          wrap.appendChild(el("p", "muted", "Last dump " + relativeUnix(gitlab.backup_unix) + (gitlab.backup_name ? " (" + gitlab.backup_name + ")" : "") + "."));
+          health.appendChild(el("p", "muted", "Last dump " + relativeUnix(gitlab.backup_unix) + (gitlab.backup_name ? " (" + gitlab.backup_name + ")" : "") + "."));
         } else {
-          wrap.appendChild(el("p", "muted", "No dump on disk."));
+          health.appendChild(el("p", "muted", "No dump on disk."));
         }
+      } else {
+        health.appendChild(el("p", "muted", "Omnibus GitLab is on this node."));
       }
+      const glHead = el("div", "compose-head");
+      glHead.appendChild(el("h3", null, "GitLab"));
+      actions.appendChild(glHead);
+      actions.appendChild(el("p", "muted", "Omnibus gitlab-backup create on this node (not Docker GitLab). Copy /etc/gitlab next to the archive. Restore is not in this UI."));
       if (helperOn && manage) {
         const backup = document.createElement("button");
         backup.type = "button";
@@ -1020,21 +1135,21 @@
           }
           window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/gitlab-backup";
         });
-        wrap.appendChild(backup);
+        actions.appendChild(backup);
       } else if (!helperOn) {
-        wrap.appendChild(el("p", "muted", "Enable the system helper to run gitlab-backup."));
+        actions.appendChild(el("p", "muted", "Enable the system helper to run gitlab-backup."));
       }
     }
 
     if (manage && helperOn) {
       const netHead = el("div", "compose-head");
       netHead.appendChild(el("h3", null, "IPv4"));
-      wrap.appendChild(netHead);
-      wrap.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version."));
+      actions.appendChild(netHead);
+      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version."));
       const net = data.net || {};
       const ether = ifaces.filter((i) => ethernetIface(i.name || ""));
       if (!ether.length) {
-        wrap.appendChild(el("p", "muted", "No Ethernet interface to edit (Wi-Fi, docker, and virtual NICs are skipped)."));
+        actions.appendChild(el("p", "muted", "No Ethernet interface to edit (Wi-Fi, docker, and virtual NICs are skipped)."));
       } else {
         const form = document.createElement("form");
         form.method = "post";
@@ -1117,9 +1232,12 @@
         save.className = "danger span-2";
         save.textContent = "Apply IPv4";
         form.appendChild(save);
-        wrap.appendChild(form);
+        actions.appendChild(form);
       }
     }
+    split.appendChild(health);
+    split.appendChild(actions);
+    wrap.appendChild(split);
     host.replaceChildren(wrap);
   }
 

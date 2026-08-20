@@ -17,7 +17,7 @@ use axum::Json;
 use axum::Router;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
-use keystone_core::docker::DockerOp;
+use keystone_core::docker::{docker_ref_ok, summarize_container_inspect, DockerOp};
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
 use keystone_core::sys::{journal_unit, SysOp};
@@ -148,6 +148,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/nodes/{id}/container-usage",
             get(container_usage_api),
+        )
+        .route(
+            "/api/v1/nodes/{id}/containers/{cid}",
+            get(container_inspect_api),
         )
         .route(
             "/api/v1/nodes/{id}/dashboard",
@@ -1913,6 +1917,31 @@ async fn container_usage_api(State(state): State<AppState>, Path(id): Path<Strin
     Json(keystone_core::container_usage_by_id(&samples)).into_response()
 }
 
+async fn container_inspect_api(
+    State(state): State<AppState>,
+    Path((id, cid)): Path<(String, String)>,
+) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    if !docker_ref_ok(&cid) {
+        return (StatusCode::BAD_REQUEST, "unknown container").into_response();
+    }
+    let payload = serde_json::json!({ "id": cid }).to_string();
+    match call_json_op(&state, &id, DockerOp::ContainerInspect.as_str(), &payload).await {
+        Ok(body) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            Json(summarize_container_inspect(&raw)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn call_json_op(
     state: &AppState,
     node_id: &str,
@@ -3267,6 +3296,13 @@ mod tests {
             usage < authed_end,
             "container usage must require a UI session"
         );
+        let inspect = head
+            .find("/api/v1/nodes/{id}/containers/{cid}")
+            .expect("container inspect API");
+        assert!(
+            inspect < authed_end,
+            "container inspect must require a UI session"
+        );
         let docker_post = head
             .find("/nodes/{id}/docker/{op}")
             .expect("docker mutation POST");
@@ -3343,6 +3379,7 @@ mod tests {
     #[test]
     fn system_ui_confirms_host_mutations() {
         let js = include_str!("static/app.js");
+        let src = include_str!("http.rs");
         assert!(js.contains("paintSystem"), "System tab painter missing");
         assert!(
             js.contains("Apply pending apt upgrades"),
@@ -3462,6 +3499,31 @@ mod tests {
         assert!(
             js.contains("container-usage"),
             "Containers tab must poll /api/v1/nodes/{{id}}/container-usage"
+        );
+        assert!(
+            js.contains("container-card")
+                && js.contains("/api/v1/nodes/")
+                && js.contains("/containers/"),
+            "Containers tab must be clickable cards that load inspect"
+        );
+        assert!(
+            js.contains("sys-split") && js.contains("Health") && js.contains("Actions"),
+            "System tab must split health vs actions"
+        );
+        assert!(
+            html.contains("System Manage can change this host"),
+            "Settings must warn before System Manage"
+        );
+        let inspect = src
+            .split("async fn container_inspect_api")
+            .nth(1)
+            .expect("container_inspect_api")
+            .split("async fn call_json_op")
+            .next()
+            .expect("container_inspect_api body");
+        assert!(
+            inspect.contains("summarize_container_inspect") && inspect.contains("docker_ref_ok"),
+            "inspect API must strip Engine JSON and reject junk ids"
         );
         let css = include_str!("static/app.css");
         assert!(

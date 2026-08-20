@@ -6,9 +6,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # System
 
 The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
-Pi OS** boxes (apt, autoremove, leftover services, failed units, confirmed
-reboot, allowlisted journals, NTP, unattended-upgrades glance, IPv4, GitLab
-Omnibus backup). It is not a TrueNAS,
+Pi OS** boxes. Health is on the left (leftover services, failed units,
+allowlisted journals, NTP, unattended-upgrades glance, addresses). Actions
+are on the right (apt, autoremove, confirmed reboot, IPv4, GitLab Omnibus
+backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
 agent on them for **Overview metrics** (and Docker Observe if they run
 Engine). Leave **System manage** off.
@@ -20,7 +21,8 @@ This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
    and **Allow apt upgrade, autoremove, IPv4, GitLab backup, and reboot** if
-   you want Apply, Autoremove, or Reboot.
+   you want Apply, Autoremove, or Reboot. That Manage checkbox is behind a
+   warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
 

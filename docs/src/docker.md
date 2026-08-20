@@ -44,18 +44,21 @@ add `keystone` to `docker` and restart the agent.
 
 ## What the tabs do
 
-With Observe on and a live session, each tab is a table (not a JSON dump).
-If the agent is offline or Observe is off, the tab says so instead of
-showing stale lists. Manage buttons and pull/create toolbars are hidden
-when mutations are off.
+With Observe on and a live session, Compose / Images / Volumes / Networks
+are tables (not a JSON dump). **Containers** are cards: name, state, CPU,
+and memory on the face; click for image, ports, mounts, networks, and
+Manage actions. Inspect JSON is summarized and does **not** include
+container `Env`. If the agent is offline or Observe is off, the tab says so
+instead of showing stale lists. Manage buttons and pull/create toolbars are
+hidden when mutations are off.
 
-- **Containers** — name, image, published ports, CPU, memory, state, Compose
-  project. CPU and
+- **Containers** — one card per container (name, state, CPU, memory). Click
+  opens details (image, ports, Compose project, mounts, networks) and
+  **Logs**. CPU and
   memory come from the same background samples as Overview and update at
   that node’s poll interval while the tab is open (not a live Engine
-  `stats` stream). **Logs** opens a follow view (last 200 lines, then live).
-  With Manage: start / stop / restart / pause / resume / kill / remove, and
-  **Prune stopped**.
+  `stats` stream). With Manage: start / stop / restart / pause / resume /
+  kill / remove, and **Prune stopped**.
 - **Compose** — projects discovered from `com.docker.compose.project`
   labels **and** from **Compose files** on Settings, with a service table
   per project.   **Logs** follows `docker compose logs`. With Manage: **Up**, **Start**,

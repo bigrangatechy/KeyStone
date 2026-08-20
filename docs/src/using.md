@@ -8,9 +8,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 The HTTP UI is the only console. Agents do not serve a web page. The home
 page is the Netdata-shaped **fleet** (live chips per host). Open a node for
 that machine’s Overview; the Docker tabs are the Portainer-shaped control
-plane; **System** is apt, leftover services, confirmed reboot, allowlisted
-journals, NTP, unattended-upgrades glance, autoremove, IPv4, and GitLab
-Omnibus backup on the machine itself (not Docker).
+plane; **System** is health vs actions on the machine itself (apt, leftover
+services, confirmed reboot, allowlisted journals, NTP, unattended-upgrades,
+IPv4, GitLab Omnibus backup — not Docker).
 
 ## Sign in
 
@@ -88,15 +88,16 @@ Tabs:
 
 - **Overview** — widget dashboard. See [Dashboards](dashboard.md).
 - **Containers / Compose / Images / Volumes / Networks** — Docker Engine on
-  *this* node. Tables for lists; **Logs** follows that container or Compose
+  *this* node. Containers are cards (click for details); the other Docker
+  tabs are tables. **Logs** follows that container or Compose
   project. Images can search Docker Hub to fill Pull. Empty or an explanation
   until Observe Docker is on and the agent can use the socket. See
   [Docker](docker.md).
-- **System** — apt / leftover services / failed units / confirmed reboot /
-  journals / NTP / unattended-upgrades / autoremove / IPv4 / GitLab Omnibus
-  backup on **this** Ubuntu or Debian server. Off until you enable the root
-  helper and Settings flags. Proxmox, TrueNAS, and other appliance OSes
-  stay on Observe. See [System](system.md).
+- **System** — health on the left (leftovers, failed units, journals, NTP,
+  unattended-upgrades, addresses) and actions on the right (apt, autoremove,
+  reboot, GitLab backup, IPv4) on **this** Ubuntu or Debian server. Off until you
+  enable the root helper and Settings flags. Proxmox, TrueNAS, and other
+  appliance OSes stay on Observe. See [System](system.md).
 - **Settings** — display name, notes, poll interval, NICs, labels, Docker
   flags, Compose paths, System-admin flags. See [Configuration](configuration.md).
 

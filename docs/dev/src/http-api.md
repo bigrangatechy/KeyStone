@@ -76,6 +76,7 @@ is deleted and a new session id is issued.
 | GET | `/api/v1/dockerhub/tags` | Hub tags for a repo. Cookie session. |
 | GET | `/api/v1/nodes/{id}/sys/updates` | `{ packages: [{ name, from, to }], capped?: bool }` from `updates_list` (`apt-get update`, `apt list --upgradable`, simulated `dist-upgrade`). Cookie session. Cap 500. |
 | GET | `/api/v1/nodes/{id}/container-usage` | `{ "<short-id>": { cpu_ratio?, memory_bytes? }, … }` from latest pushed samples. 404 if unknown node. Cookie session. Does not talk to Docker Engine. |
+| GET | `/api/v1/nodes/{id}/containers/{cid}` | Summarized `container_inspect` (name, image, mounts, networks, compose labels). Drops `Env`. Cookie session. 400 if `{cid}` is not a docker id/name token. |
 | GET | `/api/v1/nodes/{id}/dashboard` | `{ source, layout, widgets }` — hydrated for the grid. 404 if unknown node. |
 | PUT | `/api/v1/nodes/{id}/dashboard` | JSON `Dashboard`; `normalize()` then `validate()`; 204. |
 | DELETE | `/api/v1/nodes/{id}/dashboard` | Clear custom layout; 204. |
@@ -85,7 +86,8 @@ is deleted and a new session id is issued.
 on read/save so unknown values do not drop a custom layout. `app.js` PUTs
 the layout from Customize and polls GET at `data-poll-secs`. The
 Containers tab polls `container-usage` at the same interval while that
-panel is visible.
+panel is visible. Clicking a container card loads summarized inspect from
+`GET /api/v1/nodes/{id}/containers/{cid}` (no `Env`).
 
 There is no generated OpenAPI dump. Keep this chapter in sync when you add
 routes; do not hang utoipa on handlers just for docs.
