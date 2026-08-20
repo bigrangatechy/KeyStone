@@ -151,14 +151,18 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade, IPv4, GitLab backup, and reboot**
+- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, GitLab backup, and reboot**
   on and save.
-- `apt-get` failed: read the apply stream; the helper only runs `upgrade`,
+- `apt-get` failed: read the apply or autoremove stream; the helper only runs
+  `upgrade` or `autoremove`,
   not `dist-upgrade`. Debian / Ubuntu / Raspberry Pi OS only. Check for
   updates lists `apt list --upgradable` plus a simulated dist-upgrade
   (held-back / phased included); Apply still will not install new deps.
   Ubuntu 24.04 will not auto-restart docker or ssh during Apply
   (`NEEDRESTART_MODE=list`); leftover services stay listed on the tab.
+- Unattended-upgrades also running: the tab shows enabled / last run. It
+  does not edit `/etc/apt/apt.conf.d/20auto-upgrades`. Two updaters is a
+  glance, not a fix.
 - Reboot dropped the UI: you rebooted the node that serves KeyStone. Wait
   for `keystone-server` to come back, then sign in again. Poweroff is not
   in this UI.

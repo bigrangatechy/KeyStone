@@ -107,6 +107,8 @@ pub fn router(state: AppState) -> Router {
         .route("/nodes/{id}/sys/{op}", post(sys_action))
         .route("/nodes/{id}/sys/updates", get(sys_updates_page))
         .route("/nodes/{id}/sys/updates/stream", get(sys_updates_sse))
+        .route("/nodes/{id}/sys/autoremove", get(sys_autoremove_page))
+        .route("/nodes/{id}/sys/autoremove/stream", get(sys_autoremove_sse))
         .route("/nodes/{id}/sys/gitlab-backup", get(sys_gitlab_backup_page))
         .route(
             "/nodes/{id}/sys/gitlab-backup/stream",
@@ -2161,6 +2163,7 @@ async fn sys_action(
         let dest = match parsed {
             SysOp::GitlabBackup => format!("/nodes/{id}/sys/gitlab-backup"),
             SysOp::Journal => format!("/nodes/{id}?panel=system"),
+            SysOp::UpdatesAutoremove => format!("/nodes/{id}/sys/autoremove"),
             _ => format!("/nodes/{id}/sys/updates"),
         };
         return Redirect::to(&dest).into_response();
@@ -2230,6 +2233,46 @@ async fn sys_updates_sse(
         .metadata
         .audit(&username, &id, "updates_apply", "{}", true, "started");
     logs_sse_op(state, id, SysOp::UpdatesApply.as_str(), "{}".into())
+}
+
+async fn sys_autoremove_page(Path(id): Path<String>) -> impl IntoResponse {
+    Html(
+        LogsTemplate {
+            title: "Autoremove".into(),
+            node_id: id.clone(),
+            subtitle: "apt-get autoremove".into(),
+            hint: "Streaming apt-get autoremove. Leave this page to stop following (the command keeps running on the node). This is not dist-upgrade.".into(),
+            back_href: format!("/nodes/{id}?panel=system"),
+            stream_url: format!("/nodes/{}/sys/autoremove/stream", urlencoding_path(&id)),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn sys_autoremove_sse(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Response {
+    let username = jar
+        .get(SESSION_COOKIE)
+        .and_then(|c| {
+            state
+                .stores
+                .metadata
+                .get_session(c.value())
+                .ok()
+                .flatten()
+                .map(|s| s.username)
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let _ =
+        state
+            .stores
+            .metadata
+            .audit(&username, &id, "updates_autoremove", "{}", true, "started");
+    logs_sse_op(state, id, SysOp::UpdatesAutoremove.as_str(), "{}".into())
 }
 
 async fn sys_gitlab_backup_page(Path(id): Path<String>) -> impl IntoResponse {
@@ -2800,12 +2843,24 @@ mod tests {
             .split("async fn sys_updates_sse")
             .nth(1)
             .expect("sys_updates_sse")
-            .split("async fn sys_gitlab_backup_page")
+            .split("async fn sys_autoremove_page")
             .next()
             .expect("sys_updates_sse body");
         assert!(
             sse.contains(".audit(") && sse.contains("updates_apply"),
             "apt apply must write audit when the stream starts"
+        );
+
+        let autoremove = src
+            .split("async fn sys_autoremove_sse")
+            .nth(1)
+            .expect("sys_autoremove_sse")
+            .split("async fn sys_gitlab_backup_page")
+            .next()
+            .expect("sys_autoremove_sse body");
+        assert!(
+            autoremove.contains(".audit(") && autoremove.contains("updates_autoremove"),
+            "autoremove must write audit when the stream starts"
         );
 
         let gitlab = src
@@ -2864,6 +2919,24 @@ mod tests {
         assert!(
             !journal_arm.contains("/sys/updates"),
             "journal must not redirect to apt apply, got {journal_arm}"
+        );
+        let autoremove_arm = streams
+            .split("SysOp::UpdatesAutoremove")
+            .nth(1)
+            .expect("UpdatesAutoremove arm")
+            .split("=>")
+            .nth(1)
+            .expect("UpdatesAutoremove dest")
+            .split(',')
+            .next()
+            .expect("UpdatesAutoremove dest expr");
+        assert!(
+            autoremove_arm.contains("/sys/autoremove"),
+            "autoremove POST must go to the follow page, got {autoremove_arm}"
+        );
+        assert!(
+            !autoremove_arm.contains("/sys/updates"),
+            "autoremove must not redirect to apt apply, got {autoremove_arm}"
         );
     }
 
@@ -3052,10 +3125,12 @@ mod tests {
         }
         assert!(js.contains("/sys/net_set"));
         assert!(js.contains("/sys/updates"));
+        assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
         assert!(js.contains("/sys/reboot"));
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::UpdatesApply.mutating());
+        assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::Reboot.mutating());
         assert!(!SysOp::Status.mutating());
@@ -3063,6 +3138,7 @@ mod tests {
         assert!(!SysOp::Journal.mutating());
         assert!(!SysOp::Reboot.streams());
         assert!(SysOp::Journal.streams());
+        assert!(SysOp::UpdatesAutoremove.streams());
     }
 
     fn host_headers(host: &str) -> HeaderMap {
@@ -3213,6 +3289,9 @@ mod tests {
         let authed_end = head.find(".layer(").expect("session layer");
         let post = head.find("/nodes/{id}/sys/{op}").expect("sys POST");
         let apply = head.find("/nodes/{id}/sys/updates").expect("sys apply");
+        let autoremove = head
+            .find("/nodes/{id}/sys/autoremove")
+            .expect("sys autoremove page");
         let backup = head
             .find("/nodes/{id}/sys/gitlab-backup")
             .expect("gitlab backup page");
@@ -3224,6 +3303,7 @@ mod tests {
             .expect("sys updates API");
         assert!(post < authed_end);
         assert!(apply < authed_end);
+        assert!(autoremove < authed_end);
         assert!(backup < authed_end);
         assert!(journal < authed_end);
         assert!(api < authed_end);
@@ -3267,6 +3347,27 @@ mod tests {
         assert!(
             js.contains("Apply pending apt upgrades"),
             "Apply updates must ask before apt-get upgrade"
+        );
+        assert!(
+            js.contains("Remove unused packages with apt-get autoremove"),
+            "Autoremove must ask before apt-get autoremove"
+        );
+        assert!(
+            js.contains("This does not dist-upgrade"),
+            "Autoremove confirm must say this is not dist-upgrade"
+        );
+        assert!(js.contains("/sys/autoremove"));
+        assert!(
+            js.contains("Unattended upgrades"),
+            "System tab must show whether unattended-upgrades is enabled"
+        );
+        assert!(
+            js.contains("No unattended run on disk") && js.contains("Last unattended run"),
+            "System tab must show unattended last-run age"
+        );
+        assert!(
+            !js.contains("unattended-enable") && !js.contains("20auto-upgrades"),
+            "UI must not edit unattended-upgrades config"
         );
         assert!(
             js.contains("Ubuntu will not auto-restart docker or ssh"),
@@ -3321,6 +3422,10 @@ mod tests {
         assert!(
             html.contains("and reboot"),
             "Settings manage checkbox must mention reboot"
+        );
+        assert!(
+            html.contains("autoremove"),
+            "Settings manage checkbox must mention apt autoremove"
         );
         assert!(
             js.contains("Backup GitLab"),

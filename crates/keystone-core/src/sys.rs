@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Host system-admin ops (apt, leftover services, failed units, reboot,
-//! journal follow, IPv4, GitLab Omnibus backup). No I/O — the helper and
-//! agent run them. Keep `docs/dev/src/system.md` in sync.
+//! journal follow, IPv4, GitLab Omnibus backup, unattended-upgrades
+//! observe). No I/O — the helper and agent run them. Keep
+//! `docs/dev/src/system.md` in sync.
 
 use std::net::Ipv4Addr;
 
@@ -32,6 +33,18 @@ pub const JOURNAL_UNITS: &[&str] = &[
     "gitlab-runsvdir.service",
 ];
 
+/// Binary that means the unattended-upgrades package is installed.
+pub const UNATTENDED_UPGRADE_BIN: &str = "/usr/bin/unattended-upgrade";
+
+/// Debian/Ubuntu apt periodic file. Observe only — not an editor.
+pub const UNATTENDED_AUTO_UPGRADES: &str = "/etc/apt/apt.conf.d/20auto-upgrades";
+
+/// Stamp written when apt periodic finishes an unattended run.
+pub const UNATTENDED_STAMP: &str = "/var/lib/apt/periodic/unattended-upgrades-stamp";
+
+/// Fallback last-run signal when the stamp is missing.
+pub const UNATTENDED_LOG: &str = "/var/log/unattended-upgrades/unattended-upgrades.log";
+
 #[derive(
     Debug,
     Clone,
@@ -51,6 +64,7 @@ pub enum SysOp {
     Status,
     UpdatesList,
     UpdatesApply,
+    UpdatesAutoremove,
     NetSet,
     GitlabBackup,
     Reboot,
@@ -65,10 +79,11 @@ impl SysOp {
     pub fn description(self) -> &'static str {
         match self {
             Self::Status => {
-                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, helper)"
+                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, helper)"
             }
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
+            Self::UpdatesAutoremove => "Remove unused packages (apt-get autoremove)",
             Self::NetSet => "Set IPv4 DHCP or static on one interface",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::Reboot => "Reboot the node (systemctl reboot)",
@@ -79,7 +94,11 @@ impl SysOp {
     pub fn mutating(self) -> bool {
         matches!(
             self,
-            Self::UpdatesApply | Self::NetSet | Self::GitlabBackup | Self::Reboot
+            Self::UpdatesApply
+                | Self::UpdatesAutoremove
+                | Self::NetSet
+                | Self::GitlabBackup
+                | Self::Reboot
         )
     }
 
@@ -94,7 +113,7 @@ impl SysOp {
     pub fn streams(self) -> bool {
         matches!(
             self,
-            Self::UpdatesApply | Self::GitlabBackup | Self::Journal
+            Self::UpdatesApply | Self::UpdatesAutoremove | Self::GitlabBackup | Self::Journal
         )
     }
 }
@@ -628,6 +647,43 @@ pub fn newest_gitlab_backup(entries: &[(String, i64)]) -> Option<(String, i64)> 
         .cloned()
 }
 
+/// Last `APT::Periodic::Unattended-Upgrade` assignment in an apt conf snippet.
+/// Comments are skipped. Not an editor — observe only.
+pub fn parse_unattended_periodic(conf: &str) -> Option<bool> {
+    const KEY: &str = "APT::Periodic::Unattended-Upgrade";
+    let mut found = None;
+    for raw in conf.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(KEY) else {
+            continue;
+        };
+        if let Some(v) = apt_conf_bool(rest) {
+            found = Some(v);
+        }
+    }
+    found
+}
+
+fn apt_conf_bool(rest: &str) -> Option<bool> {
+    let t = rest
+        .trim()
+        .trim_start_matches(':')
+        .trim()
+        .trim_end_matches(';')
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
+    match t.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Some(true),
+        "0" | "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,14 +694,17 @@ mod tests {
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
         assert!(SysOp::UpdatesApply.mutating());
+        assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::Reboot.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::GitlabBackup.permission(), Permission::SysManage);
+        assert_eq!(SysOp::UpdatesAutoremove.permission(), Permission::SysManage);
         assert_eq!(SysOp::Reboot.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
+        assert!(SysOp::UpdatesAutoremove.streams());
         assert!(SysOp::GitlabBackup.streams());
         assert!(!SysOp::Status.streams());
         assert!(!SysOp::Reboot.streams());
@@ -653,7 +712,12 @@ mod tests {
         assert!(!SysOp::Journal.mutating());
         assert_eq!(SysOp::Journal.permission(), Permission::SysView);
         assert!(SysOp::Journal.streams());
-        assert_eq!(SysOp::Journal.as_str(), "journal");
+        assert_eq!(SysOp::UpdatesAutoremove.as_str(), "updates_autoremove");
+        assert_eq!(UNATTENDED_UPGRADE_BIN, "/usr/bin/unattended-upgrade");
+        assert_eq!(
+            UNATTENDED_AUTO_UPGRADES,
+            "/etc/apt/apt.conf.d/20auto-upgrades"
+        );
         assert_eq!(GITLAB_BACKUP_DIR, "/var/opt/gitlab/backups");
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
         assert_eq!(JOURNAL_UNITS.len(), 5);
@@ -668,6 +732,7 @@ mod tests {
             }
             let needle = match op {
                 SysOp::UpdatesApply => "/sys/updates",
+                SysOp::UpdatesAutoremove => "/sys/autoremove",
                 SysOp::NetSet => "/sys/net_set",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
                 SysOp::Reboot => "/sys/reboot",
@@ -866,6 +931,10 @@ mod tests {
         );
         assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
+        assert_eq!(
+            "updates_autoremove".parse::<SysOp>().unwrap(),
+            SysOp::UpdatesAutoremove
+        );
         assert!("poweroff".parse::<SysOp>().is_err());
         assert!("shutdown".parse::<SysOp>().is_err());
     }
@@ -945,5 +1014,50 @@ mod tests {
         assert_eq!(newest.0, "new_gitlab_backup.tar");
         assert_eq!(newest.1, 200);
         assert!(newest_gitlab_backup(&[]).is_none());
+    }
+
+    #[test]
+    fn parse_unattended_periodic_last_assignment_wins() {
+        assert_eq!(
+            parse_unattended_periodic(
+                "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            parse_unattended_periodic("APT::Periodic::Unattended-Upgrade \"0\";\n"),
+            Some(false)
+        );
+        assert_eq!(
+            parse_unattended_periodic(
+                "APT::Periodic::Unattended-Upgrade \"0\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            parse_unattended_periodic("// APT::Periodic::Unattended-Upgrade \"1\";\n"),
+            None
+        );
+        assert_eq!(
+            parse_unattended_periodic("# APT::Periodic::Unattended-Upgrade \"1\";\n"),
+            None
+        );
+        assert_eq!(parse_unattended_periodic(""), None);
+        assert_eq!(
+            parse_unattended_periodic("APT::Periodic::Unattended-Upgrade 1;\n"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_unattended_periodic("APT::Periodic::Unattended-Upgrade \"true\";\n"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_unattended_periodic("APT::Periodic::Unattended-Upgrade \"false\";\n"),
+            Some(false)
+        );
+        assert_eq!(
+            parse_unattended_periodic("APT::Periodic::Unattended-Upgrade \"yes, later\";\n"),
+            None
+        );
     }
 }

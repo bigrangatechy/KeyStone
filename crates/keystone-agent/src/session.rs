@@ -733,6 +733,9 @@ async fn handle_sys(
         }
         SysOp::UpdatesList | SysOp::NetSet | SysOp::Reboot => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
+        SysOp::UpdatesAutoremove => {
+            anyhow::bail!("updates_autoremove is streamed from the autoremove page")
+        }
         SysOp::GitlabBackup => anyhow::bail!("gitlab_backup is streamed from the backup page"),
         SysOp::Journal => anyhow::bail!("journal is streamed from the journal page"),
     }
@@ -905,6 +908,7 @@ mod tests {
             SysOp::Status,
             SysOp::UpdatesList,
             SysOp::UpdatesApply,
+            SysOp::UpdatesAutoremove,
             SysOp::NetSet,
             SysOp::GitlabBackup,
             SysOp::Reboot,

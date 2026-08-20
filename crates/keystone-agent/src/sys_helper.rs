@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Root helper: allowlisted apt, leftover services, failed units, reboot,
-//! journal follow, IPv4, and GitLab Omnibus backup. No `sh -c`. Started by
-//! systemd socket.
+//! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
+//! failed units, reboot, journal follow, IPv4, GitLab Omnibus backup, and
+//! unattended-upgrades observe. No `sh -c`. Started by systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -14,8 +14,10 @@ use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     gitlab_backup_name_ok, journal_unit, merge_upgradable, netplan_yaml, newest_gitlab_backup,
     nmcli_modify_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
-    parse_needrestart_batch, parse_ntp_sync, parse_systemctl_failed, NeedrestartBatch, NetSet,
-    SysOp, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, SYS_SOCKET_PATH, UPDATES_LIST_CAP,
+    parse_needrestart_batch, parse_ntp_sync, parse_systemctl_failed, parse_unattended_periodic,
+    NeedrestartBatch, NetSet, SysOp, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, SYS_SOCKET_PATH,
+    UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
+    UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -116,6 +118,10 @@ async fn dispatch(
             updates_apply(writer).await?;
             write_json(writer, &json!({"ok": true, "payload": {"applied": true}})).await
         }
+        SysOp::UpdatesAutoremove => {
+            updates_autoremove(writer).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
         SysOp::NetSet => {
             let raw = payload.to_string();
             let req = NetSet::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
@@ -133,8 +139,13 @@ async fn dispatch(
 
 async fn status() -> anyhow::Result<Value> {
     let backend = detect_backend();
-    let (interfaces, leftovers, failed, ntp) =
-        tokio::join!(ip_addrs(), leftover_services(), failed_units(), ntp_sync());
+    let (interfaces, leftovers, failed, ntp, unattended) = tokio::join!(
+        ip_addrs(),
+        leftover_services(),
+        failed_units(),
+        ntp_sync(),
+        unattended_status()
+    );
     Ok(json!({
         "helper": true,
         "backend": backend,
@@ -143,6 +154,7 @@ async fn status() -> anyhow::Result<Value> {
         "interfaces": interfaces,
         "net": net_snapshot(backend, &interfaces),
         "ntp": ntp,
+        "unattended": unattended,
         "gitlab": gitlab_status(),
         "restart_services": leftovers.services,
         "failed_units": failed,
@@ -189,6 +201,53 @@ fn gitlab_status() -> Value {
             "backup_unix": backup_unix,
         }),
         None => json!({ "kind": "omnibus" }),
+    }
+}
+
+fn file_mtime_unix(path: &str) -> Option<i64> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return None;
+    }
+    let mtime = meta.modified().ok()?;
+    mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
+}
+
+async fn unattended_status() -> Value {
+    let available = Path::new(UNATTENDED_UPGRADE_BIN).is_file();
+    if !available {
+        return json!({ "available": false, "enabled": false });
+    }
+    let conf = std::fs::read_to_string(UNATTENDED_AUTO_UPGRADES).unwrap_or_default();
+    let enabled = match parse_unattended_periodic(&conf) {
+        Some(v) => v,
+        None => unattended_unit_enabled().await,
+    };
+    match file_mtime_unix(UNATTENDED_STAMP).or_else(|| file_mtime_unix(UNATTENDED_LOG)) {
+        Some(last_unix) => json!({
+            "available": true,
+            "enabled": enabled,
+            "last_unix": last_unix,
+        }),
+        None => json!({ "available": true, "enabled": enabled }),
+    }
+}
+
+async fn unattended_unit_enabled() -> bool {
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new("systemctl")
+            .args(["is-enabled", "unattended-upgrades"])
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await;
+    match output {
+        Ok(Ok(o)) => String::from_utf8_lossy(&o.stdout).trim() == "enabled",
+        _ => false,
     }
 }
 
@@ -433,6 +492,13 @@ async fn updates_apply(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow:
         ],
     )
     .await
+}
+
+async fn updates_autoremove(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("autoremove is not invoked in tests");
+    }
+    stream_apt(writer, &["-y", "autoremove"]).await
 }
 
 async fn apt_cmd(args: &[&str], capture: bool) -> anyhow::Result<String> {
@@ -781,6 +847,22 @@ mod tests {
                 .is_some(),
             "status ntp.synchronized must be a bool, got {line}"
         );
+        assert!(
+            payload
+                .get("unattended")
+                .and_then(|n| n.get("available"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status unattended.available must be a bool, got {line}"
+        );
+        assert!(
+            payload
+                .get("unattended")
+                .and_then(|n| n.get("enabled"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status unattended.enabled must be a bool, got {line}"
+        );
         server.await.unwrap();
     }
 
@@ -884,7 +966,7 @@ mod tests {
             .split("async fn updates_apply")
             .nth(1)
             .expect("updates_apply")
-            .split("async fn apt_cmd")
+            .split("async fn updates_autoremove")
             .next()
             .expect("updates_apply body");
         assert!(apply.contains("upgrade"));
@@ -892,6 +974,18 @@ mod tests {
             !apply.contains("dist-upgrade"),
             "Apply stays apt-get upgrade, not dist-upgrade"
         );
+        let autoremove = src
+            .split("async fn updates_autoremove")
+            .nth(1)
+            .expect("updates_autoremove")
+            .split("async fn apt_cmd")
+            .next()
+            .expect("updates_autoremove body");
+        assert!(autoremove.contains("autoremove"));
+        assert!(autoremove.contains("stream_apt"));
+        assert!(autoremove.contains("cfg!(test)"));
+        assert!(!autoremove.contains("dist-upgrade"));
+        assert!(!autoremove.contains("sh -c") && !autoremove.contains("bash -c"));
     }
 
     #[test]
@@ -963,6 +1057,26 @@ mod tests {
         assert!(failed.contains("--failed"));
         assert!(!failed.contains("restart"));
         assert!(!failed.contains("apt-get"));
+    }
+
+    #[test]
+    fn unattended_observe_does_not_enable_or_edit() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn unattended_status")
+            .nth(1)
+            .expect("unattended_status")
+            .split("fn reboot_required")
+            .next()
+            .expect("unattended observe body");
+        assert!(body.contains("UNATTENDED_AUTO_UPGRADES"));
+        assert!(body.contains("is-enabled"));
+        assert!(body.contains("unattended-upgrades"));
+        assert!(!body.contains("\"enable\""));
+        assert!(!body.contains("\"start\""));
+        assert!(!body.contains("\"stop\""));
+        assert!(!body.contains("fs::write"));
+        assert!(!body.contains("unattended-upgrade\""));
     }
 
     #[test]
@@ -1078,6 +1192,48 @@ mod tests {
             .collect();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(names, vec!["keep_gitlab_backup.tar".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn helper_does_not_autoremove_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"updates_autoremove","payload":{}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "autoremove must not spawn apt-get in CI, got {err}"
+        );
+        assert!(!err.contains("apt-get"), "must bail before apt: {err}");
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn file_mtime_unix_skips_symlinks() {
+        let dir = std::env::temp_dir().join(format!("ks-ua-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stamp = dir.join("stamp");
+        std::fs::write(&stamp, b"x").unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
+        assert!(file_mtime_unix(stamp.to_str().unwrap()).is_some());
+        assert!(file_mtime_unix(link.to_str().unwrap()).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

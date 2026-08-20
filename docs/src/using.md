@@ -9,7 +9,8 @@ The HTTP UI is the only console. Agents do not serve a web page. The home
 page is the Netdata-shaped **fleet** (live chips per host). Open a node for
 that machine’s Overview; the Docker tabs are the Portainer-shaped control
 plane; **System** is apt, leftover services, confirmed reboot, allowlisted
-journals, NTP, IPv4, and GitLab Omnibus backup on the machine itself (not Docker).
+journals, NTP, unattended-upgrades glance, autoremove, IPv4, and GitLab
+Omnibus backup on the machine itself (not Docker).
 
 ## Sign in
 
@@ -92,10 +93,10 @@ Tabs:
   until Observe Docker is on and the agent can use the socket. See
   [Docker](docker.md).
 - **System** — apt / leftover services / failed units / confirmed reboot /
-  journals / NTP / IPv4 / GitLab Omnibus backup on **this** Ubuntu or
-  Debian server. Off until you enable the root helper and Settings flags.
-  Proxmox, TrueNAS, and other appliance OSes stay on Observe. See
-  [System](system.md).
+  journals / NTP / unattended-upgrades / autoremove / IPv4 / GitLab Omnibus
+  backup on **this** Ubuntu or Debian server. Off until you enable the root
+  helper and Settings flags. Proxmox, TrueNAS, and other appliance OSes
+  stay on Observe. See [System](system.md).
 - **Settings** — display name, notes, poll interval, NICs, labels, Docker
   flags, Compose paths, System-admin flags. See [Configuration](configuration.md).
 

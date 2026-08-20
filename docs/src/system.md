@@ -6,8 +6,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # System
 
 The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
-Pi OS** boxes (apt, leftover services, failed units, confirmed reboot,
-allowlisted journals, NTP, IPv4, GitLab Omnibus backup). It is not a TrueNAS,
+Pi OS** boxes (apt, autoremove, leftover services, failed units, confirmed
+reboot, allowlisted journals, NTP, unattended-upgrades glance, IPv4, GitLab
+Omnibus backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
 agent on them for **Overview metrics** (and Docker Observe if they run
 Engine). Leave **System manage** off.
@@ -18,8 +19,8 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, IPv4, GitLab backup, and reboot** if you want Apply
-   or Reboot.
+   and **Allow apt upgrade, autoremove, IPv4, GitLab backup, and reboot** if
+   you want Apply, Autoremove, or Reboot.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
 
@@ -37,8 +38,8 @@ This is **off until you enable it**, twice:
 Missing socket → the tab shows that `systemctl` line. Observe off → it
 points at Settings (the socket unit alone does not turn the tab on). The
 helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
-It only runs allowlisted ops (`apt-get update` / `upgrade`, `apt list
---upgradable`, simulated `dist-upgrade`, `needrestart -b`,
+It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
+`apt list --upgradable`, simulated `dist-upgrade`, `needrestart -b`,
 `systemctl --failed`, `timedatectl`, `journalctl -u` for five named
 units, `systemctl reboot`, netplan or
 `nmcli`, Omnibus `gitlab-backup create`). There is no shell string and no
@@ -59,6 +60,10 @@ Ubuntu may still skip a phased package. On Ubuntu 24.04, Apply sets
 `NEEDRESTART_MODE=list` so needrestart does **not** auto-restart docker or
 ssh in the middle of the upgrade.
 
+**Autoremove** is a separate confirmed button. It runs `apt-get -y
+autoremove` (not `dist-upgrade`) and streams the same way as Apply. Use it
+after Apply when leftover packages sit around. It is Manage, not Observe.
+
 After Apply, the System tab lists **services still using old libraries**
 (`needrestart -b`) and **failed systemd units** (`systemctl --failed`).
 There is no “restart this unit” button — use a shell if you want a
@@ -75,6 +80,14 @@ With the helper on, the tab also shows whether the clock is synchronized
 `keystone-server.service`, `docker.service`, `ssh.service`, and
 `gitlab-runsvdir.service`. Same idea as Compose logs: last 200 lines, live
 follow, leave the page to stop. Not a PTY and not a unit-name textbox.
+
+If `/usr/bin/unattended-upgrade` is on the node, the tab shows whether
+unattended-upgrades is enabled (`APT::Periodic::Unattended-Upgrade` in
+`/etc/apt/apt.conf.d/20auto-upgrades`, or `systemctl is-enabled
+unattended-upgrades` when that file has no assignment) and the age of the
+last run (stamp `/var/lib/apt/periodic/unattended-upgrades-stamp`, else
+the log). That is a glance so you can see two updaters fighting. There is
+no config editor and no enable toggle.
 
 Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
 are enabled for boot (`WantedBy=multi-user.target`). After a kernel or

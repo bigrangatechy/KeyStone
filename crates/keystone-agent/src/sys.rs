@@ -29,7 +29,9 @@ fn call_budget(op: SysOp) -> Duration {
         SysOp::Status => Duration::from_secs(3),
         SysOp::NetSet => Duration::from_secs(20),
         SysOp::Reboot => Duration::from_secs(15),
-        SysOp::UpdatesList | SysOp::UpdatesApply => Duration::from_secs(120),
+        SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
+            Duration::from_secs(120)
+        }
         SysOp::GitlabBackup => Duration::from_secs(1800),
         SysOp::Journal => Duration::from_secs(3),
     }
@@ -226,6 +228,10 @@ mod tests {
             "status helper must finish in parallel with local_status inside 8s"
         );
         assert!(call_budget(SysOp::UpdatesList) >= Duration::from_secs(60));
+        assert_eq!(
+            call_budget(SysOp::UpdatesAutoremove),
+            call_budget(SysOp::UpdatesApply)
+        );
         assert!(
             call_budget(SysOp::Reboot) <= Duration::from_secs(20),
             "reboot must not use the apt apply budget"

@@ -295,3 +295,59 @@ fn operator_docs_cover_journal_ntp_gitlab_age() {
         "developer system.md must list the journal op"
     );
 }
+
+#[test]
+fn operator_docs_cover_autoremove_and_unattended() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("autoremove") && system.contains("not `dist-upgrade`"),
+        "System chapter must document apt-get autoremove and say it is not dist-upgrade"
+    );
+    assert!(
+        system.contains("unattended-upgrades") && system.contains("20auto-upgrades"),
+        "System chapter must document unattended-upgrades observe"
+    );
+    assert!(
+        system.contains("/var/lib/apt/periodic/unattended-upgrades-stamp"),
+        "System chapter must name the unattended stamp path"
+    );
+    assert!(
+        system.contains("no config editor"),
+        "System chapter must say unattended-upgrades is not an editor"
+    );
+    assert!(
+        using.contains("unattended-upgrades") && using.contains("autoremove"),
+        "using.md must mention unattended-upgrades and autoremove on the System tab"
+    );
+    assert!(
+        trouble.contains("20auto-upgrades") && trouble.contains("autoremove"),
+        "troubleshooting must cover autoremove and unattended config staying out"
+    );
+    assert!(
+        audit.contains("apt autoremove"),
+        "Audit chapter must list autoremove as a mutation"
+    );
+    assert!(
+        !audit.contains("unattended-upgrades config"),
+        "observing unattended-upgrades is not an audit mutation"
+    );
+    assert!(
+        http.contains("/sys/autoremove"),
+        "HTTP API must list the autoremove follow page"
+    );
+    assert!(
+        dev.contains("`updates_autoremove`") && dev.contains("not `dist-upgrade`"),
+        "developer system.md must list updates_autoremove"
+    );
+    assert!(
+        arch.contains("unattended-upgrades config editor")
+            && arch.contains("editing `20auto-upgrades` is not"),
+        "architecture.md must keep the unattended config editor out"
+    );
+}

@@ -10,13 +10,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - The **server** holds admin sessions, the ingest token, metric history, and
   the audit log. Anyone who can write `data_dir` or log in as the admin owns
 the lab view and can send Docker commands to connected agents that allow
-them. The same session can apply apt upgrades, reboot, and change IPv4 when System
+them. The same session can apply apt upgrades, autoremove unused packages, reboot, and change IPv4 when System
 Manage and the opt-in root helper are on.
 - Each **agent** runs as a system user. With Docker Observe enabled it can
   use the engine socket — that is root-equivalent on **that** host.
 - The **ingest token** proves an agent is allowed to push. It does **not**
   grant UI login and cannot start, stop, or exec containers, apply apt
-  upgrades, reboot a node, or change IPv4.
+  upgrades, autoremove packages, reboot a node, or change IPv4.
 
 ## UI account
 
@@ -168,7 +168,7 @@ name. There is no Hub login in this version.
 ## System (host apt, IPv4, GitLab backup)
 
 The metrics agent stays unprivileged (`NoNewPrivileges`, `ProtectSystem`).
-Host apt, addressing, and Omnibus GitLab backup go through an **opt-in**
+Host apt (upgrade and autoremove), addressing, and Omnibus GitLab backup go through an **opt-in**
 root helper (`keystone-sys`) on `/run/keystone/sys.sock`. The package does
 not enable that socket. Compromised `keystone` user **plus** an enabled
 socket **plus** System Manage is host root for the allowlist (same class as

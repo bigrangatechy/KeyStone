@@ -47,9 +47,11 @@ is deleted and a new session id is issued.
 | POST | `/settings/totp/confirm` | 6-digit code; enables TOTP, shows backup codes once. |
 | POST | `/settings/totp/disable` | Password + TOTP or backup; clears TOTP columns. |
 | POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`. Redirect keeps `?panel=`. Audit log. Streaming ops are 400. |
-| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields. Audit log on mutate. Streaming ops redirect to their follow page (`updates_apply` → apply, `gitlab_backup` → backup, `journal` → System tab). `reboot` is mutating and not streamed. |
+| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields. Audit log on mutate. Streaming ops redirect to their follow page (`updates_apply` → apply, `updates_autoremove` → autoremove, `gitlab_backup` → backup, `journal` → System tab). `reboot` is mutating and not streamed. |
 | GET | `/nodes/{id}/sys/updates` | HTML follow page for `apt-get upgrade`. |
 | GET | `/nodes/{id}/sys/updates/stream` | SSE for `updates_apply`. Cancel on drop. |
+| GET | `/nodes/{id}/sys/autoremove` | HTML follow page for `apt-get autoremove`. Not dist-upgrade. |
+| GET | `/nodes/{id}/sys/autoremove/stream` | SSE for `updates_autoremove`. Audit `started`. Cancel on drop. |
 | GET | `/nodes/{id}/sys/gitlab-backup` | HTML follow page for Omnibus `gitlab-backup create`. |
 | GET | `/nodes/{id}/sys/gitlab-backup/stream` | SSE for `gitlab_backup`. Audit `started`. Cancel on drop. |
 | GET | `/nodes/{id}/sys/journal/{unit}` | HTML follow page. `{unit}` must be an allowlisted systemd unit (`journal_unit`). 400 otherwise. |

@@ -8,7 +8,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Host apt and IPv4 are **not** `DockerOp`. Cookie-authed
 `POST /nodes/{id}/sys/{op}` and `GET /api/v1/nodes/{id}/sys/updates` become
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
-`updates_apply`, `net_set`, `gitlab_backup`, `reboot`, `journal`).
+`updates_apply`, `updates_autoremove`, `net_set`, `gitlab_backup`, `reboot`,
+`journal`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
@@ -26,20 +27,25 @@ on the ingest loop. `updates_list` runs `apt-get update`, `apt list
 --upgradable`, and `apt-get -s dist-upgrade` (phased updates included).
 Apply is still `apt-get upgrade`, not `dist-upgrade`, with
 `NEEDRESTART_MODE=list` so Ubuntu 24.04 does not auto-restart docker or
-ssh mid-upgrade. `status` parses `needrestart -b -r l` and
+ssh mid-upgrade. Autoremove is streamed `apt-get -y autoremove` (not
+`dist-upgrade`). `status` parses `needrestart -b -r l` and
 `systemctl --failed` (empty if the binary is missing or times out).
 `status` also parses `timedatectl show -p NTPSynchronized` and the newest
 `*_gitlab_backup.tar` under `/var/opt/gitlab/backups` (Omnibus only;
-restore is not an op). `journal` follows `journalctl -u` for a
+restore is not an op). Unattended-upgrades is observe-only: parse
+`/etc/apt/apt.conf.d/20auto-upgrades` (or `systemctl is-enabled
+unattended-upgrades`) and the periodic stamp mtime. There is no config
+editor. `journal` follows `journalctl -u` for a
 hardcoded unit list (not a textbox). `reboot` is hardcoded
 `systemctl reboot` (not poweroff). Tests must not run live `apt-get`,
-`gitlab-backup`, `journalctl -f`, or `systemctl reboot`.
+`apt-get autoremove`, `gitlab-backup`, `journalctl -f`, or `systemctl reboot`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|
-| `status` | no | `sys_view` | Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, helper) |
+| `status` | no | `sys_view` | Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, helper) |
 | `updates_list` | no | `sys_view` | List pending apt upgrades |
 | `updates_apply` | yes | `sys_manage` | Apply apt upgrades (streamed). `NEEDRESTART_MODE=list`. |
+| `updates_autoremove` | yes | `sys_manage` | `apt-get autoremove` (streamed). This is not `dist-upgrade`. Tests must not run it. |
 | `net_set` | yes | `sys_manage` | Set IPv4 DHCP or static on one interface |
 | `gitlab_backup` | yes | `sys_manage` | Omnibus `gitlab-backup create` (streamed). Missing binary is an error; tests must not run it. Docker GitLab is not this op. |
 | `reboot` | yes | `sys_manage` | Hardcoded `systemctl reboot`. Not streamed. Tests must not invoke it. Poweroff is not an op. |

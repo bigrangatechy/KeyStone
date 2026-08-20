@@ -853,6 +853,25 @@
         journals.appendChild(li);
       });
       wrap.appendChild(journals);
+      const unattended = data.unattended || {};
+      wrap.appendChild(el("h3", null, "Unattended upgrades"));
+      if (unattended.available) {
+        const unLine = document.createElement("p");
+        unLine.appendChild(el(
+          "span",
+          unattended.enabled ? "chip tone-ok" : "chip",
+          unattended.enabled ? "enabled" : "off"
+        ));
+        wrap.appendChild(unLine);
+        if (typeof unattended.last_unix === "number") {
+          wrap.appendChild(el("p", "muted", "Last unattended run " + relativeUnix(unattended.last_unix) + "."));
+        } else {
+          wrap.appendChild(el("p", "muted", "No unattended run on disk"));
+        }
+        wrap.appendChild(el("p", "muted", "Glance only. This tab does not edit unattended-upgrades or turn it on."));
+      } else {
+        wrap.appendChild(el("p", "muted", "unattended-upgrades is not installed on this node."));
+      }
     }
     if (manage && helperOn) {
       const rebootHead = el("div", "compose-head");
@@ -944,6 +963,16 @@
           window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/updates";
         });
         tools.appendChild(apply);
+        const autoremove = document.createElement("button");
+        autoremove.type = "button";
+        autoremove.textContent = "Autoremove";
+        autoremove.addEventListener("click", () => {
+          if (!window.confirm("Remove unused packages with apt-get autoremove on this node? This does not dist-upgrade.")) {
+            return;
+          }
+          window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/autoremove";
+        });
+        tools.appendChild(autoremove);
       }
       pkgHead.appendChild(tools);
     }
