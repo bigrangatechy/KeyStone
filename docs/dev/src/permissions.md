@@ -15,7 +15,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 | `docker_manage` | Start/stop/remove containers, Compose, images, volumes, and networks |
 | `docker_exec` | Execute a process inside a container (root-equivalent) |
 | `sys_view` | View host updates, journals, NTP, unattended-upgrades, and addressing on a node |
-| `sys_manage` | Apply apt upgrades, autoremove, set IPv4/IPv6, add a VLAN, join Wi-Fi, restart leftover/failed units, GitLab Omnibus backup/restore, and reboot on a node |
+| `sys_manage` | Apply apt upgrades, autoremove, set IPv4/IPv6, add a VLAN, join Wi-Fi, toggle SSH password logins, restart leftover/failed units, GitLab Omnibus backup/restore, and reboot on a node |
 
 `Permission::admin_all()` is every variant. This slice has a single local
 admin; cookie auth means the signed-in user is treated as that role.

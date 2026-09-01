@@ -21,7 +21,8 @@ use keystone_core::docker::{docker_ref_ok, summarize_container_inspect, DockerOp
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
 use keystone_core::sys::{
-    audit_sys_target, journal_unit, parse_restore_backup, validate_wifi_iface, SysOp,
+    audit_sys_target, journal_unit, parse_password_auth, parse_restore_backup, validate_wifi_iface,
+    SysOp,
 };
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
@@ -2225,6 +2226,7 @@ struct SysForm {
     vlan: Option<String>,
     ssid: Option<String>,
     psk: Option<String>,
+    password_auth: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2309,6 +2311,11 @@ fn sys_form_payload(form: &SysForm) -> String {
     }
     if let Some(p) = &form.psk {
         map.insert("psk".into(), serde_json::json!(p.trim()));
+    }
+    if let Some(p) = &form.password_auth {
+        if let Ok(v) = parse_password_auth(p) {
+            map.insert("password_auth".into(), serde_json::json!(v));
+        }
     }
     serde_json::Value::Object(map).to_string()
 }
@@ -3550,6 +3557,7 @@ mod tests {
         assert!(js.contains("/sys/net_set"));
         assert!(js.contains("/sys/vlan_add"));
         assert!(js.contains("/sys/wifi_join"));
+        assert!(js.contains("/sys/ssh_password"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
@@ -3559,6 +3567,9 @@ mod tests {
         assert!(SysOp::VlanAdd.mutating());
         assert!(SysOp::WifiJoin.mutating());
         assert!(SysOp::WifiJoin.needs_step_up());
+        assert!(SysOp::SshPassword.mutating());
+        assert!(SysOp::SshPassword.needs_step_up());
+        assert!(!SysOp::SshPassword.streams());
         assert!(!SysOp::WifiScan.mutating());
         assert!(!SysOp::WifiScan.needs_step_up());
         assert!(!SysOp::WifiJoin.streams());
@@ -3830,6 +3841,7 @@ mod tests {
             vlan: None,
             ssid: None,
             psk: None,
+            password_auth: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -3861,6 +3873,7 @@ mod tests {
             vlan: None,
             ssid: None,
             psk: None,
+            password_auth: None,
             totp: "000000".into(),
             redirect: String::new(),
         };
@@ -3885,6 +3898,7 @@ mod tests {
             vlan: None,
             ssid: None,
             psk: None,
+            password_auth: None,
             totp: "654321".into(),
             redirect: String::new(),
         };
@@ -3909,6 +3923,7 @@ mod tests {
             vlan: None,
             ssid: None,
             psk: None,
+            password_auth: None,
             totp: "111111".into(),
             redirect: String::new(),
         };
@@ -3934,6 +3949,7 @@ mod tests {
             vlan: Some(" 10 ".into()),
             ssid: None,
             psk: None,
+            password_auth: None,
             totp: "222222".into(),
             redirect: String::new(),
         };
@@ -3959,6 +3975,7 @@ mod tests {
             vlan: None,
             ssid: Some(" Home Lab ".into()),
             psk: Some("testpass1".into()),
+            password_auth: None,
             totp: "333333".into(),
             redirect: String::new(),
         };
@@ -3969,6 +3986,58 @@ mod tests {
         let redacted = keystone_core::sys::audit_sys_target(SysOp::WifiJoin, &w);
         assert!(!redacted.contains("testpass1"));
         assert!(redacted.contains("Home Lab"));
+        let ssh = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: None,
+            psk: None,
+            password_auth: Some(" no ".into()),
+            totp: "444444".into(),
+            redirect: String::new(),
+        };
+        let s = sys_form_payload(&ssh);
+        assert!(s.contains("\"password_auth\":false"));
+        assert!(!s.contains("444444"));
+        assert!(!s.contains("yes;rm"));
+        let junk = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: None,
+            psk: None,
+            password_auth: Some("yes;rm".into()),
+            totp: "555555".into(),
+            redirect: String::new(),
+        };
+        let j = sys_form_payload(&junk);
+        assert!(!j.contains("password_auth"));
+        assert!(!j.contains("yes;rm"));
+        assert!(!j.contains("555555"));
     }
 
     #[test]
@@ -4078,6 +4147,10 @@ mod tests {
             "Settings manage checkbox must mention Wi-Fi join"
         );
         assert!(
+            html.contains("SSH password"),
+            "Settings manage checkbox must mention SSH password logins"
+        );
+        assert!(
             html.contains("and reboot"),
             "Settings manage checkbox must mention reboot"
         );
@@ -4126,6 +4199,20 @@ mod tests {
                 && js.contains("not an SSID textbox")
                 && js.contains("wifiIface"),
             "Wi-Fi join must scan listed SSIDs, not a free SSID field"
+        );
+        assert!(
+            js.contains("/sys/ssh_password")
+                && js.contains("password_auth")
+                && js.contains("keys only")
+                && js.contains("not a user editor"),
+            "SSH password must be a yes/no toggle, not a user editor"
+        );
+        assert!(
+            !js.contains("PermitRootLogin")
+                && !js.contains("useradd")
+                && !js.contains("/sys/ufw")
+                && !js.contains("/sys/timezone"),
+            "SSH password slice must not grow a user, firewall, or timezone editor"
         );
         assert!(
             js.contains("data-totp")

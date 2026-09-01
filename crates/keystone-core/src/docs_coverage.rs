@@ -427,9 +427,10 @@ fn operator_docs_cover_ipv4_step_up() {
             && dev.contains("`net_set`")
             && dev.contains("`vlan_add`")
             && dev.contains("`wifi_join`")
+            && dev.contains("`ssh_password`")
             && dev.contains("`unit_restart`")
             && dev.contains("`gitlab_restore`"),
-        "developer system.md must say net_set, vlan_add, wifi_join, unit_restart, and gitlab_restore need step-up"
+        "developer system.md must say net_set, vlan_add, wifi_join, ssh_password, unit_restart, and gitlab_restore need step-up"
     );
     assert!(
         docker.contains("needs_step_up()") && docker.contains("confirm"),
@@ -655,5 +656,51 @@ fn operator_docs_cover_wifi_join() {
     assert!(
         arch.contains("Wi-Fi join") && arch.contains("802.1X"),
         "architecture.md must say Wi-Fi join is in and 802.1X stays out"
+    );
+}
+
+#[test]
+fn operator_docs_cover_ssh_password() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("SSH password")
+            && system.contains("keys only")
+            && system.contains("user editor"),
+        "System chapter must document SSH password as a yes/no toggle, not a user editor"
+    );
+    assert!(
+        using.contains("SSH password") && using.contains("current authenticator code"),
+        "using.md must mention SSH password and step-up"
+    );
+    assert!(
+        trouble.contains("SSH password refused") && trouble.contains("sshd"),
+        "troubleshooting must cover a refused SSH password change"
+    );
+    assert!(
+        security.contains("SSH password") && security.contains("lock you out"),
+        "security.md must say turning SSH passwords off can lock you out"
+    );
+    assert!(
+        audit.contains("SSH password"),
+        "Audit must list SSH password as a mutation"
+    );
+    assert!(
+        http.contains("`ssh_password`") && http.contains("`password_auth`"),
+        "HTTP API must mention ssh_password and password_auth"
+    );
+    assert!(
+        dev.contains("`ssh_password`") && dev.contains("sshd -T"),
+        "developer system.md must say observe is sshd -T"
+    );
+    assert!(
+        arch.contains("SSH password") && arch.contains("firewall"),
+        "architecture.md must say SSH password is in and firewall stays out"
     );
 }

@@ -137,7 +137,7 @@ On each node’s **Settings** tab:
 | Network interfaces | One device name per line. Empty = automatic (skip loopback/docker/veth). |
 | Labels | `key=value` per line, attached to the heartbeat. Replaces `agent.toml` labels once connected. |
 | Observe / Manage / Exec | Docker gates. See [Docker](docker.md). |
-| Observe host / Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, leftover restart, GitLab backup, GitLab restore, and reboot | System-admin gates. See [System](system.md). Off until you also enable `keystone-sys.socket` on the node. Settings shows a warning before System Manage: that flag is apt, IPv4, IPv6, VLAN, Wi-Fi, leftover restart, GitLab backup, GitLab restore, and reboot. |
+| Observe host / Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, and reboot | System-admin gates. See [System](system.md). Off until you also enable `keystone-sys.socket` on the node. Settings shows a warning before System Manage: that flag is apt, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, and reboot. |
 | Compose files | Extra `docker compose -f` paths, one per line. Needed for **Up** after **Down**. Must be readable by user `keystone`. |
 
 Save applies to a connected agent immediately.

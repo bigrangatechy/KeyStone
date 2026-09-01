@@ -9,7 +9,7 @@ Host apt and addressing are **not** `DockerOp`. Cookie-authed
 `POST /nodes/{id}/sys/{op}` and `GET /api/v1/nodes/{id}/sys/updates` become
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
 `updates_apply`, `updates_autoremove`, `net_set`, `vlan_add`, `wifi_scan`,
-`wifi_join`, `gitlab_backup`, `gitlab_restore`, `reboot`, `journal`,
+`wifi_join`, `ssh_password`, `gitlab_backup`, `gitlab_restore`, `reboot`, `journal`,
 `unit_restart`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
@@ -44,13 +44,16 @@ or failed list from `needrestart` / `systemctl --failed` (not a textbox).
 `vlan_add` is a listed Ethernet parent plus id 1–4094 (not a name textbox);
 the helper re-checks the live address list. `wifi_scan` lists nearby SSIDs
 (`nmcli` or `iw`); `wifi_join` re-checks that list then connects (PSK is
-argv, never audited). Tests must not run live `apt-get`,
+argv, never audited). `status` also runs `sshd -T` for PasswordAuthentication.
+`ssh_password` writes `/etc/ssh/sshd_config.d/00-keystone.conf` then `sshd -t`
+and `systemctl reload` of `ssh.service` (fallback `sshd.service`). Not a user
+editor. Tests must not run live `apt-get`,
 `apt-get autoremove`, `gitlab-backup`, `gitlab-backup restore`, `journalctl -f`, `systemctl reboot`,
-`systemctl restart`, `netplan apply`, `nmcli`, or `iw`.
+`systemctl restart`, `systemctl reload`, `sshd -t`, `netplan apply`, `nmcli`, or `iw`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|
-| `status` | no | `sys_view` | Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, helper) |
+| `status` | no | `sys_view` | Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, SSH password-auth, helper) |
 | `updates_list` | no | `sys_view` | List pending apt upgrades |
 | `updates_apply` | yes | `sys_manage` | Apply apt upgrades (streamed). `NEEDRESTART_MODE=list`. |
 | `updates_autoremove` | yes | `sys_manage` | `apt-get autoremove` (streamed). This is not `dist-upgrade`. Tests must not run it. |
@@ -58,6 +61,7 @@ argv, never audited). Tests must not run live `apt-get`,
 | `vlan_add` | yes | `sys_manage` | Create an 802.1Q VLAN on a listed Ethernet parent (`eth0.10`). `needs_step_up()`. Helper re-checks the live address list. Not a name textbox. QinQ and VLAN delete are not this op. Tests must not run `netplan apply` or `nmcli`. |
 | `wifi_scan` | no | `sys_view` | List SSIDs on one wireless iface (`nmcli device wifi list` or `iw scan`). Tests must not run it. |
 | `wifi_join` | yes | `sys_manage` | Join a listed SSID (WPA-PSK). `needs_step_up()`. Helper re-checks the live scan. PSK is stripped from Audit. Hidden/hotspot/802.1X are not this op. Tests must not run `nmcli` / `netplan apply` / `iw`. |
+| `ssh_password` | yes | `sys_manage` | Allow or refuse SSH password logins. `needs_step_up()`. Observe via `sshd -T`. Writes `/etc/ssh/sshd_config.d/00-keystone.conf` (`PasswordAuthentication` only) then `sshd -t` and `systemctl reload` ssh. Not a user editor. Tests must not write the drop-in or reload ssh. |
 | `gitlab_backup` | yes | `sys_manage` | Omnibus `gitlab-backup create` (streamed). Missing binary is an error; tests must not run it. Docker GitLab is not this op. |
 | `gitlab_restore` | yes | `sys_manage` | Omnibus restore from a listed `*_gitlab_backup.tar` (streamed). `needs_step_up()`. POST arms a one-shot ticket; SSE will not start without it. Helper re-checks the live backups dir, then `gitlab-ctl stop` puma/sidekiq, `gitlab-backup restore BACKUP=… force=yes`, `gitlab-ctl restart`. Not a path textbox. Tests must not run it. |
 | `reboot` | yes | `sys_manage` | Hardcoded `systemctl reboot`. Not streamed. Tests must not invoke it. Poweroff is not an op. |
@@ -66,7 +70,7 @@ argv, never audited). Tests must not run live `apt-get`,
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
 token cannot call these routes. `SysOp::needs_step_up()` is `net_set`,
-`vlan_add`, `wifi_join`, `unit_restart`, and `gitlab_restore`. The same `consume_step_up` helper as Docker POSTs enforces
+`vlan_add`, `wifi_join`, `ssh_password`, `unit_restart`, and `gitlab_restore`. The same `consume_step_up` helper as Docker POSTs enforces
 form field `totp`. Failed step-up is still an audit row (`ok` false) and does
 not call the agent. Streaming restore must not start SSE until that code is
 accepted (in-memory ticket, 120s, one-shot).

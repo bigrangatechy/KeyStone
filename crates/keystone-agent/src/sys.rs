@@ -29,7 +29,7 @@ fn call_budget(op: SysOp) -> Duration {
         SysOp::Status => Duration::from_secs(3),
         SysOp::NetSet | SysOp::VlanAdd => Duration::from_secs(20),
         SysOp::WifiScan | SysOp::WifiJoin => Duration::from_secs(30),
-        SysOp::Reboot | SysOp::UnitRestart => Duration::from_secs(15),
+        SysOp::Reboot | SysOp::UnitRestart | SysOp::SshPassword => Duration::from_secs(15),
         SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
             Duration::from_secs(120)
         }
@@ -239,6 +239,7 @@ mod tests {
         );
         assert!(call_budget(SysOp::Reboot) >= Duration::from_secs(5));
         assert_eq!(call_budget(SysOp::UnitRestart), call_budget(SysOp::Reboot));
+        assert_eq!(call_budget(SysOp::SshPassword), call_budget(SysOp::Reboot));
         assert_eq!(
             call_budget(SysOp::GitlabRestore),
             call_budget(SysOp::GitlabBackup)

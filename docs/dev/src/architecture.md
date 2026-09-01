@@ -19,7 +19,7 @@ stream; the server never dials an agent and never opens a remote
        │  gRPC Session: PushFrame / Command / StreamChunk
        ▼
   keystone-server
-       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`); IPv4/IPv6 `net_set`, `vlan_add`, and `wifi_join` need a fresh authenticator
+       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`); IPv4/IPv6 `net_set`, `vlan_add`, `wifi_join`, and `ssh_password` need a fresh authenticator
        │     code when TOTP is on (backup codes stay sign-in only);
        │     idle two hours, heartbeat while a tab is open (Log out to end it)
        │     optional rustls on `http_listen` (`tls.rs`)
@@ -87,7 +87,7 @@ SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, Docker Hub login, System shutdown from the UI, hostname /
-timezone / users / SSH / firewall editors, Wi-Fi hotspot / 802.1X, Fedora /
+timezone / users / firewall / sshd_config editors, Wi-Fi hotspot / 802.1X, Fedora /
 Arch host updates, unattended-upgrades config editor, Watchtower,
 Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
 this slice; a unit-name textbox is not. Leftover/failed **unit restart** from
@@ -97,5 +97,8 @@ step-up, one-shot ticket before SSE). Ethernet **IPv6** (automatic or static)
 is in on the same `net_set` as IPv4 (step-up when TOTP is on). **VLAN create**
 (`vlan_add`, parent + id 1–4094, step-up) is in; QinQ and VLAN delete are not.
 **Wi-Fi join** from a scan list (`wifi_scan` / `wifi_join`, step-up, PSK not
-audited) is in; hidden SSID, hotspot, and 802.1X are not. Observing whether unattended-upgrades
+audited) is in; hidden SSID, hotspot, and 802.1X are not. **SSH password**
+(`ssh_password`, step-up) is a yes/no toggle (`sshd -T` observe, drop-in
+`PasswordAuthentication` then `systemctl reload` ssh); user / firewall /
+`PermitRootLogin` editors stay out. Observing whether unattended-upgrades
 is enabled and when it last ran is in; editing `20auto-upgrades` is not.

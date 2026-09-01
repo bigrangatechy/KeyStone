@@ -3,9 +3,9 @@
 
 //! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
 //! failed units, unit restart from those lists, reboot, journal follow,
-//! IPv4/IPv6, 802.1Q VLAN create, Wi-Fi join from a scan list, GitLab Omnibus
-//! backup/restore, and unattended-upgrades observe. No `sh -c`. Started by
-//! systemd socket.
+//! IPv4/IPv6, 802.1Q VLAN create, Wi-Fi join from a scan list, SSH password
+//! toggle, GitLab Omnibus backup/restore, and unattended-upgrades observe.
+//! No `sh -c`. Started by systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::fs::PermissionsExt;
@@ -21,11 +21,12 @@ use keystone_core::sys::{
     nmcli_vlan_add_args, nmcli_wifi_join_args, nmcli_wifi_list_args, nmcli_wifi_rescan_args,
     parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json, parse_iw_scan,
     parse_needrestart_batch, parse_nmcli_wifi_list, parse_ntp_sync, parse_restart_unit,
-    parse_restore_backup, parse_systemctl_failed, parse_unattended_periodic, ssid_listed,
-    unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp, VlanAdd, WifiIface, WifiJoin,
-    GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SYS_SOCKET_PATH,
-    UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
-    UPDATES_LIST_CAP,
+    parse_restore_backup, parse_sshd_t, parse_systemctl_failed, parse_unattended_periodic,
+    ssh_reload_args, sshd_keystone_dropin, sshd_t_args, sshd_test_args, ssid_listed,
+    unit_listed_for_restart, NeedrestartBatch, NetSet, SshPassword, SysOp, VlanAdd, WifiIface,
+    WifiJoin, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SSHD_BIN, SSHD_KEYSTONE_DROPIN,
+    SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP,
+    UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -154,6 +155,12 @@ async fn dispatch(
             wifi_join(&req).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
+        SysOp::SshPassword => {
+            let raw = payload.to_string();
+            let req = SshPassword::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            ssh_password(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
         SysOp::GitlabBackup => {
             gitlab_backup(writer).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
@@ -173,12 +180,13 @@ async fn dispatch(
 
 async fn status() -> anyhow::Result<Value> {
     let backend = detect_backend();
-    let (interfaces, leftovers, failed, ntp, unattended) = tokio::join!(
+    let (interfaces, leftovers, failed, ntp, unattended, ssh) = tokio::join!(
         ip_addrs(),
         leftover_services(),
         failed_units(),
         ntp_sync(),
-        unattended_status()
+        unattended_status(),
+        ssh_status()
     );
     Ok(json!({
         "helper": true,
@@ -188,6 +196,7 @@ async fn status() -> anyhow::Result<Value> {
         "interfaces": interfaces,
         "net": net_snapshot(backend, &interfaces),
         "ntp": ntp,
+        "ssh": ssh,
         "unattended": unattended,
         "gitlab": gitlab_status(),
         "restart_services": leftovers.services,
@@ -392,6 +401,27 @@ async fn ntp_sync() -> Value {
         _ => {}
     }
     json!({ "available": false, "synchronized": false })
+}
+
+async fn ssh_status() -> Value {
+    let args = sshd_t_args();
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new(SSHD_BIN)
+            .args(&args)
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await;
+    match output {
+        Ok(Ok(o)) if o.status.success() => {
+            if let Some(password_auth) = parse_sshd_t(&String::from_utf8_lossy(&o.stdout)) {
+                return json!({ "available": true, "password_auth": password_auth });
+            }
+        }
+        _ => {}
+    }
+    json!({ "available": false, "password_auth": false })
 }
 
 fn net_snapshot(backend: &str, interfaces: &Value) -> Value {
@@ -991,6 +1021,60 @@ async fn wifi_join(req: &WifiJoin) -> anyhow::Result<()> {
     anyhow::bail!("no NetworkManager or netplan to join Wi-Fi")
 }
 
+async fn ssh_password(req: &SshPassword) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("ssh password is not invoked in tests");
+    }
+    if let Some(dir) = Path::new(SSHD_KEYSTONE_DROPIN).parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .with_context(|| format!("mkdir {dir:?}"))?;
+    }
+    let body = sshd_keystone_dropin(req.password_auth);
+    tokio::fs::write(SSHD_KEYSTONE_DROPIN, body)
+        .await
+        .with_context(|| format!("write {SSHD_KEYSTONE_DROPIN}"))?;
+    let test_args = sshd_test_args();
+    let st = Command::new(SSHD_BIN)
+        .args(&test_args)
+        .status()
+        .await
+        .context("sshd -t")?;
+    if !st.success() {
+        anyhow::bail!("sshd -t failed");
+    }
+    let dump_args = sshd_t_args();
+    let output = timeout(
+        Duration::from_secs(2),
+        Command::new(SSHD_BIN)
+            .args(&dump_args)
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await
+    .context("sshd -T")?
+    .context("sshd -T")?;
+    if !output.status.success() {
+        anyhow::bail!("sshd -T failed");
+    }
+    let effective = parse_sshd_t(&String::from_utf8_lossy(&output.stdout));
+    if effective != Some(req.password_auth) {
+        anyhow::bail!("sshd is not using the KeyStone password-auth drop-in");
+    }
+    for unit in ["ssh.service", "sshd.service"] {
+        let args = ssh_reload_args(unit).map_err(|e| anyhow!("{e}"))?;
+        let st = Command::new("systemctl")
+            .args(&args)
+            .status()
+            .await
+            .with_context(|| format!("systemctl reload {unit}"))?;
+        if st.success() {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("systemctl reload ssh failed")
+}
+
 async fn reboot(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("reboot is not invoked in tests");
@@ -1186,6 +1270,22 @@ mod tests {
                 .and_then(|v| v.as_bool())
                 .is_some(),
             "status ntp.synchronized must be a bool, got {line}"
+        );
+        assert!(
+            payload
+                .get("ssh")
+                .and_then(|n| n.get("available"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status ssh.available must be a bool, got {line}"
+        );
+        assert!(
+            payload
+                .get("ssh")
+                .and_then(|n| n.get("password_auth"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status ssh.password_auth must be a bool, got {line}"
         );
         assert!(
             payload
@@ -2031,7 +2131,7 @@ mod tests {
             .split("async fn wifi_join")
             .nth(1)
             .expect("wifi_join")
-            .split("async fn reboot")
+            .split("async fn ssh_password")
             .next()
             .expect("wifi_join body");
         assert!(join.contains("nmcli_wifi_join_args"));
@@ -2040,6 +2140,94 @@ mod tests {
         assert!(!join.contains("sh -c") && !join.contains("bash -c"));
         assert!(!join.contains("iwconfig") && !join.contains("wpa_supplicant"));
         assert!(!join.contains("poweroff"));
+    }
+
+    #[test]
+    fn ssh_password_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let observe = src
+            .split("async fn ssh_status")
+            .nth(1)
+            .expect("ssh_status")
+            .split("fn net_snapshot")
+            .next()
+            .expect("ssh_status body");
+        assert!(observe.contains("sshd_t_args"));
+        assert!(observe.contains("parse_sshd_t"));
+        assert!(!observe.contains("reload"));
+        assert!(!observe.contains("SSHD_KEYSTONE_DROPIN"));
+        assert!(!observe.contains("sh -c") && !observe.contains("bash -c"));
+        let set = src
+            .split("async fn ssh_password")
+            .nth(1)
+            .expect("ssh_password")
+            .split("async fn reboot")
+            .next()
+            .expect("ssh_password body");
+        assert!(set.contains("sshd_keystone_dropin"));
+        assert!(set.contains("sshd_test_args"));
+        assert!(set.contains("ssh_reload_args"));
+        assert!(set.contains("cfg!(test)"));
+        assert!(!set.contains("PermitRootLogin"));
+        assert!(!set.contains("useradd"));
+        assert!(!set.contains("ufw"));
+        assert!(!set.contains("timedatectl"));
+        assert!(!set.contains("sh -c") && !set.contains("bash -c"));
+        assert!(!set.contains("poweroff"));
+    }
+
+    #[tokio::test]
+    async fn helper_ssh_password_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"ssh_password","payload":{"password_auth":false}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "ssh_password must not write sshd_config or reload in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_ssh_password_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"ssh_password","payload":{"password_auth":"yes;rm"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("unknown") || err.contains("invalid") || err.contains("op"),
+            "ssh_password must reject a non-bool payload, got {err}"
+        );
+        server.await.unwrap();
     }
 
     struct SockGuard(std::path::PathBuf);

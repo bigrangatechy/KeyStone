@@ -736,6 +736,7 @@ async fn handle_sys(
         | SysOp::VlanAdd
         | SysOp::WifiScan
         | SysOp::WifiJoin
+        | SysOp::SshPassword
         | SysOp::Reboot
         | SysOp::UnitRestart => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
@@ -929,6 +930,7 @@ mod tests {
             SysOp::VlanAdd,
             SysOp::WifiScan,
             SysOp::WifiJoin,
+            SysOp::SshPassword,
             SysOp::GitlabBackup,
             SysOp::GitlabRestore,
             SysOp::Reboot,

@@ -9,7 +9,7 @@ The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
 Pi OS** boxes. Health is on the left (leftover services, failed units,
 allowlisted journals, NTP, unattended-upgrades glance, addresses). Actions
 are on the right (apt, autoremove, confirmed reboot, IPv4/IPv6, VLAN,
-Wi-Fi, GitLab Omnibus
+Wi-Fi, SSH password, GitLab Omnibus
 backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
 agent on them for **Overview metrics** (and Docker Observe if they run
@@ -21,8 +21,8 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, leftover restart, GitLab backup, GitLab restore, and reboot** if
-   you want Apply, Autoremove, leftover Restart, VLAN, Wi-Fi, or Reboot. That Manage checkbox is behind a
+   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, and reboot** if
+   you want Apply, Autoremove, leftover Restart, VLAN, Wi-Fi, SSH password, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
@@ -46,7 +46,7 @@ It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
 `systemctl --failed`, `timedatectl`, `journalctl -u` for five named
 units, `systemctl reboot`, `systemctl restart` of a leftover or failed
 listed name, netplan or
-`nmcli`, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
+`nmcli`, `sshd -T` / a PasswordAuthentication drop-in and `systemctl reload` of `ssh`, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
 unit-name textbox.
 
 ## Updates
@@ -114,7 +114,7 @@ exists, otherwise NetworkManager.
 
 Changing the address can drop the agent session (and SSH). Keep a console.
 If you enabled an authenticator, Apply IPv4, leftover **Restart**, GitLab
-**Restore**, and **Add VLAN** also ask for a **current 6-digit code** (not a backup
+**Restore**, **Add VLAN**, **Join Wi-Fi**, and **SSH password** also ask for a **current 6-digit code** (not a backup
 code). IPv6 uses that same step-up. **Add VLAN** creates `eth0.10` from a listed
 Ethernet parent and id 1–4094 (not a name textbox). The helper re-checks that
 the parent is on the live address list and that the VLAN iface is not already
@@ -126,6 +126,12 @@ not in this version.
 The helper re-checks the live scan. Addressing on Wi-Fi is DHCP and SLAAC
 only this version. Hidden networks, hotspot/AP, and 802.1X are not in this
 UI. If 2FA is on, Join uses the same current 6-digit code.
+
+**SSH password** is a yes/no toggle: allow password logins or keys only (not a user editor).
+It writes `/etc/ssh/sshd_config.d/00-keystone.conf` (`PasswordAuthentication` only) and
+reloads `ssh`. Keep keys or a console — turning passwords off can lock you out.
+`PermitRootLogin`, users, firewall, and timezone stay out of this UI. If 2FA is on,
+SSH password uses the same current 6-digit code.
 
 ## GitLab backup and restore
 

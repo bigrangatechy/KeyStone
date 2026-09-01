@@ -937,6 +937,16 @@
       ));
       health.appendChild(ntpLine);
     }
+    const ssh = data.ssh || {};
+    if (ssh.available) {
+      const sshLine = document.createElement("p");
+      sshLine.appendChild(el(
+        "span",
+        ssh.password_auth ? "chip tone-warn" : "chip tone-ok",
+        ssh.password_auth ? "SSH password logins allowed" : "SSH keys only"
+      ));
+      health.appendChild(sshLine);
+    }
     const uiHost = host.getAttribute("data-ui-host") === "1";
     if (data.reboot_required) {
       wrap.appendChild(el("p", "error", data.kernel_pending
@@ -1563,6 +1573,71 @@
         join.textContent = "Join Wi-Fi";
         wform.appendChild(join);
         actions.appendChild(wform);
+      }
+      const sshHead = el("div", "compose-head");
+      sshHead.appendChild(el("h3", null, "SSH password"));
+      actions.appendChild(sshHead);
+      actions.appendChild(el("p", "muted", "Allow password logins or keys only (not a user editor). Writes /etc/ssh/sshd_config.d/00-keystone.conf then reloads ssh. Keep keys or a console — turning passwords off can lock you out."));
+      if (!(data.ssh && data.ssh.available)) {
+        actions.appendChild(el("p", "muted", "sshd is not available on this node."));
+      } else {
+        const sform = document.createElement("form");
+        sform.method = "post";
+        sform.action = "/nodes/" + encodeURIComponent(node) + "/sys/ssh_password";
+        sform.className = "sys-net";
+        sform.addEventListener("submit", (ev) => {
+          const sel = sform.querySelector('select[name="password_auth"]');
+          const want = (sel && sel.value) || "";
+          const msg = want === "no"
+            ? "Refuse SSH password logins on this host? You will need keys or a console. This can lock you out."
+            : "Allow SSH password logins on this host?";
+          if (!window.confirm(msg)) {
+            ev.preventDefault();
+            return;
+          }
+          if (totpOn) {
+            const field = sform.querySelector('input[name="totp"]');
+            const digits = ((field && field.value) || "").replace(/\D/g, "");
+            if (digits.length !== 6) {
+              ev.preventDefault();
+            }
+          }
+        });
+        const authSel = document.createElement("select");
+        authSel.name = "password_auth";
+        [["yes", "Allow password logins"], ["no", "Keys only"]].forEach((pair) => {
+          const o = document.createElement("option");
+          o.value = pair[0];
+          o.textContent = pair[1];
+          authSel.appendChild(o);
+        });
+        authSel.value = data.ssh.password_auth ? "yes" : "no";
+        function slabeled(name, input, span) {
+          const lab = document.createElement("label");
+          if (span) lab.className = span;
+          lab.appendChild(document.createTextNode(name));
+          lab.appendChild(input);
+          return lab;
+        }
+        sform.appendChild(slabeled("Password logins", authSel, "span-2"));
+        if (totpOn) {
+          const totp = document.createElement("input");
+          totp.name = "totp";
+          totp.inputMode = "numeric";
+          totp.autocomplete = "one-time-code";
+          totp.maxLength = 6;
+          totp.required = true;
+          totp.placeholder = "000000";
+          const totpLab = slabeled("Authenticator code", totp, "span-2");
+          totpLab.appendChild(el("span", "muted", "Current 6-digit code. Backup codes are for sign-in only."));
+          sform.appendChild(totpLab);
+        }
+        const applySsh = document.createElement("button");
+        applySsh.type = "submit";
+        applySsh.className = "danger span-2";
+        applySsh.textContent = "Apply SSH password";
+        sform.appendChild(applySsh);
+        actions.appendChild(sform);
       }
     }
     split.appendChild(health);

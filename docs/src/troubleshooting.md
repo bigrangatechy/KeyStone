@@ -153,7 +153,7 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, leftover restart, GitLab backup, GitLab restore, and reboot**
+- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, and reboot**
   on and save.
 - `apt-get` failed: read the apply or autoremove stream; the helper only runs
   `upgrade` or `autoremove`,
@@ -179,13 +179,16 @@ token does not.
 - IPv4 wants a code: authenticator 2FA is on. Type a current 6-digit
   authenticator code, not a backup code. “too many attempts” is the same
   eight-tries / 15-minute gate as login. IPv6, leftover Restart, GitLab
-  Restore, Add VLAN, and Join Wi-Fi use that same step-up.
+  Restore, Add VLAN, Join Wi-Fi, and SSH password use that same step-up.
 - Add VLAN refused: parent is not on the live address list (stale tab —
   reload), the VLAN iface already exists, or the id is not 1–4094. Not a
   name textbox.
 - Join Wi-Fi refused: SSID is not on the live scan (stale tab — Scan again),
   the wireless iface is gone, or the password is too short. Not an SSID
   textbox. Hidden networks and 802.1X are not in this UI.
+- SSH password refused: `sshd` is missing, the drop-in is not in effect
+  (`sshd -T` still shows the old PasswordAuthentication), or reload of
+  `ssh.service` failed. Not a user editor. Keep keys or a console.
 - Journal page 400: that unit is not on the allowlist (`keystone-agent`,
   `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`). There is no
   unit-name textbox.

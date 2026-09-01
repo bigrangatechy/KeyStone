@@ -3,9 +3,9 @@
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
 //! restart from those lists, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
-//! create, Wi-Fi join from a scan list, GitLab Omnibus backup/restore,
-//! unattended-upgrades observe). No I/O — the helper and agent run them.
-//! Keep `docs/dev/src/system.md` in sync.
+//! create, Wi-Fi join from a scan list, SSH password-auth toggle, GitLab
+//! Omnibus backup/restore, unattended-upgrades observe). No I/O — the helper
+//! and agent run them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -76,6 +76,7 @@ pub enum SysOp {
     VlanAdd,
     WifiScan,
     WifiJoin,
+    SshPassword,
     GitlabBackup,
     GitlabRestore,
     Reboot,
@@ -91,7 +92,7 @@ impl SysOp {
     pub fn description(self) -> &'static str {
         match self {
             Self::Status => {
-                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, helper)"
+                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, SSH password-auth, helper)"
             }
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
@@ -100,6 +101,7 @@ impl SysOp {
             Self::VlanAdd => "Create an 802.1Q VLAN on a listed Ethernet parent",
             Self::WifiScan => "List nearby Wi-Fi SSIDs on one wireless interface",
             Self::WifiJoin => "Join a listed Wi-Fi SSID on one wireless interface",
+            Self::SshPassword => "Allow or refuse SSH password logins on this host",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::GitlabRestore => {
                 "Restore GitLab Omnibus from a listed dump (gitlab-backup restore)"
@@ -120,6 +122,7 @@ impl SysOp {
                 | Self::NetSet
                 | Self::VlanAdd
                 | Self::WifiJoin
+                | Self::SshPassword
                 | Self::GitlabBackup
                 | Self::GitlabRestore
                 | Self::Reboot
@@ -149,11 +152,17 @@ impl SysOp {
     /// Fresh authenticator code when TOTP is on. Addressing can drop SSH and
     /// the agent; restarting leftover docker/ssh/keystone-server can too;
     /// GitLab restore replaces application data; joining Wi-Fi can drop the
-    /// session if that is how you reach the node.
+    /// session if that is how you reach the node; turning off SSH passwords
+    /// can lock you out of the box.
     pub fn needs_step_up(self) -> bool {
         matches!(
             self,
-            Self::NetSet | Self::VlanAdd | Self::WifiJoin | Self::UnitRestart | Self::GitlabRestore
+            Self::NetSet
+                | Self::VlanAdd
+                | Self::WifiJoin
+                | Self::SshPassword
+                | Self::UnitRestart
+                | Self::GitlabRestore
         )
     }
 }
@@ -371,6 +380,74 @@ impl WifiJoin {
         self.psk = validate_psk(&self.psk)?;
         Ok(self)
     }
+}
+
+/// Allow or refuse SSH password logins. Not a user / `sshd_config` editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshPassword {
+    pub password_auth: bool,
+}
+
+impl SshPassword {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
+        Ok(v)
+    }
+}
+
+/// Form select `yes` / `no` only. JSON uses a bool.
+pub fn parse_password_auth(raw: &str) -> Result<bool, SysError> {
+    match raw.trim() {
+        "yes" => Ok(true),
+        "no" => Ok(false),
+        _ => Err(SysError::Op),
+    }
+}
+
+/// Drop-in so KeyStone wins first-match over `50-cloud-init.conf`.
+pub const SSHD_KEYSTONE_DROPIN: &str = "/etc/ssh/sshd_config.d/00-keystone.conf";
+
+/// Packaged OpenSSH server. PATH may omit `/usr/sbin` for the helper.
+pub const SSHD_BIN: &str = "/usr/sbin/sshd";
+
+pub fn sshd_t_args() -> Vec<String> {
+    vec!["-T".into()]
+}
+
+pub fn sshd_test_args() -> Vec<String> {
+    vec!["-t".into()]
+}
+
+pub fn ssh_reload_args(unit: &str) -> Result<Vec<String>, SysError> {
+    match unit {
+        "ssh.service" | "sshd.service" => Ok(vec!["reload".into(), "--".into(), unit.into()]),
+        _ => Err(SysError::Unit),
+    }
+}
+
+/// `PasswordAuthentication` only. No `PermitRootLogin`, `Match`, or port.
+pub fn sshd_keystone_dropin(password_auth: bool) -> String {
+    let yesno = if password_auth { "yes" } else { "no" };
+    format!("# Managed by KeyStone. PasswordAuthentication only.\nPasswordAuthentication {yesno}\n")
+}
+
+/// `sshd -T` dumps lowercase keywords. Missing keyword is unavailable.
+pub fn parse_sshd_t(stdout: &str) -> Option<bool> {
+    for line in stdout.lines() {
+        let line = line.trim();
+        let Some(rest) = line
+            .strip_prefix("passwordauthentication ")
+            .or_else(|| line.strip_prefix("PasswordAuthentication "))
+        else {
+            continue;
+        };
+        return match rest.trim().to_ascii_lowercase().as_str() {
+            "yes" => Some(true),
+            "no" => Some(false),
+            _ => None,
+        };
+    }
+    None
 }
 
 /// Cap SSIDs returned by a scan (UI picker).
@@ -1271,9 +1348,11 @@ mod tests {
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::VlanAdd.mutating());
         assert!(SysOp::WifiJoin.mutating());
+        assert!(SysOp::SshPassword.mutating());
         assert!(!SysOp::WifiScan.mutating());
         assert_eq!(SysOp::WifiScan.permission(), Permission::SysView);
         assert_eq!(SysOp::WifiJoin.permission(), Permission::SysManage);
+        assert_eq!(SysOp::SshPassword.permission(), Permission::SysManage);
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::GitlabRestore.mutating());
         assert!(SysOp::Reboot.mutating());
@@ -1313,13 +1392,16 @@ mod tests {
         assert_eq!(SysOp::VlanAdd.as_str(), "vlan_add");
         assert_eq!(SysOp::WifiScan.as_str(), "wifi_scan");
         assert_eq!(SysOp::WifiJoin.as_str(), "wifi_join");
+        assert_eq!(SysOp::SshPassword.as_str(), "ssh_password");
         assert!(SysOp::VlanAdd.mutating());
         assert!(!SysOp::VlanAdd.streams());
         assert!(!SysOp::WifiScan.streams());
         assert!(!SysOp::WifiJoin.streams());
+        assert!(!SysOp::SshPassword.streams());
         assert!(SysOp::NetSet.needs_step_up());
         assert!(SysOp::VlanAdd.needs_step_up());
         assert!(SysOp::WifiJoin.needs_step_up());
+        assert!(SysOp::SshPassword.needs_step_up());
         assert!(!SysOp::WifiScan.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::GitlabRestore.needs_step_up());
@@ -1330,6 +1412,7 @@ mod tests {
                 SysOp::NetSet
                     | SysOp::VlanAdd
                     | SysOp::WifiJoin
+                    | SysOp::SshPassword
                     | SysOp::UnitRestart
                     | SysOp::GitlabRestore
             );
@@ -1350,6 +1433,7 @@ mod tests {
                 SysOp::NetSet => "/sys/net_set",
                 SysOp::VlanAdd => "/sys/vlan_add",
                 SysOp::WifiJoin => "/sys/wifi_join",
+                SysOp::SshPassword => "/sys/ssh_password",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
                 SysOp::GitlabRestore => "/sys/gitlab_restore",
                 SysOp::Reboot => "/sys/reboot",
@@ -1731,6 +1815,58 @@ mod tests {
     }
 
     #[test]
+    fn ssh_password_dropin_and_parse_not_a_config_editor() {
+        assert_eq!(parse_password_auth("yes"), Ok(true));
+        assert_eq!(parse_password_auth("no"), Ok(false));
+        assert_eq!(parse_password_auth("yes;rm"), Err(SysError::Op));
+        assert_eq!(parse_password_auth("true"), Err(SysError::Op));
+        assert_eq!(
+            SshPassword::parse_json(r#"{"password_auth":false}"#).unwrap(),
+            SshPassword {
+                password_auth: false
+            }
+        );
+        assert_eq!(
+            SshPassword::parse_json(r#"{"password_auth":"yes;rm"}"#),
+            Err(SysError::Op)
+        );
+        let allow = sshd_keystone_dropin(true);
+        let refuse = sshd_keystone_dropin(false);
+        assert!(allow.contains("PasswordAuthentication yes"));
+        assert!(refuse.contains("PasswordAuthentication no"));
+        for body in [&allow, &refuse] {
+            assert!(!body.contains("PermitRootLogin"));
+            assert!(!body.contains("Match"));
+            assert!(!body.contains("sh -c"));
+            assert!(!body.contains("Port "));
+            assert!(!body.contains("useradd"));
+        }
+        assert_eq!(
+            SSHD_KEYSTONE_DROPIN,
+            "/etc/ssh/sshd_config.d/00-keystone.conf"
+        );
+        assert_eq!(SSHD_BIN, "/usr/sbin/sshd");
+        assert_eq!(sshd_t_args(), vec!["-T"]);
+        assert_eq!(sshd_test_args(), vec!["-t"]);
+        let reload = ssh_reload_args("ssh.service").unwrap();
+        assert_eq!(reload, vec!["reload", "--", "ssh.service"]);
+        assert!(!reload.iter().any(|a| a.contains("sh -c")));
+        assert_eq!(
+            ssh_reload_args("sshd.service").unwrap(),
+            vec!["reload", "--", "sshd.service"]
+        );
+        assert_eq!(ssh_reload_args("cron.service"), Err(SysError::Unit));
+        assert_eq!(
+            parse_sshd_t("port 22\npasswordauthentication no\npermitrootlogin prohibit-password\n"),
+            Some(false)
+        );
+        assert_eq!(parse_sshd_t("passwordauthentication yes\n"), Some(true));
+        assert_eq!(parse_sshd_t("port 22\n"), None);
+        assert!(!SysOp::SshPassword.streams());
+        assert!(SysOp::SshPassword.needs_step_up());
+    }
+
+    #[test]
     fn parse_apt_inst_lines() {
         let pkgs = parse_apt_simulate(
             "NOTE: This is only a simulation!\nInst git [1:2.34.1-1] (1:2.34.1-2 Ubuntu:22.04 [amd64])\nConf git (1:2.34.1-2 Ubuntu:22.04 [amd64])\n",
@@ -1822,6 +1958,7 @@ mod tests {
         assert_eq!("vlan_add".parse::<SysOp>().unwrap(), SysOp::VlanAdd);
         assert_eq!("wifi_scan".parse::<SysOp>().unwrap(), SysOp::WifiScan);
         assert_eq!("wifi_join".parse::<SysOp>().unwrap(), SysOp::WifiJoin);
+        assert_eq!("ssh_password".parse::<SysOp>().unwrap(), SysOp::SshPassword);
         assert_eq!(
             "updates_autoremove".parse::<SysOp>().unwrap(),
             SysOp::UpdatesAutoremove
