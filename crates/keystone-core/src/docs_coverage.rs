@@ -704,3 +704,49 @@ fn operator_docs_cover_ssh_password() {
         "architecture.md must say SSH password is in and firewall stays out"
     );
 }
+
+#[test]
+fn operator_docs_cover_image_login() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        docker.contains("Log in")
+            && docker.contains("not kept in KeyStone")
+            && docker.contains("GHCR"),
+        "Docker chapter must document Hub/GHCR login on the node, not a server store"
+    );
+    assert!(
+        using.contains("GHCR") && using.contains("Hub"),
+        "using.md must mention Hub/GHCR login on Images"
+    );
+    assert!(
+        trouble.contains("Login refused") && trouble.contains("Harbor"),
+        "troubleshooting must cover a refused registry login"
+    );
+    assert!(
+        security.contains("GHCR") && security.contains("database"),
+        "security.md must say Hub/GHCR passwords are not in the server database"
+    );
+    assert!(
+        audit.contains("Hub/GHCR login") && audit.contains("password omitted"),
+        "Audit must list registry login and say the password is omitted"
+    );
+    assert!(
+        http.contains("`image_login`") && http.contains("`password`"),
+        "HTTP API must mention image_login"
+    );
+    assert!(
+        dev.contains("`image_login`") && dev.contains("docker login"),
+        "developer docker.md must say the agent runs docker login"
+    );
+    assert!(
+        arch.contains("image_login") && arch.contains("browse"),
+        "architecture.md must say login is in and GHCR browse stays out"
+    );
+}

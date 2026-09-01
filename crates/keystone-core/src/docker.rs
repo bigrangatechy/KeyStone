@@ -49,6 +49,7 @@ pub enum DockerOp {
     ImageList,
     ImageInspect,
     ImagePull,
+    ImageLogin,
     ImagePrune,
     ImageRemove,
     VolumeList,
@@ -103,6 +104,7 @@ impl DockerOp {
             Self::ImageList => "List images",
             Self::ImageInspect => "Inspect an image",
             Self::ImagePull => "Pull an image",
+            Self::ImageLogin => "Log in to Docker Hub or GHCR on this node",
             Self::ImagePrune => "Prune unused images",
             Self::ImageRemove => "Remove an image",
             Self::VolumeList => "List volumes",
@@ -138,6 +140,7 @@ impl DockerOp {
                 | Self::ComposePull
                 | Self::ComposeUpdate
                 | Self::ImagePull
+                | Self::ImageLogin
                 | Self::ImagePrune
                 | Self::ImageRemove
                 | Self::VolumeCreate
@@ -244,6 +247,216 @@ fn json_str(v: &serde_json::Value, names: &[&str]) -> Option<String> {
 
 fn json_bool(v: &serde_json::Value, names: &[&str]) -> Option<bool> {
     json_field(v, names).and_then(|x| x.as_bool())
+}
+
+/// Log in to Docker Hub or GHCR. Password is argv-stdin only and must not
+/// be audited. Credentials stay on the node (`docker login`), never in the
+/// server SQLite.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageLogin {
+    pub registry: String,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerLoginError {
+    Registry,
+    Username,
+    Password,
+}
+
+impl std::fmt::Display for DockerLoginError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Registry => write!(f, "registry must be docker.io or ghcr.io"),
+            Self::Username => write!(f, "username is invalid"),
+            Self::Password => write!(f, "password is invalid"),
+        }
+    }
+}
+
+impl ImageLogin {
+    pub fn parse_json(raw: &str) -> Result<Self, DockerLoginError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| DockerLoginError::Registry)?;
+        v.validate()
+    }
+
+    pub fn validate(mut self) -> Result<Self, DockerLoginError> {
+        self.registry = validate_login_registry(&self.registry)?;
+        self.username = validate_login_username(&self.username)?;
+        self.password = validate_login_password(&self.password)?;
+        Ok(self)
+    }
+}
+
+/// Listed registries only. Not a hostname textbox.
+pub fn validate_login_registry(raw: &str) -> Result<String, DockerLoginError> {
+    match raw.trim() {
+        "docker.io" => Ok("docker.io".into()),
+        "ghcr.io" => Ok("ghcr.io".into()),
+        _ => Err(DockerLoginError::Registry),
+    }
+}
+
+pub fn validate_login_username(raw: &str) -> Result<String, DockerLoginError> {
+    let t = raw.trim();
+    if t.is_empty() || t.len() > 64 {
+        return Err(DockerLoginError::Username);
+    }
+    if !t
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
+    {
+        return Err(DockerLoginError::Username);
+    }
+    Ok(t.to_string())
+}
+
+pub fn validate_login_password(raw: &str) -> Result<String, DockerLoginError> {
+    let t = raw.trim();
+    if t.is_empty() || t.len() > 512 || t.contains('\0') || t.contains('\n') || t.contains('\r') {
+        return Err(DockerLoginError::Password);
+    }
+    Ok(t.to_string())
+}
+
+/// `docker login --username … --password-stdin <registry>`. Password is stdin.
+pub fn docker_login_args(req: &ImageLogin) -> Result<Vec<String>, DockerLoginError> {
+    let req = req.clone().validate()?;
+    Ok(vec![
+        "login".into(),
+        "--username".into(),
+        req.username,
+        "--password-stdin".into(),
+        req.registry,
+    ])
+}
+
+/// Drop `password` from a Docker mutation payload before Audit.
+pub fn audit_docker_target(op: DockerOp, payload: &str) -> String {
+    if op != DockerOp::ImageLogin {
+        return payload.to_string();
+    }
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return "{\"password\":\"\"}".into();
+    };
+    if let Some(obj) = v.as_object_mut() {
+        if obj.contains_key("password") {
+            obj.insert("password".into(), serde_json::json!(""));
+        }
+    }
+    v.to_string()
+}
+
+/// Hub vs GHCR (and other hosts) for a pull name. `nginx:1.27` is Hub.
+pub fn registry_host_for_image(name: &str) -> String {
+    let name = name.trim().split('@').next().unwrap_or(name).trim();
+    let first = name.split('/').next().unwrap_or("");
+    if first_component_is_registry(first) {
+        let host = first
+            .rsplit_once(':')
+            .and_then(|(h, p)| p.chars().all(|c| c.is_ascii_digit()).then_some(h))
+            .unwrap_or(first)
+            .to_ascii_lowercase();
+        if host == "docker.io" || host == "index.docker.io" || host == "registry-1.docker.io" {
+            return "docker.io".into();
+        }
+        if host == "ghcr.io" {
+            return "ghcr.io".into();
+        }
+        return host;
+    }
+    "docker.io".into()
+}
+
+fn first_component_is_registry(first: &str) -> bool {
+    if first == "localhost" {
+        return true;
+    }
+    if let Some((host, port)) = first.rsplit_once(':') {
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
+            return host == "localhost" || host.contains('.');
+        }
+        return false;
+    }
+    first.contains('.')
+}
+
+/// Decode `auths.<registry>.auth` (`base64(user:pass)`) from a Docker config.json.
+pub fn docker_config_auth(config_json: &str, registry: &str) -> Option<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(config_json).ok()?;
+    let auths = v.get("auths")?.as_object()?;
+    let keys: &[&str] = match registry {
+        "docker.io" => &[
+            "https://index.docker.io/v1/",
+            "docker.io",
+            "https://registry-1.docker.io/v2/",
+            "https://index.docker.io/v1",
+        ],
+        "ghcr.io" => &["ghcr.io", "https://ghcr.io", "https://ghcr.io/v2/"],
+        other => return lookup_auth(auths, other),
+    };
+    for k in keys {
+        if let Some(pair) = lookup_auth(auths, k) {
+            return Some(pair);
+        }
+    }
+    None
+}
+
+fn lookup_auth(
+    auths: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<(String, String)> {
+    let entry = auths.get(key)?;
+    let b64 = entry.get("auth")?.as_str()?;
+    let raw = decode_std_base64(b64)?;
+    let text = String::from_utf8(raw).ok()?;
+    let (user, pass) = text.split_once(':')?;
+    if user.is_empty() || pass.is_empty() {
+        return None;
+    }
+    Some((user.to_string(), pass.to_string()))
+}
+
+fn decode_std_base64(input: &str) -> Option<Vec<u8>> {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut table = [255u8; 256];
+    for (i, &c) in T.iter().enumerate() {
+        table[c as usize] = i as u8;
+    }
+    let bytes: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    if bytes.is_empty() || bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let mut n = 0u32;
+        let mut pads = 0;
+        for (i, &c) in chunk.iter().enumerate() {
+            if c == b'=' {
+                pads += 1;
+                continue;
+            }
+            if pads > 0 {
+                return None;
+            }
+            let v = table[c as usize];
+            if v == 255 {
+                return None;
+            }
+            n |= u32::from(v) << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if pads < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pads < 1 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
 }
 
 /// Hex / name token the UI may put in a container inspect URL.
@@ -428,6 +641,81 @@ mod tests {
     }
 
     #[test]
+    fn image_login_is_listed_registry_and_redacts_password() {
+        assert_eq!(validate_login_registry("docker.io"), Ok("docker.io".into()));
+        assert_eq!(validate_login_registry("ghcr.io"), Ok("ghcr.io".into()));
+        assert_eq!(
+            validate_login_registry("ghcr.io;rm"),
+            Err(DockerLoginError::Registry)
+        );
+        assert_eq!(
+            validate_login_registry("harbor.example"),
+            Err(DockerLoginError::Registry)
+        );
+        assert_eq!(validate_login_username("alice"), Ok("alice".into()));
+        assert_eq!(
+            validate_login_username("alice;rm"),
+            Err(DockerLoginError::Username)
+        );
+        assert_eq!(
+            validate_login_password("ghp_notarealtoken"),
+            Ok("ghp_notarealtoken".into())
+        );
+        assert_eq!(
+            validate_login_password("has\nnewline"),
+            Err(DockerLoginError::Password)
+        );
+        let req = ImageLogin {
+            registry: " ghcr.io ".into(),
+            username: " alice ".into(),
+            password: "ghp_notarealtoken".into(),
+        }
+        .validate()
+        .unwrap();
+        let args = docker_login_args(&req).unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "login",
+                "--username",
+                "alice",
+                "--password-stdin",
+                "ghcr.io"
+            ]
+        );
+        assert!(!args.iter().any(|a| a.contains("ghp_")));
+        assert!(!args.iter().any(|a| a.contains("sh -c")));
+        let raw = r#"{"registry":"ghcr.io","username":"alice","password":"ghp_notarealtoken"}"#;
+        let redacted = audit_docker_target(DockerOp::ImageLogin, raw);
+        assert!(redacted.contains("alice"));
+        assert!(redacted.contains("ghcr.io"));
+        assert!(!redacted.contains("ghp_notarealtoken"));
+        assert_eq!(
+            audit_docker_target(DockerOp::ImagePull, r#"{"name":"nginx"}"#),
+            r#"{"name":"nginx"}"#
+        );
+        assert_eq!(registry_host_for_image("nginx:1.27"), "docker.io");
+        assert_eq!(registry_host_for_image("library/nginx"), "docker.io");
+        assert_eq!(registry_host_for_image("ghcr.io/org/app:main"), "ghcr.io");
+        assert_eq!(registry_host_for_image("localhost:5000/app:1"), "localhost");
+        assert_eq!(
+            docker_config_auth(
+                r#"{"auths":{"ghcr.io":{"auth":"YWxpY2U6Z2hwX25vdGFyZWFsdG9rZW4="}}}"#,
+                "ghcr.io"
+            ),
+            Some(("alice".into(), "ghp_notarealtoken".into()))
+        );
+        assert_eq!(
+            docker_config_auth(
+                r#"{"auths":{"https://index.docker.io/v1/":{"auth":"YWxpY2U6c2VjcmV0"}}}"#,
+                "docker.io"
+            ),
+            Some(("alice".into(), "secret".into()))
+        );
+        assert!(docker_config_auth("{}", "ghcr.io").is_none());
+    }
+
+    #[test]
     fn summarize_container_inspect_drops_env_and_keeps_mounts() {
         assert!(docker_ref_ok("abc123def456"));
         assert!(docker_ref_ok("gitlab"));
@@ -523,6 +811,11 @@ mod tests {
         assert!(!DockerOp::ComposePs.mutating());
         assert_eq!(DockerOp::ComposeStop.as_str(), "compose_stop");
         assert_eq!(DockerOp::ContainerPause.as_str(), "container_pause");
+        assert_eq!(DockerOp::ImageLogin.as_str(), "image_login");
+        assert!(DockerOp::ImageLogin.mutating());
+        assert!(!DockerOp::ImageLogin.streams());
+        assert_eq!(DockerOp::ImageLogin.permission(), Permission::DockerManage);
+        assert!(!DockerOp::ImageLogin.needs_step_up());
     }
 
     #[test]

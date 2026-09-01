@@ -98,13 +98,15 @@ the KeyStone server; the server queries Hub’s public HTTP API (not
 `docker.sock`, and not your ingest token). Results are **cards** (official
 badge, stars, short description). Open a card for tags with last updated
 and architectures (`amd64`, `arm64`, …). A tag **fills** the pull field —
-you still press Pull (`image_pull` on the agent). This is not an app store
-and does not log into Hub.
+you still press Pull (`image_pull` on the agent). This is not an app store.
 
 Unauthenticated Hub search is rate-limited per the **server’s** IP. If
-search fails, type the name yourself. GHCR and private registries are
-not browsed here; you can still pull them by typing the name if that
-node can reach the registry.
+search fails, type the name yourself.
+
+**Log in** on the Images tab stores Docker Hub or GHCR credentials on **that
+node** (`docker login` as the agent user). The password is not kept in KeyStone’s database and is not written to Audit. GHCR is not browsed here;
+after login you pull `ghcr.io/…` by name. Harbor and other registries are
+not this form.
 
 ## If the tabs are empty or error
 

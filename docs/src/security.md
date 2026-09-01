@@ -13,10 +13,12 @@ the lab view and can send Docker commands to connected agents that allow
 them. The same session can apply apt upgrades, autoremove unused packages, reboot, change IPv4/IPv6, add a VLAN, join Wi-Fi, and toggle SSH password logins when System
 Manage and the opt-in root helper are on.
 - Each **agent** runs as a system user. With Docker Observe enabled it can
-  use the engine socket — that is root-equivalent on **that** host.
+  use the engine socket — that is root-equivalent on **that** host. Docker
+  Manage can **Log in** to Docker Hub or GHCR on that node; the password is
+  not stored in the KeyStone database.
 - The **ingest token** proves an agent is allowed to push. It does **not**
   grant UI login and cannot start, stop, or exec containers, apply apt
-  upgrades, autoremove packages, reboot a node, change IPv4/IPv6, add a VLAN, join Wi-Fi, or toggle SSH password logins.
+  upgrades, autoremove packages, reboot a node, change IPv4/IPv6, add a VLAN, join Wi-Fi, toggle SSH password logins, or log into Hub/GHCR.
 
 ## UI account
 

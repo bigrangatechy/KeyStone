@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
+use bollard::auth::DockerCredentials;
 use bollard::container::{
     InspectContainerOptions, KillContainerOptions, ListContainersOptions, LogsOptions,
     PruneContainersOptions, RemoveContainerOptions, StatsOptions,
@@ -20,9 +21,12 @@ use bollard::Docker;
 use futures_util::future::join_all;
 use futures_util::StreamExt;
 use keystone_core::config::DockerConfig;
-use keystone_core::docker::DockerOp;
+use keystone_core::docker::{
+    docker_config_auth, docker_login_args, registry_host_for_image, DockerOp, ImageLogin,
+};
 use keystone_core::sample::Sample;
 use serde_json::{json, Value};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::warn;
 
@@ -225,19 +229,21 @@ impl DockerHandle {
             }
             DockerOp::ImagePull => {
                 let name = str_field(&payload, "name")?;
+                let creds = docker_credentials_for_image(name);
                 let mut stream = self.docker.create_image(
                     Some(bollard::image::CreateImageOptions {
                         from_image: name,
                         ..Default::default()
                     }),
                     None,
-                    None,
+                    creds,
                 );
                 while let Some(item) = stream.next().await {
                     item?;
                 }
                 Ok(json!({"ok": true}))
             }
+            DockerOp::ImageLogin => self.image_login(&payload).await,
             DockerOp::ImagePrune => {
                 let report = self
                     .docker
@@ -577,19 +583,46 @@ impl DockerHandle {
             anyhow::bail!("no images to pull for this Compose project");
         }
         for name in &unique {
+            let creds = docker_credentials_for_image(name);
             let mut stream = self.docker.create_image(
                 Some(bollard::image::CreateImageOptions {
                     from_image: name.as_str(),
                     ..Default::default()
                 }),
                 None,
-                None,
+                creds,
             );
             while let Some(item) = stream.next().await {
                 item.with_context(|| format!("pull {name}"))?;
             }
         }
         Ok(json!({"ok": true, "pulled": unique}))
+    }
+
+    async fn image_login(&self, payload: &Value) -> anyhow::Result<Value> {
+        if cfg!(test) {
+            anyhow::bail!("image login is not invoked in tests");
+        }
+        let req = ImageLogin::parse_json(&payload.to_string()).map_err(|e| anyhow!("{e}"))?;
+        let args = docker_login_args(&req).map_err(|e| anyhow!("{e}"))?;
+        let mut child = Command::new("docker")
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("docker login")?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(req.password.as_bytes()).await?;
+            stdin.write_all(b"\n").await?;
+        }
+        let output = child.wait_with_output().await.context("docker login")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            anyhow::bail!("docker login failed: {stderr}{stdout}");
+        }
+        Ok(json!({"ok": true, "registry": req.registry}))
     }
 
     pub async fn execute_streaming(
@@ -960,6 +993,30 @@ fn format_summary_ports(ports: &[bollard::models::Port]) -> String {
         .join(", ")
 }
 
+fn docker_config_json_path() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("DOCKER_CONFIG") {
+        return std::path::PathBuf::from(dir).join("config.json");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/var/lib/keystone".into());
+    std::path::PathBuf::from(home).join(".docker/config.json")
+}
+
+fn docker_credentials_for_image(name: &str) -> Option<DockerCredentials> {
+    let host = registry_host_for_image(name);
+    let raw = std::fs::read_to_string(docker_config_json_path()).ok()?;
+    let (username, password) = docker_config_auth(&raw, &host)?;
+    let serveraddress = match host.as_str() {
+        "docker.io" => Some("https://index.docker.io/v1/".into()),
+        other => Some(other.to_string()),
+    };
+    Some(DockerCredentials {
+        username: Some(username),
+        password: Some(password),
+        serveraddress,
+        ..Default::default()
+    })
+}
+
 fn str_field<'a>(payload: &'a Value, key: &str) -> anyhow::Result<&'a str> {
     payload
         .get(key)
@@ -1103,6 +1160,34 @@ mod tests {
         assert!(!DockerOp::ContainerList.streams());
         assert!(!DockerOp::ComposeUp.streams());
         assert!(!DockerOp::ComposeUpdate.streams());
+    }
+
+    #[test]
+    fn image_login_is_argv_not_shell() {
+        let src = include_str!("docker.rs");
+        let body = src
+            .split("async fn image_login")
+            .nth(1)
+            .expect("image_login")
+            .split("pub async fn execute_streaming")
+            .next()
+            .expect("image_login body");
+        assert!(body.contains("docker_login_args"));
+        assert!(body.contains("stdin(Stdio::piped())") || body.contains("Stdio::piped()"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("hub.docker.com"));
+        let pull = src
+            .split("DockerOp::ImagePull => {")
+            .nth(1)
+            .expect("ImagePull")
+            .split("DockerOp::ImageLogin")
+            .next()
+            .expect("ImagePull body");
+        assert!(
+            pull.contains("docker_credentials_for_image"),
+            "Pull must send stored registry creds, not only public Hub"
+        );
     }
 
     #[test]

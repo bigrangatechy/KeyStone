@@ -126,6 +126,7 @@ List payloads the UI expects:
 | `image_list` | no | `docker_view` | List images |
 | `image_inspect` | no | `docker_view` | Inspect an image |
 | `image_pull` | yes | `docker_manage` | Pull an image |
+| `image_login` | yes | `docker_manage` | `docker login` on the **agent** for Docker Hub or GHCR (listed select). Password is stdin, stripped from Audit, never stored in the server SQLite. Tests must not invoke it. Harbor and GHCR browse are not this op. |
 | `image_prune` | yes | `docker_manage` | Prune unused images |
 | `image_remove` | yes | `docker_manage` | Remove an image |
 | `volume_list` | no | `docker_view` | List volumes |
@@ -157,3 +158,10 @@ The Images tab paints glance **cards** (official, stars, description) then
 tag/arch/updated; a tag fills the existing `image_pull` form. This is not a
 CasaOS-style app shop. The server does not pull images and does not open
 `docker.sock`. Tests use Hub JSON fixtures; they must not hit the network.
+
+`image_login` is a `DockerOp`. Cookie POST `/nodes/{id}/docker/image_login`
+with listed `registry` (`docker.io` / `ghcr.io`), `username`, and `password`.
+The agent runs `docker login --password-stdin`. Subsequent `image_pull` (and
+Compose image pulls over the Engine API) send those creds from the node's
+`~/.docker/config.json`. The server does not keep the password. Tests must
+not run `docker login`.

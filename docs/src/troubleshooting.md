@@ -142,8 +142,11 @@ token does not.
 - Logs page stays empty: the agent must be **control connected**. Leave the
   page to cancel follow. Exec is not in the UI yet.
 - Docker Hub search empty or an error: type `nginx:1.27` in Pull yourself.
-  Hub rate-limits the **server** IP (not each browser). GHCR and private
-  registries are not searched; paste the full name if the node can pull it.
+  Hub rate-limits the **server** IP (not each browser). GHCR is not searched;
+  Log in on Images for Hub or GHCR on that node, then paste the full name.
+  Login refused: username/token rejected by the registry, or the registry is
+  not Docker Hub / GHCR (Harbor is not this form). The password is not stored
+  on the KeyStone server.
 
 ## System tab errors
 

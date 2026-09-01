@@ -86,7 +86,7 @@ send `set_runtime`.
 SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
-browse, Docker Hub login, System shutdown from the UI, hostname /
+browse, System shutdown from the UI, hostname /
 timezone / users / firewall / sshd_config editors, Wi-Fi hotspot / 802.1X, Fedora /
 Arch host updates, unattended-upgrades config editor, Watchtower,
 Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
@@ -102,3 +102,6 @@ audited) is in; hidden SSID, hotspot, and 802.1X are not. **SSH password**
 `PasswordAuthentication` then `systemctl reload` ssh); user / firewall /
 `PermitRootLogin` editors stay out. Observing whether unattended-upgrades
 is enabled and when it last ran is in; editing `20auto-upgrades` is not.
+**Hub/GHCR login** (`image_login`) stores credentials on the **agent** with
+`docker login` (password not audited, not in the server DB). Public GHCR
+browse and Harbor remain out.

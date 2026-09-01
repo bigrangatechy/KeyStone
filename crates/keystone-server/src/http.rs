@@ -17,7 +17,9 @@ use axum::Json;
 use axum::Router;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
-use keystone_core::docker::{docker_ref_ok, summarize_container_inspect, DockerOp};
+use keystone_core::docker::{
+    audit_docker_target, docker_ref_ok, summarize_container_inspect, DockerOp,
+};
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
 use keystone_core::sys::{
@@ -2072,6 +2074,9 @@ struct DockerForm {
     name: Option<String>,
     id: Option<String>,
     project: Option<String>,
+    registry: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2104,6 +2109,21 @@ fn docker_form_payload(form: &DockerForm) -> String {
             map.insert("project".into(), serde_json::json!(p.trim()));
         }
     }
+    if let Some(r) = &form.registry {
+        if !r.trim().is_empty() {
+            map.insert("registry".into(), serde_json::json!(r.trim()));
+        }
+    }
+    if let Some(u) = &form.username {
+        if !u.trim().is_empty() {
+            map.insert("username".into(), serde_json::json!(u.trim()));
+        }
+    }
+    if let Some(p) = &form.password {
+        if !p.is_empty() {
+            map.insert("password".into(), serde_json::json!(p));
+        }
+    }
     serde_json::Value::Object(map).to_string()
 }
 
@@ -2112,6 +2132,7 @@ fn panel_for_op(op: DockerOp) -> &'static str {
         DockerOp::ImageList
         | DockerOp::ImageInspect
         | DockerOp::ImagePull
+        | DockerOp::ImageLogin
         | DockerOp::ImagePrune
         | DockerOp::ImageRemove => "images",
         DockerOp::VolumeList
@@ -2168,7 +2189,7 @@ async fn docker_action(
             .into_response();
     }
     let payload = docker_form_payload(&form);
-    let target = payload.clone();
+    let target = audit_docker_target(parsed, &payload);
     if let Err(err) = consume_step_up(&state, &username, parsed.needs_step_up(), &form.totp) {
         return step_up_denied(
             &state,
@@ -3020,6 +3041,9 @@ mod tests {
             name: None,
             id: None,
             project: None,
+            registry: None,
+            username: None,
+            password: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -3033,6 +3057,9 @@ mod tests {
             name: Some(" data ".into()),
             id: None,
             project: None,
+            registry: None,
+            username: None,
+            password: None,
             totp: String::new(),
             redirect: String::new(),
         };
@@ -3042,10 +3069,31 @@ mod tests {
             name: None,
             id: Some("abc123".into()),
             project: None,
+            registry: None,
+            username: None,
+            password: None,
             totp: String::new(),
             redirect: String::new(),
         };
         assert_eq!(docker_form_payload(&id), r#"{"id":"abc123"}"#);
+        let login = DockerForm {
+            payload: None,
+            name: None,
+            id: None,
+            project: None,
+            registry: Some(" ghcr.io ".into()),
+            username: Some(" alice ".into()),
+            password: Some("ghp_notarealtoken".into()),
+            totp: String::new(),
+            redirect: String::new(),
+        };
+        let p = docker_form_payload(&login);
+        assert!(p.contains("\"registry\":\"ghcr.io\""));
+        assert!(p.contains("alice"));
+        assert!(p.contains("ghp_notarealtoken"));
+        let redacted = keystone_core::docker::audit_docker_target(DockerOp::ImageLogin, &p);
+        assert!(!redacted.contains("ghp_notarealtoken"));
+        assert!(redacted.contains("alice"));
     }
 
     #[test]
@@ -3107,6 +3155,10 @@ mod tests {
         assert!(
             docker.contains(".audit("),
             "Docker mutations must write the audit table"
+        );
+        assert!(
+            docker.contains("audit_docker_target"),
+            "registry login password must not be the audit target"
         );
         assert!(
             docker.contains("parsed.mutating()"),
@@ -3703,6 +3755,17 @@ mod tests {
         assert!(
             html.contains("hub-query") && html.contains("image-pull-name"),
             "Images toolbar must keep Search next to Pull"
+        );
+        assert!(
+            html.contains("docker/image_login")
+                && html.contains("ghcr.io")
+                && html.contains("docker.io")
+                && html.contains("not in KeyStone's database"),
+            "Images toolbar must offer Hub/GHCR login on the node, not a server-side store"
+        );
+        assert!(
+            !html.contains("hub.docker.com/v2") && !js.contains("ghcr.io/v2"),
+            "login is not GHCR or Hub browse"
         );
         assert!(
             js.contains("hub-card") && js.contains("hub-detail") && js.contains("hub-tag"),

@@ -69,6 +69,15 @@
       <input id="image-pull-name" name="name" placeholder="nginx:1.27" size="32" required>
       <button type="submit">Pull</button>
     </form>
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_login" data-confirm="Store this registry login on this node (not in KeyStone's database)? The password is not written to Audit.">
+      <select name="registry" required>
+        <option value="docker.io">Docker Hub</option>
+        <option value="ghcr.io">GHCR</option>
+      </select>
+      <input name="username" placeholder="username" size="14" required autocomplete="off" spellcheck="false">
+      <input name="password" type="password" placeholder="password or token" size="18" required autocomplete="off">
+      <button type="submit">Log in</button>
+    </form>
     <input id="hub-query" type="search" placeholder="Search Docker Hub" size="24" autocomplete="off" spellcheck="false">
     <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_prune" data-confirm="Prune unused images on this node?">
       <button type="submit" class="danger">Prune unused</button>
