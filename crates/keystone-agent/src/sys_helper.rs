@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
-//! failed units, reboot, journal follow, IPv4, GitLab Omnibus backup, and
-//! unattended-upgrades observe. No `sh -c`. Started by systemd socket.
+//! failed units, unit restart from those lists, reboot, journal follow, IPv4,
+//! GitLab Omnibus backup, and unattended-upgrades observe. No `sh -c`.
+//! Started by systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -14,10 +15,10 @@ use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     gitlab_backup_name_ok, journal_unit, merge_upgradable, netplan_yaml, newest_gitlab_backup,
     nmcli_modify_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
-    parse_needrestart_batch, parse_ntp_sync, parse_systemctl_failed, parse_unattended_periodic,
-    NeedrestartBatch, NetSet, SysOp, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, SYS_SOCKET_PATH,
-    UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
-    UPDATES_LIST_CAP,
+    parse_needrestart_batch, parse_ntp_sync, parse_restart_unit, parse_systemctl_failed,
+    parse_unattended_periodic, unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp,
+    GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES,
+    UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -134,6 +135,10 @@ async fn dispatch(
         }
         SysOp::Reboot => reboot(writer).await,
         SysOp::Journal => journal_follow(&payload, writer).await,
+        SysOp::UnitRestart => {
+            unit_restart(&payload).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
     }
 }
 
@@ -683,6 +688,26 @@ async fn reboot(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result
     Ok(())
 }
 
+async fn unit_restart(payload: &Value) -> anyhow::Result<()> {
+    let unit = parse_restart_unit(&payload.to_string()).map_err(|e| anyhow!("{e}"))?;
+    if cfg!(test) {
+        anyhow::bail!("unit restart is not invoked in tests");
+    }
+    let (leftovers, failed) = tokio::join!(leftover_services(), failed_units());
+    if !unit_listed_for_restart(&unit, &leftovers.services, &failed) {
+        anyhow::bail!("unit is not leftover or failed");
+    }
+    let st = Command::new("systemctl")
+        .args(["restart", "--", &unit])
+        .status()
+        .await
+        .context("systemctl restart")?;
+    if !st.success() {
+        anyhow::bail!("systemctl restart failed");
+    }
+    Ok(())
+}
+
 async fn journal_follow(
     payload: &Value,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -1086,7 +1111,7 @@ mod tests {
             .split("async fn reboot")
             .nth(1)
             .expect("reboot")
-            .split("async fn journal_follow")
+            .split("async fn unit_restart")
             .next()
             .expect("reboot body");
         assert!(body.contains("systemctl"));
@@ -1099,6 +1124,84 @@ mod tests {
             !body.contains(".arg(") || body.contains(".arg(\"reboot\")"),
             "reboot argv must be hardcoded systemctl reboot"
         );
+    }
+
+    #[test]
+    fn unit_restart_is_systemctl_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn unit_restart")
+            .nth(1)
+            .expect("unit_restart")
+            .split("async fn journal_follow")
+            .next()
+            .expect("unit_restart body");
+        assert!(body.contains("systemctl"));
+        assert!(body.contains("\"restart\""));
+        assert!(body.contains("unit_listed_for_restart"));
+        assert!(body.contains("parse_restart_unit"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(body.contains("leftover_services") && body.contains("failed_units"));
+        assert!(!body.contains("poweroff"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_unit_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"unit_restart","payload":{"unit":"docker.service;rm"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("unit") || err.contains("invalid"),
+            "shell unit must fail validation, got {err}"
+        );
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before spawn: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_unit_restart_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"unit_restart","payload":{"unit":"docker.service"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "unit restart must not spawn systemctl in CI, got {err}"
+        );
+        server.await.unwrap();
     }
 
     #[test]

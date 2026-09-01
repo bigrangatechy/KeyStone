@@ -423,11 +423,59 @@ fn operator_docs_cover_ipv4_step_up() {
         "HTTP API must document the totp form field on net_set"
     );
     assert!(
-        dev.contains("needs_step_up()") && dev.contains("`net_set`"),
-        "developer system.md must say only net_set needs step-up"
+        dev.contains("needs_step_up()")
+            && dev.contains("`net_set`")
+            && dev.contains("`unit_restart`"),
+        "developer system.md must say net_set and unit_restart need step-up"
     );
     assert!(
         docker.contains("needs_step_up()") && docker.contains("confirm"),
         "developer docker.md must say no Docker op needs step-up yet"
+    );
+}
+
+#[test]
+fn operator_docs_cover_leftover_unit_restart() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("Restart")
+            && system.contains("systemctl restart")
+            && system.contains("unit-name textbox"),
+        "System chapter must document listed-name restart, not a textbox"
+    );
+    assert!(
+        using.contains("leftover restart") && using.contains("current authenticator code"),
+        "using.md must mention leftover restart and step-up"
+    );
+    assert!(
+        trouble.contains("Restart refused") && trouble.contains("live leftover"),
+        "troubleshooting must cover a stale leftover restart"
+    );
+    assert!(
+        security.contains("Restart") && security.contains("leftover"),
+        "security.md must treat leftover restart like IPv4 for step-up"
+    );
+    assert!(
+        audit.contains("leftover/failed unit restart"),
+        "Audit must list unit restart as a mutation"
+    );
+    assert!(
+        http.contains("`unit_restart`") && http.contains("unit"),
+        "HTTP API must mention unit_restart"
+    );
+    assert!(
+        dev.contains("`unit_restart`") && dev.contains("live leftover"),
+        "developer system.md must say the helper re-checks leftover/failed lists"
+    );
+    assert!(
+        arch.contains("unit restart") && arch.contains("unit-name textbox"),
+        "architecture.md must say listed restart is in and a textbox is not"
     );
 }

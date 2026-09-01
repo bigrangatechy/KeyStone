@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 The KeyStone Authors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Host system-admin ops (apt, leftover services, failed units, reboot,
-//! journal follow, IPv4, GitLab Omnibus backup, unattended-upgrades
-//! observe). No I/O — the helper and agent run them. Keep
-//! `docs/dev/src/system.md` in sync.
+//! Host system-admin ops (apt, leftover services, failed units, unit
+//! restart from those lists, reboot, journal follow, IPv4, GitLab Omnibus
+//! backup, unattended-upgrades observe). No I/O — the helper and agent run
+//! them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::Ipv4Addr;
 
@@ -69,6 +69,7 @@ pub enum SysOp {
     GitlabBackup,
     Reboot,
     Journal,
+    UnitRestart,
 }
 
 impl SysOp {
@@ -88,6 +89,9 @@ impl SysOp {
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::Reboot => "Reboot the node (systemctl reboot)",
             Self::Journal => "Follow journalctl for one allowlisted unit",
+            Self::UnitRestart => {
+                "Restart one leftover or failed unit (systemctl restart, listed names only)"
+            }
         }
     }
 
@@ -99,6 +103,7 @@ impl SysOp {
                 | Self::NetSet
                 | Self::GitlabBackup
                 | Self::Reboot
+                | Self::UnitRestart
         )
     }
 
@@ -118,9 +123,9 @@ impl SysOp {
     }
 
     /// Fresh authenticator code when TOTP is on. IPv4 can drop SSH and
-    /// the agent; other mutations stay confirm-only until we promote them.
+    /// the agent; restarting leftover docker/ssh/keystone-server can too.
     pub fn needs_step_up(self) -> bool {
-        matches!(self, Self::NetSet)
+        matches!(self, Self::NetSet | Self::UnitRestart)
     }
 }
 
@@ -140,6 +145,8 @@ pub enum SysError {
     StaticIncomplete,
     #[error("unknown sys op")]
     Op,
+    #[error("unit name is invalid")]
+    Unit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -603,6 +610,32 @@ pub fn unit_name_ok(name: &str) -> bool {
     })
 }
 
+/// Units whose restart can drop the UI, Engine, or SSH. Extra confirm in
+/// the UI; the helper still only restarts if needrestart or `--failed`
+/// currently lists the name.
+pub const SENSITIVE_RESTART_UNITS: &[&str] =
+    &["keystone-server.service", "docker.service", "ssh.service"];
+
+pub fn sensitive_restart_unit(name: &str) -> bool {
+    SENSITIVE_RESTART_UNITS.iter().any(|u| *u == name)
+}
+
+/// Form/JSON `unit` for `unit_restart`. Token only — membership of the
+/// leftover/failed lists is checked on the helper from a live snapshot.
+pub fn parse_restart_unit(payload: &str) -> Result<String, SysError> {
+    let v: serde_json::Value = serde_json::from_str(payload).map_err(|_| SysError::Op)?;
+    let name = v.get("unit").and_then(|u| u.as_str()).unwrap_or("").trim();
+    if !unit_name_ok(name) {
+        return Err(SysError::Unit);
+    }
+    Ok(name.to_string())
+}
+
+/// True when `name` is on the live leftover or failed list (exact match).
+pub fn unit_listed_for_restart(name: &str, leftovers: &[String], failed: &[String]) -> bool {
+    unit_name_ok(name) && (leftovers.iter().any(|u| u == name) || failed.iter().any(|u| u == name))
+}
+
 /// Exact allowlist match. No suffix folding, no shell string.
 pub fn journal_unit(raw: &str) -> Result<&'static str, SysError> {
     let s = raw.trim();
@@ -704,17 +737,21 @@ mod tests {
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::Reboot.mutating());
+        assert!(SysOp::UnitRestart.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::GitlabBackup.permission(), Permission::SysManage);
         assert_eq!(SysOp::UpdatesAutoremove.permission(), Permission::SysManage);
         assert_eq!(SysOp::Reboot.permission(), Permission::SysManage);
+        assert_eq!(SysOp::UnitRestart.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
         assert!(SysOp::GitlabBackup.streams());
         assert!(!SysOp::Status.streams());
         assert!(!SysOp::Reboot.streams());
+        assert!(!SysOp::UnitRestart.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
+        assert_eq!(SysOp::UnitRestart.as_str(), "unit_restart");
         assert!(!SysOp::Journal.mutating());
         assert_eq!(SysOp::Journal.permission(), Permission::SysView);
         assert!(SysOp::Journal.streams());
@@ -728,11 +765,10 @@ mod tests {
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
         assert_eq!(JOURNAL_UNITS.len(), 5);
         assert!(SysOp::NetSet.needs_step_up());
+        assert!(SysOp::UnitRestart.needs_step_up());
         for op in SysOp::iter() {
-            if op == SysOp::NetSet {
-                continue;
-            }
-            assert!(!op.needs_step_up(), "{} stays confirm-only", op.as_str());
+            let want = matches!(op, SysOp::NetSet | SysOp::UnitRestart);
+            assert_eq!(op.needs_step_up(), want, "{} step-up", op.as_str());
         }
     }
 
@@ -749,6 +785,7 @@ mod tests {
                 SysOp::NetSet => "/sys/net_set",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
                 SysOp::Reboot => "/sys/reboot",
+                SysOp::UnitRestart => "/sys/unit_restart",
                 SysOp::Status | SysOp::UpdatesList | SysOp::Journal => {
                     unreachable!("not mutating")
                 }
@@ -944,6 +981,7 @@ mod tests {
         );
         assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
+        assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
         assert_eq!(
             "updates_autoremove".parse::<SysOp>().unwrap(),
             SysOp::UpdatesAutoremove
@@ -974,6 +1012,54 @@ mod tests {
         assert!(!unit_name_ok("ssh.service;rm"));
         assert!(!unit_name_ok("../escape.service"));
         assert!(unit_name_ok("user@1000.service"));
+    }
+
+    #[test]
+    fn restart_unit_is_listed_names_only() {
+        assert_eq!(
+            parse_restart_unit(r#"{"unit":"docker.service"}"#).unwrap(),
+            "docker.service"
+        );
+        assert_eq!(
+            parse_restart_unit(r#"{"unit":" docker.service "}"#).unwrap(),
+            "docker.service"
+        );
+        assert_eq!(
+            parse_restart_unit(r#"{"unit":"docker.service;rm"}"#),
+            Err(SysError::Unit)
+        );
+        assert_eq!(
+            parse_restart_unit(r#"{"unit":"../escape.service"}"#),
+            Err(SysError::Unit)
+        );
+        assert_eq!(parse_restart_unit("{}"), Err(SysError::Unit));
+        let leftovers = vec!["docker.service".into(), "ssh.service".into()];
+        let failed = vec!["apparmor.service".into()];
+        assert!(unit_listed_for_restart(
+            "docker.service",
+            &leftovers,
+            &failed
+        ));
+        assert!(unit_listed_for_restart(
+            "apparmor.service",
+            &leftovers,
+            &failed
+        ));
+        assert!(!unit_listed_for_restart(
+            "cron.service",
+            &leftovers,
+            &failed
+        ));
+        assert!(!unit_listed_for_restart(
+            "docker.service;rm",
+            &leftovers,
+            &failed
+        ));
+        assert!(sensitive_restart_unit("docker.service"));
+        assert!(sensitive_restart_unit("ssh.service"));
+        assert!(sensitive_restart_unit("keystone-server.service"));
+        assert!(!sensitive_restart_unit("apparmor.service"));
+        assert!(!sensitive_restart_unit("keystone-agent.service"));
     }
 
     #[test]

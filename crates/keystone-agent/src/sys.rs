@@ -28,7 +28,7 @@ fn call_budget(op: SysOp) -> Duration {
     match op {
         SysOp::Status => Duration::from_secs(3),
         SysOp::NetSet => Duration::from_secs(20),
-        SysOp::Reboot => Duration::from_secs(15),
+        SysOp::Reboot | SysOp::UnitRestart => Duration::from_secs(15),
         SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
             Duration::from_secs(120)
         }
@@ -237,5 +237,6 @@ mod tests {
             "reboot must not use the apt apply budget"
         );
         assert!(call_budget(SysOp::Reboot) >= Duration::from_secs(5));
+        assert_eq!(call_budget(SysOp::UnitRestart), call_budget(SysOp::Reboot));
     }
 }

@@ -731,7 +731,9 @@ async fn handle_sys(
             }
             Ok(local)
         }
-        SysOp::UpdatesList | SysOp::NetSet | SysOp::Reboot => crate::sys::call(op, payload).await,
+        SysOp::UpdatesList | SysOp::NetSet | SysOp::Reboot | SysOp::UnitRestart => {
+            crate::sys::call(op, payload).await
+        }
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
         SysOp::UpdatesAutoremove => {
             anyhow::bail!("updates_autoremove is streamed from the autoremove page")
@@ -900,6 +902,15 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(reboot.contains("manage"), "{reboot}");
+        let restart = handle_sys(
+            &runtime,
+            SysOp::UnitRestart,
+            serde_json::json!({"unit": "docker.service"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(restart.contains("manage"), "{restart}");
     }
 
     #[test]
@@ -913,6 +924,7 @@ mod tests {
             SysOp::GitlabBackup,
             SysOp::Reboot,
             SysOp::Journal,
+            SysOp::UnitRestart,
         ] {
             assert!(
                 DockerOp::from_str(op.as_str()).is_err(),

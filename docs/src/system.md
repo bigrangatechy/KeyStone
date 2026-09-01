@@ -20,8 +20,8 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, GitLab backup, and reboot** if
-   you want Apply, Autoremove, or Reboot. That Manage checkbox is behind a
+   and **Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, and reboot** if
+   you want Apply, Autoremove, leftover Restart, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
@@ -43,7 +43,8 @@ helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
 It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
 `apt list --upgradable`, simulated `dist-upgrade`, `needrestart -b`,
 `systemctl --failed`, `timedatectl`, `journalctl -u` for five named
-units, `systemctl reboot`, netplan or
+units, `systemctl reboot`, `systemctl restart` of a leftover or failed
+listed name, netplan or
 `nmcli`, Omnibus `gitlab-backup create`). There is no shell string and no
 unit-name textbox.
 
@@ -68,8 +69,12 @@ after Apply when leftover packages sit around. It is Manage, not Observe.
 
 After Apply, the System tab lists **services still using old libraries**
 (`needrestart -b`) and **failed systemd units** (`systemctl --failed`).
-There is no “restart this unit” button — use a shell if you want a
-targeted restart.
+With Manage on, each listed name has a **Restart** button (`systemctl
+restart` for that name only). There is no unit-name textbox. The helper
+refuses a name that is not on the live leftover or failed list. If 2FA is
+on, Restart also asks for a **current 6-digit code** (not a backup code).
+Restarting `keystone-server`, `docker`, or `ssh` asks extra confirmation;
+on the UI host, `keystone-server` warns that the session will drop.
 
 A reboot-needed flag is shown when `/run/reboot-required` exists or
 needrestart reports a pending kernel. **Reboot node** is a confirmed

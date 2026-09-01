@@ -2204,6 +2204,7 @@ struct SysForm {
     prefix: Option<String>,
     gateway: Option<String>,
     dns: Option<String>,
+    unit: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2246,6 +2247,9 @@ fn sys_form_payload(form: &SysForm) -> String {
             .map(str::to_string)
             .collect();
         map.insert("dns".into(), serde_json::json!(dns));
+    }
+    if let Some(unit) = &form.unit {
+        map.insert("unit".into(), serde_json::json!(unit.trim()));
     }
     serde_json::Value::Object(map).to_string()
 }
@@ -3365,10 +3369,13 @@ mod tests {
         assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::Reboot.mutating());
+        assert!(SysOp::UnitRestart.mutating());
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
         assert!(!SysOp::Journal.mutating());
         assert!(!SysOp::Reboot.streams());
+        assert!(!SysOp::UnitRestart.streams());
+        assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::Journal.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
     }
@@ -3570,6 +3577,7 @@ mod tests {
             prefix: Some("24".into()),
             gateway: Some("192.168.0.1".into()),
             dns: Some("1.1.1.1 8.8.8.8".into()),
+            unit: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -3582,6 +3590,21 @@ mod tests {
             !p.contains("totp") && !p.contains("123456"),
             "authenticator code must not go to the helper payload"
         );
+        let restart = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            unit: Some(" docker.service ".into()),
+            totp: "000000".into(),
+            redirect: String::new(),
+        };
+        let r = sys_form_payload(&restart);
+        assert!(r.contains("\"unit\":\"docker.service\""));
+        assert!(!r.contains("000000"));
     }
 
     #[test]
@@ -3623,8 +3646,14 @@ mod tests {
             "System tab must list leftover needrestart services"
         );
         assert!(
-            js.contains("this tab does not restart individual units"),
-            "leftover services must not offer a restart-this-unit form"
+            js.contains("/sys/unit_restart")
+                && js.contains("systemctl restart")
+                && js.contains("sys-restart-totp"),
+            "leftover/failed units must offer listed-name restart behind step-up"
+        );
+        assert!(
+            !js.contains("this tab does not restart individual units"),
+            "leftover restart is in; do not tell operators to use a shell"
         );
         assert!(
             js.contains("Failed systemd units"),
@@ -3658,7 +3687,7 @@ mod tests {
         );
         assert!(js.contains("/sys/reboot"));
         assert!(!js.contains("/sys/poweroff"));
-        assert!(!js.contains("systemctl restart"));
+        assert!(js.contains("/sys/unit_restart"));
         let html = include_str!("../templates/node.html");
         assert!(
             html.contains("data-ui-host"),
@@ -3667,6 +3696,10 @@ mod tests {
         assert!(
             html.contains("data-totp"),
             "System tab must know whether TOTP is on"
+        );
+        assert!(
+            html.contains("leftover restart"),
+            "Settings manage checkbox must mention leftover unit restart"
         );
         assert!(
             html.contains("and reboot"),

@@ -9,7 +9,7 @@ Host apt and IPv4 are **not** `DockerOp`. Cookie-authed
 `POST /nodes/{id}/sys/{op}` and `GET /api/v1/nodes/{id}/sys/updates` become
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
 `updates_apply`, `updates_autoremove`, `net_set`, `gitlab_backup`, `reboot`,
-`journal`).
+`journal`, `unit_restart`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
@@ -37,8 +37,12 @@ restore is not an op). Unattended-upgrades is observe-only: parse
 unattended-upgrades`) and the periodic stamp mtime. There is no config
 editor. `journal` follows `journalctl -u` for a
 hardcoded unit list (not a textbox). `reboot` is hardcoded
-`systemctl reboot` (not poweroff). Tests must not run live `apt-get`,
-`apt-get autoremove`, `gitlab-backup`, `journalctl -f`, or `systemctl reboot`.
+`systemctl reboot` (not poweroff). `unit_restart` is hardcoded
+`systemctl restart -- <unit>` only if that name is on the live leftover
+or failed list from `needrestart` / `systemctl --failed` (not a textbox).
+Tests must not run live `apt-get`,
+`apt-get autoremove`, `gitlab-backup`, `journalctl -f`, `systemctl reboot`,
+or `systemctl restart`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|
@@ -50,9 +54,10 @@ hardcoded unit list (not a textbox). `reboot` is hardcoded
 | `gitlab_backup` | yes | `sys_manage` | Omnibus `gitlab-backup create` (streamed). Missing binary is an error; tests must not run it. Docker GitLab is not this op. |
 | `reboot` | yes | `sys_manage` | Hardcoded `systemctl reboot`. Not streamed. Tests must not invoke it. Poweroff is not an op. |
 | `journal` | no | `sys_view` | Follow `journalctl` for one allowlisted unit (streamed). Not a PTY. Tests must not follow a live journal. |
+| `unit_restart` | yes | `sys_manage` | `systemctl restart` for one leftover or failed unit. `needs_step_up()`. Helper re-checks the live lists. Tests must not invoke it. |
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
-token cannot call these routes. `SysOp::needs_step_up()` is `net_set` only.
-The same `consume_step_up` helper as Docker POSTs enforces form field `totp`.
-Failed IPv4 step-up is still an audit row (`ok` false) and does not call the
-agent.
+token cannot call these routes. `SysOp::needs_step_up()` is `net_set` and
+`unit_restart`. The same `consume_step_up` helper as Docker POSTs enforces
+form field `totp`. Failed step-up is still an audit row (`ok` false) and does
+not call the agent.

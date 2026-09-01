@@ -934,19 +934,33 @@
     }
     if (helperOn) {
       const leftovers = Array.isArray(data.restart_services) ? data.restart_services : [];
+      const failed = Array.isArray(data.failed_units) ? data.failed_units : [];
+      if (manage && totpOn && (leftovers.length || failed.length)) {
+        const totp = document.createElement("input");
+        totp.id = "sys-restart-totp";
+        totp.inputMode = "numeric";
+        totp.autocomplete = "one-time-code";
+        totp.maxLength = 6;
+        totp.placeholder = "000000";
+        const totpLab = document.createElement("label");
+        totpLab.appendChild(document.createTextNode("Authenticator code for restart"));
+        totpLab.appendChild(totp);
+        health.appendChild(totpLab);
+        health.appendChild(el("p", "muted", "Current 6-digit code. Backup codes are for sign-in only."));
+      }
       health.appendChild(el("h3", null, "Services still using old libraries"));
-      health.appendChild(el("p", "muted", "Listed by needrestart after upgrades. Restart them from a shell if you want — this tab does not restart individual units."));
+      health.appendChild(el("p", "muted", "Listed by needrestart after upgrades. Restart runs systemctl restart for that name only — not a unit-name textbox."));
       if (!leftovers.length) {
         health.appendChild(el("p", "muted", "None right now."));
       } else {
-        health.appendChild(unitNameTable(leftovers));
+        health.appendChild(unitNameTable(leftovers, { manage: manage, node: node, totpOn: totpOn, uiHost: uiHost }));
       }
-      const failed = Array.isArray(data.failed_units) ? data.failed_units : [];
       health.appendChild(el("h3", null, "Failed systemd units"));
+      health.appendChild(el("p", "muted", "From systemctl --failed. Restart is the same listed-name button."));
       if (!failed.length) {
         health.appendChild(el("p", "muted", "None right now."));
       } else {
-        health.appendChild(unitNameTable(failed));
+        health.appendChild(unitNameTable(failed, { manage: manage, node: node, totpOn: totpOn, uiHost: uiHost }));
       }
       health.appendChild(el("h3", null, "Journals"));
       health.appendChild(el("p", "muted", "Follow journalctl for these units. Leave the page to stop. Not a shell."));
@@ -1268,13 +1282,62 @@
     host.replaceChildren(wrap);
   }
 
-  function unitNameTable(names) {
+  function restartUnitForm(node, unit, totpOn, uiHost) {
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = "/nodes/" + encodeURIComponent(node) + "/sys/unit_restart";
+    form.className = "inline";
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "unit";
+    hidden.value = unit;
+    form.appendChild(hidden);
+    form.addEventListener("submit", (ev) => {
+      const sensitive = unit === "keystone-server.service" || unit === "docker.service" || unit === "ssh.service";
+      let msg = "Restart " + unit + " with systemctl restart?";
+      if (uiHost && unit === "keystone-server.service") {
+        msg = "This node is serving the KeyStone UI. Restarting keystone-server.service will take this session down until the server is back. Continue?";
+      } else if (sensitive) {
+        msg = "Restart " + unit + "? docker or ssh bouncing will drop containers or SSH. Continue?";
+      }
+      if (!window.confirm(msg)) {
+        ev.preventDefault();
+        return;
+      }
+      if (totpOn) {
+        const shared = document.getElementById("sys-restart-totp");
+        const digits = ((shared && shared.value) || "").replace(/\D/g, "");
+        if (digits.length !== 6) {
+          ev.preventDefault();
+          return;
+        }
+        const t = document.createElement("input");
+        t.type = "hidden";
+        t.name = "totp";
+        t.value = digits;
+        form.appendChild(t);
+      }
+    });
+    const btn = document.createElement("button");
+    btn.type = "submit";
+    btn.textContent = "Restart";
+    form.appendChild(btn);
+    return form;
+  }
+
+  function unitNameTable(names, opts) {
+    const manage = opts && opts.manage;
     const table = document.createElement("table");
-    table.appendChild(thead(["Unit"]));
+    table.appendChild(thead(manage ? ["Unit", ""] : ["Unit"]));
     const body = document.createElement("tbody");
     names.forEach((name) => {
       const tr = document.createElement("tr");
       tr.appendChild(tdCode(name || ""));
+      if (manage) {
+        const td = document.createElement("td");
+        td.appendChild(restartUnitForm(opts.node, name, opts.totpOn, opts.uiHost));
+        tr.appendChild(td);
+      }
       body.appendChild(tr);
     });
     table.appendChild(body);
