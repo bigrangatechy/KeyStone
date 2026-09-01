@@ -526,3 +526,44 @@ fn operator_docs_cover_gitlab_restore() {
         "architecture.md must say Omnibus restore is in"
     );
 }
+
+#[test]
+fn operator_docs_cover_ethernet_ipv6() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("IPv6")
+            && system.contains("SLAAC")
+            && system.contains("Wi-Fi and VLANs are not"),
+        "System chapter must document Ethernet IPv6 and keep Wi-Fi/VLAN out"
+    );
+    assert!(
+        using.contains("IPv6") && using.contains("current authenticator code"),
+        "using.md must mention IPv6 step-up"
+    );
+    assert!(
+        trouble.contains("Static IPv6") && trouble.contains("zone id"),
+        "troubleshooting must cover IPv6 lockout and rejected zone ids"
+    );
+    assert!(
+        security.contains("IPv6") && security.contains("IPv4"),
+        "security.md must treat IPv6 like IPv4 for lockout"
+    );
+    assert!(
+        http.contains("`ipv6_method`"),
+        "HTTP API must mention ipv6_method"
+    );
+    assert!(
+        dev.contains("IPv6") && dev.contains("netplan apply"),
+        "developer system.md must say IPv6 is on net_set and tests must not apply it"
+    );
+    assert!(
+        arch.contains("IPv6") && arch.contains("Wi-Fi / VLAN"),
+        "architecture.md must say Ethernet IPv6 is in and Wi-Fi/VLAN stay out"
+    );
+}

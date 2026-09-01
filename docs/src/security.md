@@ -176,7 +176,7 @@ socket **plus** System Manage is host root for the allowlist (same class as
 Docker Manage). Keep the allowlist tiny; do not start the helper on nodes
 that should only report metrics.
 
-Changing IPv4 can lock you out of SSH and drop the agent session. Keep a
+Changing IPv4 or IPv6 can lock you out of SSH and drop the agent session. Keep a
 console. Restarting a leftover `docker` or `ssh` unit can do the same.
 GitLab **Restore** replaces application data on that node.
 When authenticator 2FA is on, Apply IPv4, leftover/failed **Restart**, and

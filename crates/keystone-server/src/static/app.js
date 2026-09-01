@@ -1028,16 +1028,18 @@
 
     const ifaces = Array.isArray(data.interfaces) ? data.interfaces : [];
     const table = document.createElement("table");
-    table.appendChild(thead(["Interface", "IPv4", "State"]));
+    table.appendChild(thead(["Interface", "IPv4", "IPv6", "State"]));
     const body = document.createElement("tbody");
     if (!ifaces.length) {
-      body.appendChild(emptyRow(3, "No IPv4 addresses (or ip is missing)."));
+      body.appendChild(emptyRow(4, "No addresses (or ip is missing)."));
     } else {
       ifaces.forEach((iface) => {
         const tr = document.createElement("tr");
         tr.appendChild(tdCode(iface.name || ""));
         const addrs = Array.isArray(iface.ipv4) ? iface.ipv4.join(", ") : "";
         tr.appendChild(tdText(addrs || "—"));
+        const v6 = Array.isArray(iface.ipv6) ? iface.ipv6.join(", ") : "";
+        tr.appendChild(tdText(v6 || "—"));
         const td = document.createElement("td");
         td.appendChild(el("span", iface.up ? "chip tone-ok" : "chip", iface.up ? "up" : "down"));
         tr.appendChild(td);
@@ -1196,9 +1198,9 @@
 
     if (manage && helperOn) {
       const netHead = el("div", "compose-head");
-      netHead.appendChild(el("h3", null, "IPv4"));
+      netHead.appendChild(el("h3", null, "Addressing"));
       actions.appendChild(netHead);
-      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version."));
+      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version. Wi-Fi and VLANs are not in this UI."));
       if (stepUpErr === "step-up") {
         actions.appendChild(el("p", "error", "This change needs a current authenticator code, not a backup code."));
       } else if (stepUpErr === "step-up-locked") {
@@ -1214,7 +1216,7 @@
         form.action = "/nodes/" + encodeURIComponent(node) + "/sys/net_set";
         form.className = "sys-net";
         form.addEventListener("submit", (ev) => {
-          if (!window.confirm("Change IPv4 on this node? You may lose the agent until you reconnect.")) {
+          if (!window.confirm("Change addressing on this node? IPv4 or IPv6 can drop the agent until you reconnect.")) {
             ev.preventDefault();
             return;
           }
@@ -1252,7 +1254,7 @@
           return lab;
         }
         form.appendChild(labeled("Interface", iface));
-        form.appendChild(labeled("Method", method));
+        form.appendChild(labeled("IPv4", method));
         const address = document.createElement("input");
         address.name = "address";
         address.placeholder = "192.168.0.50";
@@ -1293,6 +1295,56 @@
         }
         method.addEventListener("change", setStaticVisible);
         setStaticVisible();
+        const ipv6Method = document.createElement("select");
+        ipv6Method.name = "ipv6_method";
+        [["auto", "Automatic (SLAAC/DHCPv6)"], ["static", "Static"]].forEach((pair) => {
+          const o = document.createElement("option");
+          o.value = pair[0];
+          o.textContent = pair[1];
+          if ((net.ipv6_method || "auto") === pair[0]) o.selected = true;
+          ipv6Method.appendChild(o);
+        });
+        form.appendChild(labeled("IPv6", ipv6Method, "span-2"));
+        const ipv6Address = document.createElement("input");
+        ipv6Address.name = "ipv6_address";
+        ipv6Address.placeholder = "2001:db8::10";
+        ipv6Address.value = net.ipv6_address || "";
+        ipv6Address.autocomplete = "off";
+        const ipv6Prefix = document.createElement("input");
+        ipv6Prefix.name = "ipv6_prefix";
+        ipv6Prefix.type = "number";
+        ipv6Prefix.min = "1";
+        ipv6Prefix.max = "128";
+        ipv6Prefix.value = net.ipv6_prefix ? String(net.ipv6_prefix) : "64";
+        const ipv6Gateway = document.createElement("input");
+        ipv6Gateway.name = "ipv6_gateway";
+        ipv6Gateway.placeholder = "2001:db8::1";
+        ipv6Gateway.value = net.ipv6_gateway || "";
+        ipv6Gateway.autocomplete = "off";
+        const ipv6Dns = document.createElement("input");
+        ipv6Dns.name = "ipv6_dns";
+        ipv6Dns.placeholder = "2001:db8::53";
+        ipv6Dns.value = Array.isArray(net.ipv6_dns) ? net.ipv6_dns.join(" ") : "";
+        ipv6Dns.autocomplete = "off";
+        const ipv6AddrLab = labeled("IPv6 address", ipv6Address);
+        const ipv6PrefixLab = labeled("Prefix", ipv6Prefix);
+        const ipv6GwLab = labeled("Gateway", ipv6Gateway);
+        const ipv6DnsLab = labeled("DNS", ipv6Dns);
+        form.appendChild(ipv6AddrLab);
+        form.appendChild(ipv6PrefixLab);
+        form.appendChild(ipv6GwLab);
+        form.appendChild(ipv6DnsLab);
+        function setIpv6StaticVisible() {
+          const on = ipv6Method.value === "static";
+          [ipv6AddrLab, ipv6PrefixLab, ipv6GwLab, ipv6DnsLab].forEach((lab) => {
+            lab.hidden = !on;
+          });
+          [ipv6Address, ipv6Prefix, ipv6Gateway, ipv6Dns].forEach((inp) => {
+            inp.disabled = !on;
+          });
+        }
+        ipv6Method.addEventListener("change", setIpv6StaticVisible);
+        setIpv6StaticVisible();
         if (totpOn) {
           const totp = document.createElement("input");
           totp.name = "totp";
@@ -1308,7 +1360,7 @@
         const save = document.createElement("button");
         save.type = "submit";
         save.className = "danger span-2";
-        save.textContent = "Apply IPv4";
+        save.textContent = "Apply addressing";
         form.appendChild(save);
         actions.appendChild(form);
       }

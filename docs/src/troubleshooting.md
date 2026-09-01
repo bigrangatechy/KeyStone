@@ -153,7 +153,7 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, GitLab restore, and reboot**
+- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, leftover restart, GitLab backup, GitLab restore, and reboot**
   on and save.
 - `apt-get` failed: read the apply or autoremove stream; the helper only runs
   `upgrade` or `autoremove`,
@@ -174,9 +174,11 @@ token does not.
   in this UI.
 - Static IPv4 dropped the session: that address is now on the interface.
   Use a console if you cannot reach the new IP.
+- Static IPv6 dropped the session: same as IPv4. Link-local `fe80::` with a
+  `%iface` zone id is rejected; type the address without a zone.
 - IPv4 wants a code: authenticator 2FA is on. Type a current 6-digit
   authenticator code, not a backup code. “too many attempts” is the same
-  eight-tries / 15-minute gate as login.
+  eight-tries / 15-minute gate as login. IPv6 uses that same step-up.
 - Journal page 400: that unit is not on the allowlist (`keystone-agent`,
   `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`). There is no
   unit-name textbox.

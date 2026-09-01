@@ -2212,6 +2212,11 @@ struct SysForm {
     prefix: Option<String>,
     gateway: Option<String>,
     dns: Option<String>,
+    ipv6_method: Option<String>,
+    ipv6_address: Option<String>,
+    ipv6_prefix: Option<String>,
+    ipv6_gateway: Option<String>,
+    ipv6_dns: Option<String>,
     unit: Option<String>,
     name: Option<String>,
     #[serde(default)]
@@ -2256,6 +2261,32 @@ fn sys_form_payload(form: &SysForm) -> String {
             .map(str::to_string)
             .collect();
         map.insert("dns".into(), serde_json::json!(dns));
+    }
+    let ipv6_method = form
+        .ipv6_method
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("auto");
+    map.insert("ipv6_method".into(), serde_json::json!(ipv6_method));
+    if let Some(a) = &form.ipv6_address {
+        map.insert("ipv6_address".into(), serde_json::json!(a.trim()));
+    }
+    if let Some(p) = &form.ipv6_prefix {
+        let n: u8 = p.trim().parse().unwrap_or(0);
+        map.insert("ipv6_prefix".into(), serde_json::json!(n));
+    }
+    if let Some(g) = &form.ipv6_gateway {
+        map.insert("ipv6_gateway".into(), serde_json::json!(g.trim()));
+    }
+    if let Some(d) = &form.ipv6_dns {
+        let dns: Vec<String> = d
+            .split([',', ' ', '\n'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        map.insert("ipv6_dns".into(), serde_json::json!(dns));
     }
     if let Some(unit) = &form.unit {
         map.insert("unit".into(), serde_json::json!(unit.trim()));
@@ -3691,6 +3722,11 @@ mod tests {
             prefix: Some("24".into()),
             gateway: Some("192.168.0.1".into()),
             dns: Some("1.1.1.1 8.8.8.8".into()),
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
             unit: None,
             name: None,
             totp: "123456".into(),
@@ -3700,6 +3736,7 @@ mod tests {
         assert!(p.contains("\"iface\":\"eth0\""));
         assert!(p.contains("\"method\":\"static\""));
         assert!(p.contains("192.168.0.50"));
+        assert!(p.contains("\"ipv6_method\":\"auto\""));
         assert!(!p.contains(';'));
         assert!(
             !p.contains("totp") && !p.contains("123456"),
@@ -3713,6 +3750,11 @@ mod tests {
             prefix: None,
             gateway: None,
             dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
             unit: Some(" docker.service ".into()),
             name: None,
             totp: "000000".into(),
@@ -3729,6 +3771,11 @@ mod tests {
             prefix: None,
             gateway: None,
             dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
             unit: None,
             name: Some(" 1712345678_gitlab_backup.tar ".into()),
             totp: "654321".into(),
@@ -3737,6 +3784,28 @@ mod tests {
         let g = sys_form_payload(&restore);
         assert!(g.contains("\"name\":\"1712345678_gitlab_backup.tar\""));
         assert!(!g.contains("654321"));
+        let restore_v6 = SysForm {
+            payload: None,
+            iface: Some("eth0".into()),
+            method: Some("dhcp".into()),
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: Some("static".into()),
+            ipv6_address: Some(" 2001:db8::10 ".into()),
+            ipv6_prefix: Some("64".into()),
+            ipv6_gateway: Some("2001:db8::1".into()),
+            ipv6_dns: Some("2001:db8::53".into()),
+            unit: None,
+            name: None,
+            totp: "111111".into(),
+            redirect: String::new(),
+        };
+        let v6 = sys_form_payload(&restore_v6);
+        assert!(v6.contains("\"ipv6_method\":\"static\""));
+        assert!(v6.contains("2001:db8::10"));
+        assert!(!v6.contains('%') && !v6.contains("111111"));
     }
 
     #[test]
@@ -3868,7 +3937,7 @@ mod tests {
             "Omnibus restore is in this slice"
         );
         assert!(
-            js.contains("Change IPv4 on this node"),
+            js.contains("Change addressing on this node"),
             "net_set must ask before changing addressing"
         );
         assert!(
@@ -3878,8 +3947,8 @@ mod tests {
             "IPv4 must collect a current authenticator code when TOTP is on"
         );
         assert!(
-            js.contains("ethernetIface"),
-            "IPv4 form must skip Wi-Fi/docker NICs"
+            js.contains("ethernetIface") && js.contains("ipv6_method"),
+            "Addressing form must skip Wi-Fi/docker NICs and include IPv6"
         );
         assert!(
             js.contains("compose_update"),

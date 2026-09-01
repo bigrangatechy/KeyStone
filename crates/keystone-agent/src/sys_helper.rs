@@ -306,7 +306,7 @@ fn reboot_required() -> bool {
 async fn ip_addrs() -> Value {
     let output = timeout(
         Duration::from_secs(2),
-        Command::new("ip").args(["-j", "-4", "addr"]).output(),
+        Command::new("ip").args(["-j", "addr"]).output(),
     )
     .await;
     match output {
@@ -389,11 +389,21 @@ fn net_snapshot(backend: &str, interfaces: &Value) -> Value {
         .and_then(|a| a.first())
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let ipv6 = first
+        .and_then(|i| i.get("ipv6"))
+        .and_then(|v| v.as_array())
+        .and_then(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .find(|s| !s.to_ascii_lowercase().starts_with("fe80:"))
+        })
+        .unwrap_or("");
     let (address, prefix) = split_cidr(ipv4);
-    let method = match backend {
-        "netplan" => netplan_method(iface),
-        "networkmanager" => "unknown".into(),
-        _ => "unknown".into(),
+    let (ipv6_address, ipv6_prefix) = split_cidr(ipv6);
+    let (method, ipv6_method) = match backend {
+        "netplan" => netplan_methods(iface),
+        "networkmanager" => ("unknown".into(), "unknown".into()),
+        _ => ("unknown".into(), "unknown".into()),
     };
     json!({
         "iface": iface,
@@ -401,7 +411,12 @@ fn net_snapshot(backend: &str, interfaces: &Value) -> Value {
         "address": address,
         "prefix": prefix,
         "gateway": "",
-        "dns": []
+        "dns": [],
+        "ipv6_method": ipv6_method,
+        "ipv6_address": ipv6_address,
+        "ipv6_prefix": ipv6_prefix,
+        "ipv6_gateway": "",
+        "ipv6_dns": []
     })
 }
 
@@ -413,13 +428,15 @@ fn split_cidr(s: &str) -> (String, u8) {
     }
 }
 
-fn netplan_method(iface: &str) -> String {
+fn netplan_methods(iface: &str) -> (String, String) {
     let Ok(dir) = std::fs::read_dir("/etc/netplan") else {
-        return "unknown".into();
+        return ("unknown".into(), "unknown".into());
     };
     let mut saw_iface = false;
-    let mut dhcp = false;
-    let mut static_addr = false;
+    let mut dhcp4 = false;
+    let mut static4 = false;
+    let mut dhcp6 = false;
+    let mut static6 = false;
     for ent in dir.flatten() {
         let path = ent.path();
         if path.extension().and_then(|e| e.to_str()) != Some("yaml")
@@ -435,21 +452,37 @@ fn netplan_method(iface: &str) -> String {
         }
         saw_iface = true;
         if text.contains("dhcp4: true") {
-            dhcp = true;
+            dhcp4 = true;
+        }
+        if text.contains("dhcp6: true") {
+            dhcp6 = true;
+        }
+        if text.contains("dhcp6: false") {
+            static6 = true;
         }
         if text.contains("addresses:") {
-            static_addr = true;
+            static4 = true;
         }
     }
-    if !saw_iface {
+    let v4 = if !saw_iface {
         "unknown".into()
-    } else if dhcp && !static_addr {
+    } else if dhcp4 && !static4 {
         "dhcp".into()
-    } else if static_addr {
+    } else if static4 {
         "static".into()
     } else {
         "unknown".into()
-    }
+    };
+    let v6 = if !saw_iface {
+        "unknown".into()
+    } else if dhcp6 && !static6 {
+        "auto".into()
+    } else if static6 {
+        "static".into()
+    } else {
+        "unknown".into()
+    };
+    (v4, v6)
 }
 
 async fn updates_list() -> anyhow::Result<Value> {
@@ -726,6 +759,9 @@ async fn gitlab_restore(
 }
 
 async fn net_set(req: &NetSet) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("net set is not invoked in tests");
+    }
     let backend = detect_backend();
     match backend {
         "netplan" => {
@@ -1548,6 +1584,84 @@ mod tests {
             "shell iface must fail validation, got {err}"
         );
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_ipv6_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"net_set","payload":{"iface":"eth0","method":"dhcp","ipv6_method":"static","ipv6_address":"2001:db8::1%eth0","ipv6_prefix":64,"ipv6_gateway":"fe80::1"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("IPv6") || err.contains("invalid"),
+            "zone id must fail validation, got {err}"
+        );
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before netplan: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_net_set_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"net_set","payload":{"iface":"eth0","method":"dhcp","ipv6_method":"auto"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "net_set must not run netplan/nmcli in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn net_set_writes_ipv6_without_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn net_set")
+            .nth(1)
+            .expect("net_set")
+            .split("async fn reboot")
+            .next()
+            .expect("net_set body");
+        assert!(body.contains("netplan_yaml"));
+        assert!(body.contains("nmcli_modify_args"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(
+            !body.contains("iwconfig") && !body.contains("wpa_supplicant"),
+            "Wi-Fi stays out of this slice"
+        );
     }
 
     struct SockGuard(std::path::PathBuf);

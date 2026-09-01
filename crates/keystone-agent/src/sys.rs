@@ -167,7 +167,7 @@ async fn local_ntp() -> Value {
 async fn local_addrs() -> Value {
     let output = timeout(
         Duration::from_secs(2),
-        Command::new("ip").args(["-j", "-4", "addr"]).output(),
+        Command::new("ip").args(["-j", "addr"]).output(),
     )
     .await;
     match output {

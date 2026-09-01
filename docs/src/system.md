@@ -20,7 +20,7 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, GitLab restore, and reboot** if
+   and **Allow apt upgrade, autoremove, IPv4, IPv6, leftover restart, GitLab backup, GitLab restore, and reboot** if
    you want Apply, Autoremove, leftover Restart, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
@@ -103,16 +103,19 @@ are enabled for boot (`WantedBy=multi-user.target`). After a kernel or
 `enabled`) — `systemctl start` alone does not survive a reboot. See
 [Troubleshooting](troubleshooting.md).
 
-## IPv4
+## Addressing
 
-Pick an Ethernet interface that is already up. **DHCP** or **static**
-(address, prefix, gateway, optional DNS). Backend is Netplan when
-`/etc/netplan` exists, otherwise NetworkManager.
+Pick an Ethernet interface that is already up. **IPv4** is DHCP or static
+(address, prefix 1–32, gateway, optional DNS). **IPv6** is automatic
+(SLAAC/DHCPv6) or static (address, prefix 1–128, gateway, optional DNS).
+Both families are one Apply. Backend is Netplan when `/etc/netplan`
+exists, otherwise NetworkManager.
 
 Changing the address can drop the agent session (and SSH). Keep a console.
 If you enabled an authenticator, Apply IPv4, leftover **Restart**, and
 GitLab **Restore** also ask for a **current 6-digit code** (not a backup
-code). Wi-Fi, VLANs, and IPv6 are not in this version.
+code). IPv6 uses that same step-up. Wi-Fi and VLANs are not in this
+version.
 
 ## GitLab backup and restore
 

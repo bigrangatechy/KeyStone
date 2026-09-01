@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
-//! restart from those lists, reboot, journal follow, IPv4, GitLab Omnibus
+//! restart from those lists, reboot, journal follow, IPv4/IPv6, GitLab Omnibus
 //! backup/restore, unattended-upgrades observe). No I/O — the helper and
 //! agent run them. Keep `docs/dev/src/system.md` in sync.
 
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
@@ -92,7 +92,7 @@ impl SysOp {
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
             Self::UpdatesAutoremove => "Remove unused packages (apt-get autoremove)",
-            Self::NetSet => "Set IPv4 DHCP or static on one interface",
+            Self::NetSet => "Set IPv4/IPv6 DHCP or static on one Ethernet interface",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::GitlabRestore => {
                 "Restore GitLab Omnibus from a listed dump (gitlab-backup restore)"
@@ -137,7 +137,7 @@ impl SysOp {
         )
     }
 
-    /// Fresh authenticator code when TOTP is on. IPv4 can drop SSH and
+    /// Fresh authenticator code when TOTP is on. Addressing can drop SSH and
     /// the agent; restarting leftover docker/ssh/keystone-server can too;
     /// GitLab restore replaces application data.
     pub fn needs_step_up(self) -> bool {
@@ -151,14 +151,20 @@ pub enum SysError {
     Iface,
     #[error("IPv4 address is invalid")]
     Address,
+    #[error("IPv6 address is invalid")]
+    Ipv6Address,
     #[error("prefix must be 1–32")]
     Prefix,
+    #[error("IPv6 prefix must be 1–128")]
+    Ipv6Prefix,
     #[error("gateway is invalid")]
     Gateway,
     #[error("DNS address is invalid")]
     Dns,
     #[error("static IPv4 needs address, prefix, and gateway")]
     StaticIncomplete,
+    #[error("static IPv6 needs address, prefix, and gateway")]
+    Ipv6StaticIncomplete,
     #[error("unknown sys op")]
     Op,
     #[error("unit name is invalid")]
@@ -174,6 +180,14 @@ pub enum NetMethod {
     Static,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Ipv6Method {
+    #[default]
+    Auto,
+    Static,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetSet {
     pub iface: String,
@@ -186,6 +200,16 @@ pub struct NetSet {
     pub gateway: String,
     #[serde(default)]
     pub dns: Vec<String>,
+    #[serde(default)]
+    pub ipv6_method: Ipv6Method,
+    #[serde(default)]
+    pub ipv6_address: String,
+    #[serde(default)]
+    pub ipv6_prefix: u8,
+    #[serde(default)]
+    pub ipv6_gateway: String,
+    #[serde(default)]
+    pub ipv6_dns: Vec<String>,
 }
 
 impl NetSet {
@@ -222,6 +246,34 @@ impl NetSet {
                     dns.push(validate_ipv4(d)?.to_string());
                 }
                 self.dns = dns;
+            }
+        }
+        match self.ipv6_method {
+            Ipv6Method::Auto => {
+                self.ipv6_address.clear();
+                self.ipv6_prefix = 0;
+                self.ipv6_gateway.clear();
+                self.ipv6_dns.clear();
+            }
+            Ipv6Method::Static => {
+                if self.ipv6_address.trim().is_empty() || self.ipv6_gateway.trim().is_empty() {
+                    return Err(SysError::Ipv6StaticIncomplete);
+                }
+                let addr = validate_ipv6(&self.ipv6_address)?;
+                self.ipv6_address = addr.to_string();
+                if !(1..=128).contains(&self.ipv6_prefix) {
+                    return Err(SysError::Ipv6Prefix);
+                }
+                let gw = validate_ipv6(&self.ipv6_gateway)?;
+                self.ipv6_gateway = gw.to_string();
+                let mut dns = Vec::new();
+                for d in self.ipv6_dns.iter().take(3) {
+                    if d.trim().is_empty() {
+                        continue;
+                    }
+                    dns.push(validate_ipv6(d)?.to_string());
+                }
+                self.ipv6_dns = dns;
             }
         }
         Ok(self)
@@ -271,25 +323,74 @@ pub fn validate_ipv4(raw: &str) -> Result<Ipv4Addr, SysError> {
     s.parse::<Ipv4Addr>().map_err(|_| SysError::Address)
 }
 
+pub fn validate_ipv6(raw: &str) -> Result<Ipv6Addr, SysError> {
+    let s = raw.trim();
+    if s.is_empty()
+        || s.contains('/')
+        || s.contains('%')
+        || s.contains(';')
+        || s.contains('|')
+        || s.contains(' ')
+    {
+        return Err(SysError::Ipv6Address);
+    }
+    let addr = s.parse::<Ipv6Addr>().map_err(|_| SysError::Ipv6Address)?;
+    if addr.is_unspecified()
+        || addr.is_loopback()
+        || addr.is_multicast()
+        || addr.to_ipv4_mapped().is_some()
+    {
+        return Err(SysError::Ipv6Address);
+    }
+    Ok(addr)
+}
+
 /// Netplan fragment for `/etc/netplan/99-keystone.yaml` only.
 pub fn netplan_yaml(req: &NetSet) -> Result<String, SysError> {
     let req = req.clone().validate()?;
-    let mut out = String::from("network:\n  version: 2\n  ethernets:\n");
+    let mut out = format!("network:\n  version: 2\n  ethernets:\n    {}:\n", req.iface);
     match req.method {
-        NetMethod::Dhcp => {
-            out.push_str(&format!("    {}:\n      dhcp4: true\n", req.iface));
+        NetMethod::Dhcp => out.push_str("      dhcp4: true\n"),
+        NetMethod::Static => out.push_str("      dhcp4: false\n"),
+    }
+    match req.ipv6_method {
+        Ipv6Method::Auto => out.push_str("      dhcp6: true\n"),
+        Ipv6Method::Static => out.push_str("      dhcp6: false\n"),
+    }
+    let mut addrs = Vec::new();
+    let mut routes = Vec::new();
+    if req.method == NetMethod::Static {
+        addrs.push(format!("{}/{}", req.address, req.prefix));
+        routes.push(format!(
+            "        - to: default\n          via: {}\n",
+            req.gateway
+        ));
+    }
+    if req.ipv6_method == Ipv6Method::Static {
+        addrs.push(format!("{}/{}", req.ipv6_address, req.ipv6_prefix));
+        routes.push(format!(
+            "        - to: default\n          via: {}\n",
+            req.ipv6_gateway
+        ));
+    }
+    if !addrs.is_empty() {
+        out.push_str("      addresses:\n");
+        for a in &addrs {
+            out.push_str(&format!("        - {a}\n"));
         }
-        NetMethod::Static => {
-            out.push_str(&format!(
-                "    {}:\n      dhcp4: false\n      addresses:\n        - {}/{}\n      routes:\n        - to: default\n          via: {}\n",
-                req.iface, req.address, req.prefix, req.gateway
-            ));
-            if !req.dns.is_empty() {
-                out.push_str("      nameservers:\n        addresses:\n");
-                for d in &req.dns {
-                    out.push_str(&format!("          - {d}\n"));
-                }
-            }
+    }
+    if !routes.is_empty() {
+        out.push_str("      routes:\n");
+        for r in &routes {
+            out.push_str(r);
+        }
+    }
+    let mut nameservers = req.dns.clone();
+    nameservers.extend(req.ipv6_dns.iter().cloned());
+    if !nameservers.is_empty() {
+        out.push_str("      nameservers:\n        addresses:\n");
+        for d in &nameservers {
+            out.push_str(&format!("          - {d}\n"));
         }
     }
     Ok(out)
@@ -324,6 +425,34 @@ pub fn nmcli_modify_args(req: &NetSet) -> Result<Vec<String>, SysError> {
             if !req.dns.is_empty() {
                 args.push("ipv4.dns".into());
                 args.push(req.dns.join(" "));
+            }
+        }
+    }
+    match req.ipv6_method {
+        Ipv6Method::Auto => {
+            args.extend([
+                "ipv6.method".into(),
+                "auto".into(),
+                "ipv6.addresses".into(),
+                "".into(),
+                "ipv6.gateway".into(),
+                "".into(),
+                "ipv6.dns".into(),
+                "".into(),
+            ]);
+        }
+        Ipv6Method::Static => {
+            args.extend([
+                "ipv6.method".into(),
+                "manual".into(),
+                "ipv6.addresses".into(),
+                format!("{}/{}", req.ipv6_address, req.ipv6_prefix),
+                "ipv6.gateway".into(),
+                req.ipv6_gateway,
+            ]);
+            if !req.ipv6_dns.is_empty() {
+                args.push("ipv6.dns".into());
+                args.push(req.ipv6_dns.join(" "));
             }
         }
     }
@@ -490,7 +619,7 @@ pub struct Upgradable {
     pub to: String,
 }
 
-/// `ip -j addr` (inet only).
+/// `ip -j addr` (inet and inet6).
 pub fn parse_ip_addr_json(body: &str) -> Vec<IfaceAddr> {
     let Ok(rows) = serde_json::from_str::<Vec<IpLink>>(body) else {
         return Vec::new();
@@ -501,14 +630,22 @@ pub fn parse_ip_addr_json(body: &str) -> Vec<IfaceAddr> {
             continue;
         }
         let mut ipv4 = Vec::new();
+        let mut ipv6 = Vec::new();
         for a in row.addr_info {
-            if a.family == "inet" && !a.local.is_empty() {
+            if a.local.is_empty() {
+                continue;
+            }
+            if a.family == "inet" {
                 ipv4.push(format!("{}/{}", a.local, a.prefixlen));
+            }
+            if a.family == "inet6" {
+                ipv6.push(format!("{}/{}", a.local, a.prefixlen));
             }
         }
         out.push(IfaceAddr {
             name: row.ifname,
             ipv4,
+            ipv6,
             up: row.operstate.eq_ignore_ascii_case("UP"),
         });
     }
@@ -519,6 +656,8 @@ pub fn parse_ip_addr_json(body: &str) -> Vec<IfaceAddr> {
 pub struct IfaceAddr {
     pub name: String,
     pub ipv4: Vec<String>,
+    #[serde(default)]
+    pub ipv6: Vec<String>,
     pub up: bool,
 }
 
@@ -933,6 +1072,11 @@ mod tests {
             prefix: 24,
             gateway: "192.168.0.1".into(),
             dns: vec!["1.1.1.1".into()],
+            ipv6_method: Ipv6Method::Auto,
+            ipv6_address: String::new(),
+            ipv6_prefix: 0,
+            ipv6_gateway: String::new(),
+            ipv6_dns: vec![],
         }
         .validate()
         .unwrap();
@@ -940,11 +1084,14 @@ mod tests {
         assert!(yaml.contains("eth0:"));
         assert!(yaml.contains("192.168.0.50/24"));
         assert!(yaml.contains("via: 192.168.0.1"));
+        assert!(yaml.contains("dhcp6: true"));
         assert!(!yaml.contains(';'));
         let args = nmcli_modify_args(&req).unwrap();
         assert_eq!(args[0], "connection");
         assert!(args.contains(&"manual".into()));
         assert!(args.contains(&"192.168.0.50/24".into()));
+        assert!(args.contains(&"ipv6.method".into()));
+        assert!(args.contains(&"auto".into()));
     }
 
     #[test]
@@ -956,13 +1103,91 @@ mod tests {
             prefix: 8,
             gateway: "10.0.0.1".into(),
             dns: vec!["8.8.8.8".into()],
+            ipv6_method: Ipv6Method::Auto,
+            ipv6_address: String::new(),
+            ipv6_prefix: 0,
+            ipv6_gateway: String::new(),
+            ipv6_dns: vec![],
         }
         .validate()
         .unwrap();
         assert!(req.address.is_empty());
         let yaml = netplan_yaml(&req).unwrap();
         assert!(yaml.contains("dhcp4: true"));
+        assert!(yaml.contains("dhcp6: true"));
         assert!(!yaml.contains("10.0.0.9"));
+    }
+
+    #[test]
+    fn static_ipv6_round_trip_and_rejects_shell() {
+        assert!(validate_ipv6("2001:db8::10").is_ok());
+        assert!(validate_ipv6("fe80::1").is_ok());
+        assert_eq!(
+            validate_ipv6("2001:db8::10%eth0"),
+            Err(SysError::Ipv6Address)
+        );
+        assert_eq!(validate_ipv6("2001:db8::10/64"), Err(SysError::Ipv6Address));
+        assert_eq!(validate_ipv6("::1"), Err(SysError::Ipv6Address));
+        assert_eq!(validate_ipv6("::"), Err(SysError::Ipv6Address));
+        assert_eq!(validate_ipv6("ff02::1"), Err(SysError::Ipv6Address));
+        assert_eq!(
+            validate_ipv6("::ffff:192.168.0.1"),
+            Err(SysError::Ipv6Address)
+        );
+        let req = NetSet {
+            iface: "eth0".into(),
+            method: NetMethod::Dhcp,
+            address: String::new(),
+            prefix: 0,
+            gateway: String::new(),
+            dns: vec![],
+            ipv6_method: Ipv6Method::Static,
+            ipv6_address: "2001:db8::10".into(),
+            ipv6_prefix: 64,
+            ipv6_gateway: "2001:db8::1".into(),
+            ipv6_dns: vec!["2001:db8::53".into()],
+        }
+        .validate()
+        .unwrap();
+        let yaml = netplan_yaml(&req).unwrap();
+        assert!(yaml.contains("dhcp4: true"));
+        assert!(yaml.contains("dhcp6: false"));
+        assert!(yaml.contains("2001:db8::10/64"));
+        assert!(yaml.contains("via: 2001:db8::1"));
+        assert!(yaml.contains("2001:db8::53"));
+        assert!(!yaml.contains('%') && !yaml.contains(';'));
+        let args = nmcli_modify_args(&req).unwrap();
+        assert!(args.contains(&"ipv6.method".into()));
+        assert!(args.contains(&"manual".into()));
+        assert!(args.contains(&"2001:db8::10/64".into()));
+        let bad = NetSet {
+            iface: "eth0".into(),
+            method: NetMethod::Dhcp,
+            address: String::new(),
+            prefix: 0,
+            gateway: String::new(),
+            dns: vec![],
+            ipv6_method: Ipv6Method::Static,
+            ipv6_address: "2001:db8::10;rm".into(),
+            ipv6_prefix: 64,
+            ipv6_gateway: "2001:db8::1".into(),
+            ipv6_dns: vec![],
+        };
+        assert_eq!(bad.validate(), Err(SysError::Ipv6Address));
+        let wide = NetSet {
+            iface: "eth0".into(),
+            method: NetMethod::Dhcp,
+            address: String::new(),
+            prefix: 0,
+            gateway: String::new(),
+            dns: vec![],
+            ipv6_method: Ipv6Method::Static,
+            ipv6_address: "2001:db8::10".into(),
+            ipv6_prefix: 129,
+            ipv6_gateway: "2001:db8::1".into(),
+            ipv6_dns: vec![],
+        };
+        assert_eq!(wide.validate(), Err(SysError::Ipv6Prefix));
     }
 
     #[test]
@@ -1033,6 +1258,7 @@ mod tests {
         assert_eq!(ifaces.len(), 1);
         assert_eq!(ifaces[0].name, "eth0");
         assert_eq!(ifaces[0].ipv4, vec!["192.168.0.10/24"]);
+        assert_eq!(ifaces[0].ipv6, vec!["fe80::1/64"]);
         assert!(ifaces[0].up);
     }
 
