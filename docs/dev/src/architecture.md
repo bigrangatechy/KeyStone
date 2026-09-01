@@ -19,7 +19,7 @@ stream; the server never dials an agent and never opens a remote
        │  gRPC Session: PushFrame / Command / StreamChunk
        ▼
   keystone-server
-       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`); IPv4/IPv6 `net_set` needs a fresh authenticator
+       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`); IPv4/IPv6 `net_set` and `vlan_add` need a fresh authenticator
        │     code when TOTP is on (backup codes stay sign-in only);
        │     idle two hours, heartbeat while a tab is open (Log out to end it)
        │     optional rustls on `http_listen` (`tls.rs`)
@@ -86,12 +86,14 @@ SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, Docker Hub login, System shutdown from the UI, hostname /
-timezone / users / SSH / firewall editors, Wi-Fi / VLAN, Fedora /
+timezone / users / SSH / firewall editors, Wi-Fi, Fedora /
 Arch host updates, unattended-upgrades config editor, Watchtower,
 Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
 this slice; a unit-name textbox is not. Leftover/failed **unit restart** from
 those listed names is in (`systemctl restart`, step-up when TOTP is on).
 Omnibus **GitLab restore** from listed dumps is in (`gitlab-backup restore`,
 step-up, one-shot ticket before SSE). Ethernet **IPv6** (automatic or static)
-is in on the same `net_set` as IPv4 (step-up when TOTP is on). Observing whether unattended-upgrades
+is in on the same `net_set` as IPv4 (step-up when TOTP is on). **VLAN create**
+(`vlan_add`, parent + id 1–4094, step-up) is in; QinQ, VLAN delete, and Wi-Fi
+are not. Observing whether unattended-upgrades
 is enabled and when it last ran is in; editing `20auto-upgrades` is not.

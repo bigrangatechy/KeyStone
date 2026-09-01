@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Host apt and addressing are **not** `DockerOp`. Cookie-authed
 `POST /nodes/{id}/sys/{op}` and `GET /api/v1/nodes/{id}/sys/updates` become
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
-`updates_apply`, `updates_autoremove`, `net_set`, `gitlab_backup`,
+`updates_apply`, `updates_autoremove`, `net_set`, `vlan_add`, `gitlab_backup`,
 `gitlab_restore`, `reboot`, `journal`, `unit_restart`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
@@ -40,7 +40,8 @@ hardcoded unit list (not a textbox). `reboot` is hardcoded
 `systemctl reboot` (not poweroff). `unit_restart` is hardcoded
 `systemctl restart -- <unit>` only if that name is on the live leftover
 or failed list from `needrestart` / `systemctl --failed` (not a textbox).
-Tests must not run live `apt-get`,
+`vlan_add` is a listed Ethernet parent plus id 1–4094 (not a name textbox);
+the helper re-checks the live address list. Tests must not run live `apt-get`,
 `apt-get autoremove`, `gitlab-backup`, `gitlab-backup restore`, `journalctl -f`, `systemctl reboot`,
 `systemctl restart`, `netplan apply`, or `nmcli`.
 
@@ -50,7 +51,8 @@ Tests must not run live `apt-get`,
 | `updates_list` | no | `sys_view` | List pending apt upgrades |
 | `updates_apply` | yes | `sys_manage` | Apply apt upgrades (streamed). `NEEDRESTART_MODE=list`. |
 | `updates_autoremove` | yes | `sys_manage` | `apt-get autoremove` (streamed). This is not `dist-upgrade`. Tests must not run it. |
-| `net_set` | yes | `sys_manage` | Set IPv4 DHCP/static and IPv6 automatic/static on one Ethernet interface. `needs_step_up()`: current authenticator code when TOTP is on (not a backup code). TOTP off stays confirm-only. Wi-Fi and VLAN create are not this op. Tests must not run `netplan apply` or `nmcli`. |
+| `net_set` | yes | `sys_manage` | Set IPv4 DHCP/static and IPv6 automatic/static on one Ethernet interface, including a VLAN subinterface created as `parent.vid`. `needs_step_up()`: current authenticator code when TOTP is on (not a backup code). TOTP off stays confirm-only. Writes `/etc/netplan/99-keystone.yaml` or `/etc/netplan/99-keystone-vlan-{iface}.yaml`. Wi-Fi is not this op. Tests must not run `netplan apply` or `nmcli`. |
+| `vlan_add` | yes | `sys_manage` | Create an 802.1Q VLAN on a listed Ethernet parent (`eth0.10`). `needs_step_up()`. Helper re-checks the live address list. Not a name textbox. QinQ and VLAN delete are not this op. Tests must not run `netplan apply` or `nmcli`. |
 | `gitlab_backup` | yes | `sys_manage` | Omnibus `gitlab-backup create` (streamed). Missing binary is an error; tests must not run it. Docker GitLab is not this op. |
 | `gitlab_restore` | yes | `sys_manage` | Omnibus restore from a listed `*_gitlab_backup.tar` (streamed). `needs_step_up()`. POST arms a one-shot ticket; SSE will not start without it. Helper re-checks the live backups dir, then `gitlab-ctl stop` puma/sidekiq, `gitlab-backup restore BACKUP=… force=yes`, `gitlab-ctl restart`. Not a path textbox. Tests must not run it. |
 | `reboot` | yes | `sys_manage` | Hardcoded `systemctl reboot`. Not streamed. Tests must not invoke it. Poweroff is not an op. |
@@ -59,7 +61,7 @@ Tests must not run live `apt-get`,
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
 token cannot call these routes. `SysOp::needs_step_up()` is `net_set`,
-`unit_restart`, and `gitlab_restore`. The same `consume_step_up` helper as Docker POSTs enforces
+`vlan_add`, `unit_restart`, and `gitlab_restore`. The same `consume_step_up` helper as Docker POSTs enforces
 form field `totp`. Failed step-up is still an audit row (`ok` false) and does
 not call the agent. Streaming restore must not start SSE until that code is
 accepted (in-memory ticket, 120s, one-shot).

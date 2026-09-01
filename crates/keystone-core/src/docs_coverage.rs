@@ -425,9 +425,10 @@ fn operator_docs_cover_ipv4_step_up() {
     assert!(
         dev.contains("needs_step_up()")
             && dev.contains("`net_set`")
+            && dev.contains("`vlan_add`")
             && dev.contains("`unit_restart`")
             && dev.contains("`gitlab_restore`"),
-        "developer system.md must say net_set, unit_restart, and gitlab_restore need step-up"
+        "developer system.md must say net_set, vlan_add, unit_restart, and gitlab_restore need step-up"
     );
     assert!(
         docker.contains("needs_step_up()") && docker.contains("confirm"),
@@ -537,10 +538,8 @@ fn operator_docs_cover_ethernet_ipv6() {
     let dev = include_str!("../../../docs/dev/src/system.md");
     let arch = include_str!("../../../docs/dev/src/architecture.md");
     assert!(
-        system.contains("IPv6")
-            && system.contains("SLAAC")
-            && system.contains("Wi-Fi and VLANs are not"),
-        "System chapter must document Ethernet IPv6 and keep Wi-Fi/VLAN out"
+        system.contains("IPv6") && system.contains("SLAAC") && system.contains("Wi-Fi are not"),
+        "System chapter must document Ethernet IPv6 and keep Wi-Fi out"
     );
     assert!(
         using.contains("IPv6") && using.contains("current authenticator code"),
@@ -563,7 +562,51 @@ fn operator_docs_cover_ethernet_ipv6() {
         "developer system.md must say IPv6 is on net_set and tests must not apply it"
     );
     assert!(
-        arch.contains("IPv6") && arch.contains("Wi-Fi / VLAN"),
-        "architecture.md must say Ethernet IPv6 is in and Wi-Fi/VLAN stay out"
+        arch.contains("IPv6") && arch.contains("Wi-Fi"),
+        "architecture.md must say Ethernet IPv6 is in and Wi-Fi stays out"
+    );
+}
+
+#[test]
+fn operator_docs_cover_vlan_add() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("Add VLAN") && system.contains("1–4094") && system.contains("name textbox"),
+        "System chapter must document listed-parent VLAN create, not a name textbox"
+    );
+    assert!(
+        using.contains("VLAN") && using.contains("current authenticator code"),
+        "using.md must mention VLAN create and step-up"
+    );
+    assert!(
+        trouble.contains("Add VLAN refused") && trouble.contains("live address"),
+        "troubleshooting must cover a stale VLAN parent"
+    );
+    assert!(
+        security.contains("Add VLAN") && security.contains("IPv4"),
+        "security.md must treat VLAN create like IPv4 for step-up"
+    );
+    assert!(
+        audit.contains("VLAN create"),
+        "Audit must list VLAN create as a mutation"
+    );
+    assert!(
+        http.contains("`vlan_add`") && http.contains("`vlan`"),
+        "HTTP API must mention vlan_add"
+    );
+    assert!(
+        dev.contains("`vlan_add`") && dev.contains("live address list"),
+        "developer system.md must say the helper re-checks the live address list"
+    );
+    assert!(
+        arch.contains("VLAN create") && arch.contains("QinQ"),
+        "architecture.md must say VLAN create is in and QinQ stays out"
     );
 }

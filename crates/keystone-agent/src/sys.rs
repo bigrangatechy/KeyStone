@@ -27,7 +27,7 @@ pub fn socket_present() -> bool {
 fn call_budget(op: SysOp) -> Duration {
     match op {
         SysOp::Status => Duration::from_secs(3),
-        SysOp::NetSet => Duration::from_secs(20),
+        SysOp::NetSet | SysOp::VlanAdd => Duration::from_secs(20),
         SysOp::Reboot | SysOp::UnitRestart => Duration::from_secs(15),
         SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
             Duration::from_secs(120)

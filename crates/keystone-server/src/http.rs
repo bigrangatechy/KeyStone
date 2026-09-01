@@ -2219,6 +2219,7 @@ struct SysForm {
     ipv6_dns: Option<String>,
     unit: Option<String>,
     name: Option<String>,
+    vlan: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2293,6 +2294,10 @@ fn sys_form_payload(form: &SysForm) -> String {
     }
     if let Some(name) = &form.name {
         map.insert("name".into(), serde_json::json!(name.trim()));
+    }
+    if let Some(v) = &form.vlan {
+        let n: u16 = v.trim().parse().unwrap_or(0);
+        map.insert("vlan".into(), serde_json::json!(n));
     }
     serde_json::Value::Object(map).to_string()
 }
@@ -3496,12 +3501,16 @@ mod tests {
             );
         }
         assert!(js.contains("/sys/net_set"));
+        assert!(js.contains("/sys/vlan_add"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
         assert!(js.contains("/sys/gitlab_restore"));
         assert!(js.contains("/sys/reboot"));
         assert!(SysOp::NetSet.mutating());
+        assert!(SysOp::VlanAdd.mutating());
+        assert!(SysOp::VlanAdd.needs_step_up());
+        assert!(!SysOp::VlanAdd.streams());
         assert!(SysOp::UpdatesApply.mutating());
         assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::GitlabBackup.mutating());
@@ -3729,6 +3738,7 @@ mod tests {
             ipv6_dns: None,
             unit: None,
             name: None,
+            vlan: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -3757,6 +3767,7 @@ mod tests {
             ipv6_dns: None,
             unit: Some(" docker.service ".into()),
             name: None,
+            vlan: None,
             totp: "000000".into(),
             redirect: String::new(),
         };
@@ -3778,6 +3789,7 @@ mod tests {
             ipv6_dns: None,
             unit: None,
             name: Some(" 1712345678_gitlab_backup.tar ".into()),
+            vlan: None,
             totp: "654321".into(),
             redirect: String::new(),
         };
@@ -3799,6 +3811,7 @@ mod tests {
             ipv6_dns: Some("2001:db8::53".into()),
             unit: None,
             name: None,
+            vlan: None,
             totp: "111111".into(),
             redirect: String::new(),
         };
@@ -3806,6 +3819,29 @@ mod tests {
         assert!(v6.contains("\"ipv6_method\":\"static\""));
         assert!(v6.contains("2001:db8::10"));
         assert!(!v6.contains('%') && !v6.contains("111111"));
+        let vlan = SysForm {
+            payload: None,
+            iface: Some(" eth0 ".into()),
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: Some(" 10 ".into()),
+            totp: "222222".into(),
+            redirect: String::new(),
+        };
+        let v = sys_form_payload(&vlan);
+        assert!(v.contains("\"iface\":\"eth0\""));
+        assert!(v.contains("\"vlan\":10"));
+        assert!(!v.contains("222222"));
     }
 
     #[test]
@@ -3907,6 +3943,10 @@ mod tests {
             "Settings manage checkbox must mention GitLab restore"
         );
         assert!(
+            html.contains("VLAN"),
+            "Settings manage checkbox must mention VLAN create"
+        );
+        assert!(
             html.contains("and reboot"),
             "Settings manage checkbox must mention reboot"
         );
@@ -3939,6 +3979,13 @@ mod tests {
         assert!(
             js.contains("Change addressing on this node"),
             "net_set must ask before changing addressing"
+        );
+        assert!(
+            js.contains("/sys/vlan_add")
+                && js.contains("Create VLAN")
+                && js.contains("Not a name textbox")
+                && js.contains(r#"vlanId.name = "vlan""#),
+            "VLAN create must be parent + numeric id, not a name field"
         );
         assert!(
             js.contains("data-totp")

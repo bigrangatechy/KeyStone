@@ -8,7 +8,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
 Pi OS** boxes. Health is on the left (leftover services, failed units,
 allowlisted journals, NTP, unattended-upgrades glance, addresses). Actions
-are on the right (apt, autoremove, confirmed reboot, IPv4, GitLab Omnibus
+are on the right (apt, autoremove, confirmed reboot, IPv4/IPv6, VLAN,
+GitLab Omnibus
 backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
 agent on them for **Overview metrics** (and Docker Observe if they run
@@ -20,8 +21,8 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, IPv6, leftover restart, GitLab backup, GitLab restore, and reboot** if
-   you want Apply, Autoremove, leftover Restart, or Reboot. That Manage checkbox is behind a
+   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, leftover restart, GitLab backup, GitLab restore, and reboot** if
+   you want Apply, Autoremove, leftover Restart, VLAN, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
@@ -112,10 +113,13 @@ Both families are one Apply. Backend is Netplan when `/etc/netplan`
 exists, otherwise NetworkManager.
 
 Changing the address can drop the agent session (and SSH). Keep a console.
-If you enabled an authenticator, Apply IPv4, leftover **Restart**, and
-GitLab **Restore** also ask for a **current 6-digit code** (not a backup
-code). IPv6 uses that same step-up. Wi-Fi and VLANs are not in this
-version.
+If you enabled an authenticator, Apply IPv4, leftover **Restart**, GitLab
+**Restore**, and **Add VLAN** also ask for a **current 6-digit code** (not a backup
+code). IPv6 uses that same step-up. **Add VLAN** creates `eth0.10` from a listed
+Ethernet parent and id 1–4094 (not a name textbox). The helper re-checks that
+the parent is on the live address list and that the VLAN iface is not already
+there. Then Apply addressing on the new interface. QinQ, VLAN delete, and
+Wi-Fi are not in this version.
 
 ## GitLab backup and restore
 

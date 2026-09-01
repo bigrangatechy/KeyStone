@@ -1200,7 +1200,7 @@
       const netHead = el("div", "compose-head");
       netHead.appendChild(el("h3", null, "Addressing"));
       actions.appendChild(netHead);
-      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version. Wi-Fi and VLANs are not in this UI."));
+      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version. Add a VLAN below, then Apply addressing on it. Wi-Fi is not in this UI."));
       if (stepUpErr === "step-up") {
         actions.appendChild(el("p", "error", "This change needs a current authenticator code, not a backup code."));
       } else if (stepUpErr === "step-up-locked") {
@@ -1363,6 +1363,78 @@
         save.textContent = "Apply addressing";
         form.appendChild(save);
         actions.appendChild(form);
+      }
+      const parents = ether.filter((i) => String(i.name || "").indexOf(".") < 0);
+      const vlanHead = el("div", "compose-head");
+      vlanHead.appendChild(el("h3", null, "VLAN"));
+      actions.appendChild(vlanHead);
+      actions.appendChild(el("p", "muted", "Creates parent.id (for example eth0.10). Not a name textbox. QinQ, delete, and Wi-Fi are not in this UI. Applying can bounce the NIC — keep a console."));
+      if (!parents.length) {
+        actions.appendChild(el("p", "muted", "No Ethernet parent to add a VLAN on."));
+      } else {
+        const vform = document.createElement("form");
+        vform.method = "post";
+        vform.action = "/nodes/" + encodeURIComponent(node) + "/sys/vlan_add";
+        vform.className = "sys-net";
+        vform.addEventListener("submit", (ev) => {
+          const parent = vform.querySelector('select[name="iface"]');
+          const idField = vform.querySelector('input[name="vlan"]');
+          const parentName = (parent && parent.value) || "";
+          const vid = ((idField && idField.value) || "").replace(/\D/g, "");
+          if (!window.confirm("Create VLAN " + vid + " on " + parentName + " as " + parentName + "." + vid + "? This can drop the agent until you reconnect.")) {
+            ev.preventDefault();
+            return;
+          }
+          if (totpOn) {
+            const field = vform.querySelector('input[name="totp"]');
+            const digits = ((field && field.value) || "").replace(/\D/g, "");
+            if (digits.length !== 6) {
+              ev.preventDefault();
+            }
+          }
+        });
+        const parentSel = document.createElement("select");
+        parentSel.name = "iface";
+        parents.forEach((i) => {
+          const o = document.createElement("option");
+          o.value = i.name || "";
+          o.textContent = i.name || "";
+          parentSel.appendChild(o);
+        });
+        const vlanId = document.createElement("input");
+        vlanId.name = "vlan";
+        vlanId.type = "number";
+        vlanId.min = "1";
+        vlanId.max = "4094";
+        vlanId.value = "10";
+        vlanId.required = true;
+        function vlabeled(name, input, span) {
+          const lab = document.createElement("label");
+          if (span) lab.className = span;
+          lab.appendChild(document.createTextNode(name));
+          lab.appendChild(input);
+          return lab;
+        }
+        vform.appendChild(vlabeled("Parent", parentSel));
+        vform.appendChild(vlabeled("VLAN id", vlanId));
+        if (totpOn) {
+          const totp = document.createElement("input");
+          totp.name = "totp";
+          totp.inputMode = "numeric";
+          totp.autocomplete = "one-time-code";
+          totp.maxLength = 6;
+          totp.required = true;
+          totp.placeholder = "000000";
+          const totpLab = vlabeled("Authenticator code", totp, "span-2");
+          totpLab.appendChild(el("span", "muted", "Current 6-digit code. Backup codes are for sign-in only."));
+          vform.appendChild(totpLab);
+        }
+        const add = document.createElement("button");
+        add.type = "submit";
+        add.className = "danger span-2";
+        add.textContent = "Add VLAN";
+        vform.appendChild(add);
+        actions.appendChild(vform);
       }
     }
     split.appendChild(health);

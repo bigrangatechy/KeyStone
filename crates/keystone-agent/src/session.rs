@@ -731,9 +731,11 @@ async fn handle_sys(
             }
             Ok(local)
         }
-        SysOp::UpdatesList | SysOp::NetSet | SysOp::Reboot | SysOp::UnitRestart => {
-            crate::sys::call(op, payload).await
-        }
+        SysOp::UpdatesList
+        | SysOp::NetSet
+        | SysOp::VlanAdd
+        | SysOp::Reboot
+        | SysOp::UnitRestart => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
         SysOp::UpdatesAutoremove => {
             anyhow::bail!("updates_autoremove is streamed from the autoremove page")
@@ -922,6 +924,7 @@ mod tests {
             SysOp::UpdatesApply,
             SysOp::UpdatesAutoremove,
             SysOp::NetSet,
+            SysOp::VlanAdd,
             SysOp::GitlabBackup,
             SysOp::GitlabRestore,
             SysOp::Reboot,

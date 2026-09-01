@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
-//! failed units, unit restart from those lists, reboot, journal follow, IPv4,
-//! GitLab Omnibus backup/restore, and unattended-upgrades observe. No `sh -c`.
-//! Started by systemd socket.
+//! failed units, unit restart from those lists, reboot, journal follow,
+//! IPv4/IPv6, 802.1Q VLAN create, GitLab Omnibus backup/restore, and
+//! unattended-upgrades observe. No `sh -c`. Started by systemd socket.
 
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixListener as StdUnixListener;
@@ -14,13 +14,13 @@ use std::process::Stdio;
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     gitlab_backup_id, gitlab_backup_name_ok, gitlab_backups_for_restore, gitlab_restore_listed,
-    journal_unit, merge_upgradable, netplan_yaml, newest_gitlab_backup, nmcli_modify_args,
-    parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json, parse_needrestart_batch,
-    parse_ntp_sync, parse_restart_unit, parse_restore_backup, parse_systemctl_failed,
-    parse_unattended_periodic, unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp,
-    GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SYS_SOCKET_PATH,
-    UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
-    UPDATES_LIST_CAP,
+    journal_unit, merge_upgradable, netplan_fragment_path, netplan_vlan_yaml, netplan_yaml,
+    newest_gitlab_backup, nmcli_modify_args, nmcli_vlan_add_args, parse_apt_list_upgradable,
+    parse_apt_simulate, parse_ip_addr_json, parse_needrestart_batch, parse_ntp_sync,
+    parse_restart_unit, parse_restore_backup, parse_systemctl_failed, parse_unattended_periodic,
+    unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp, VlanAdd, GITLAB_BACKUP_BIN,
+    GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG,
+    UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -129,6 +129,12 @@ async fn dispatch(
             let raw = payload.to_string();
             let req = NetSet::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
             net_set(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
+        SysOp::VlanAdd => {
+            let raw = payload.to_string();
+            let req = VlanAdd::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            vlan_add(&req).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
         SysOp::GitlabBackup => {
@@ -766,8 +772,8 @@ async fn net_set(req: &NetSet) -> anyhow::Result<()> {
     match backend {
         "netplan" => {
             let yaml = netplan_yaml(req).map_err(|e| anyhow!("{e}"))?;
-            let path = "/etc/netplan/99-keystone.yaml";
-            tokio::fs::write(path, yaml)
+            let path = netplan_fragment_path(&req.iface).map_err(|e| anyhow!("{e}"))?;
+            tokio::fs::write(&path, yaml)
                 .await
                 .with_context(|| format!("write {path}"))?;
             let st = Command::new("netplan")
@@ -806,6 +812,67 @@ async fn net_set(req: &NetSet) -> anyhow::Result<()> {
         _ => anyhow::bail!("no netplan or NetworkManager on this host"),
     }
     Ok(())
+}
+
+async fn vlan_add(req: &VlanAdd) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("vlan add is not invoked in tests");
+    }
+    let name = req.iface_name();
+    let ifaces = ip_addrs().await;
+    if !iface_named(&ifaces, &req.iface) {
+        anyhow::bail!("parent interface is not on this host");
+    }
+    if iface_named(&ifaces, &name) {
+        anyhow::bail!("VLAN interface already exists");
+    }
+    let backend = detect_backend();
+    match backend {
+        "netplan" => {
+            let yaml = netplan_vlan_yaml(req).map_err(|e| anyhow!("{e}"))?;
+            let path = netplan_fragment_path(&name).map_err(|e| anyhow!("{e}"))?;
+            tokio::fs::write(&path, yaml)
+                .await
+                .with_context(|| format!("write {path}"))?;
+            let st = Command::new("netplan")
+                .arg("apply")
+                .status()
+                .await
+                .context("netplan apply")?;
+            if !st.success() {
+                anyhow::bail!("netplan apply failed");
+            }
+        }
+        "networkmanager" => {
+            let args = nmcli_vlan_add_args(req).map_err(|e| anyhow!("{e}"))?;
+            let st = Command::new("nmcli")
+                .args(&args)
+                .status()
+                .await
+                .context("nmcli vlan add")?;
+            if !st.success() {
+                anyhow::bail!("nmcli vlan add failed");
+            }
+            let st = Command::new("nmcli")
+                .args(["connection", "up", &name])
+                .status()
+                .await
+                .context("nmcli up")?;
+            if !st.success() {
+                anyhow::bail!("nmcli connection up failed");
+            }
+        }
+        _ => anyhow::bail!("no netplan or NetworkManager on this host"),
+    }
+    Ok(())
+}
+
+fn iface_named(ifaces: &Value, name: &str) -> bool {
+    ifaces
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|row| row.get("name").and_then(|n| n.as_str()) == Some(name))
 }
 
 async fn reboot(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
@@ -1644,6 +1711,64 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn helper_rejects_shell_vlan_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"vlan_add","payload":{"iface":"eth0;rm","vlan":10}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("interface") || err.contains("invalid"),
+            "shell parent must fail validation, got {err}"
+        );
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before netplan: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_vlan_add_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"vlan_add","payload":{"iface":"eth0","vlan":10}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "vlan_add must not run netplan/nmcli in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
     #[test]
     fn net_set_writes_ipv6_without_shell() {
         let src = include_str!("sys_helper.rs");
@@ -1651,10 +1776,11 @@ mod tests {
             .split("async fn net_set")
             .nth(1)
             .expect("net_set")
-            .split("async fn reboot")
+            .split("async fn vlan_add")
             .next()
             .expect("net_set body");
         assert!(body.contains("netplan_yaml"));
+        assert!(body.contains("netplan_fragment_path"));
         assert!(body.contains("nmcli_modify_args"));
         assert!(body.contains("cfg!(test)"));
         assert!(!body.contains("sh -c") && !body.contains("bash -c"));
@@ -1662,6 +1788,28 @@ mod tests {
             !body.contains("iwconfig") && !body.contains("wpa_supplicant"),
             "Wi-Fi stays out of this slice"
         );
+    }
+
+    #[test]
+    fn vlan_add_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn vlan_add")
+            .nth(1)
+            .expect("vlan_add")
+            .split("async fn reboot")
+            .next()
+            .expect("vlan_add body");
+        assert!(body.contains("netplan_vlan_yaml"));
+        assert!(body.contains("nmcli_vlan_add_args"));
+        assert!(body.contains("iface_named"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(
+            !body.contains("iwconfig") && !body.contains("wpa_supplicant"),
+            "Wi-Fi stays out of this slice"
+        );
+        assert!(!body.contains("poweroff"));
     }
 
     struct SockGuard(std::path::PathBuf);

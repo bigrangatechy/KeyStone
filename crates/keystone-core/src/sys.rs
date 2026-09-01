@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
-//! restart from those lists, reboot, journal follow, IPv4/IPv6, GitLab Omnibus
-//! backup/restore, unattended-upgrades observe). No I/O — the helper and
-//! agent run them. Keep `docs/dev/src/system.md` in sync.
+//! restart from those lists, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
+//! create, GitLab Omnibus backup/restore, unattended-upgrades observe). No
+//! I/O — the helper and agent run them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -72,6 +72,7 @@ pub enum SysOp {
     UpdatesApply,
     UpdatesAutoremove,
     NetSet,
+    VlanAdd,
     GitlabBackup,
     GitlabRestore,
     Reboot,
@@ -93,6 +94,7 @@ impl SysOp {
             Self::UpdatesApply => "Apply apt upgrades",
             Self::UpdatesAutoremove => "Remove unused packages (apt-get autoremove)",
             Self::NetSet => "Set IPv4/IPv6 DHCP or static on one Ethernet interface",
+            Self::VlanAdd => "Create an 802.1Q VLAN on a listed Ethernet parent",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::GitlabRestore => {
                 "Restore GitLab Omnibus from a listed dump (gitlab-backup restore)"
@@ -111,6 +113,7 @@ impl SysOp {
             Self::UpdatesApply
                 | Self::UpdatesAutoremove
                 | Self::NetSet
+                | Self::VlanAdd
                 | Self::GitlabBackup
                 | Self::GitlabRestore
                 | Self::Reboot
@@ -141,7 +144,10 @@ impl SysOp {
     /// the agent; restarting leftover docker/ssh/keystone-server can too;
     /// GitLab restore replaces application data.
     pub fn needs_step_up(self) -> bool {
-        matches!(self, Self::NetSet | Self::UnitRestart | Self::GitlabRestore)
+        matches!(
+            self,
+            Self::NetSet | Self::VlanAdd | Self::UnitRestart | Self::GitlabRestore
+        )
     }
 }
 
@@ -171,6 +177,8 @@ pub enum SysError {
     Unit,
     #[error("backup name is invalid")]
     Backup,
+    #[error("VLAN id must be 1–4094")]
+    Vlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,6 +228,9 @@ impl NetSet {
 
     pub fn validate(mut self) -> Result<Self, SysError> {
         self.iface = validate_iface(&self.iface)?;
+        if self.iface.contains('.') && parse_vlan_iface(&self.iface).is_none() {
+            return Err(SysError::Iface);
+        }
         match self.method {
             NetMethod::Dhcp => {
                 self.address.clear();
@@ -277,6 +288,65 @@ impl NetSet {
             }
         }
         Ok(self)
+    }
+}
+
+/// Create `parent.vid` (for example `eth0.10`). Parent is a listed Ethernet
+/// name, not a VLAN and not a name textbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VlanAdd {
+    pub iface: String,
+    pub vlan: u16,
+}
+
+impl VlanAdd {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
+        v.validate()
+    }
+
+    pub fn validate(mut self) -> Result<Self, SysError> {
+        self.iface = validate_iface(&self.iface)?;
+        if self.iface.contains('.') {
+            return Err(SysError::Iface);
+        }
+        if !(1..=4094).contains(&self.vlan) {
+            return Err(SysError::Vlan);
+        }
+        let _ = validate_iface(&self.iface_name())?;
+        Ok(self)
+    }
+
+    pub fn iface_name(&self) -> String {
+        format!("{}.{}", self.iface, self.vlan)
+    }
+}
+
+/// Netplan fragment for physical Ethernet apply.
+pub const NETPLAN_KEYSTONE: &str = "/etc/netplan/99-keystone.yaml";
+
+/// `parent.vid` when `name` is a single 802.1Q subinterface.
+pub fn parse_vlan_iface(name: &str) -> Option<(String, u16)> {
+    let (parent, id) = name.rsplit_once('.')?;
+    if parent.is_empty() || parent.contains('.') {
+        return None;
+    }
+    let vlan: u16 = id.parse().ok()?;
+    if !(1..=4094).contains(&vlan) {
+        return None;
+    }
+    let parent = validate_iface(parent).ok()?;
+    Some((parent, vlan))
+}
+
+/// `/etc/netplan/99-keystone.yaml` or a per-VLAN fragment so Ethernet apply
+/// does not wipe 802.1Q.
+pub fn netplan_fragment_path(iface: &str) -> Result<String, SysError> {
+    let iface = validate_iface(iface)?;
+    if parse_vlan_iface(&iface).is_some() {
+        Ok(format!("/etc/netplan/99-keystone-vlan-{iface}.yaml"))
+    } else {
+        Ok(NETPLAN_KEYSTONE.to_string())
     }
 }
 
@@ -348,7 +418,14 @@ pub fn validate_ipv6(raw: &str) -> Result<Ipv6Addr, SysError> {
 /// Netplan fragment for `/etc/netplan/99-keystone.yaml` only.
 pub fn netplan_yaml(req: &NetSet) -> Result<String, SysError> {
     let req = req.clone().validate()?;
-    let mut out = format!("network:\n  version: 2\n  ethernets:\n    {}:\n", req.iface);
+    let mut out = if let Some((parent, id)) = parse_vlan_iface(&req.iface) {
+        format!(
+            "network:\n  version: 2\n  vlans:\n    {}:\n      id: {id}\n      link: {parent}\n",
+            req.iface
+        )
+    } else {
+        format!("network:\n  version: 2\n  ethernets:\n    {}:\n", req.iface)
+    };
     match req.method {
         NetMethod::Dhcp => out.push_str("      dhcp4: true\n"),
         NetMethod::Static => out.push_str("      dhcp4: false\n"),
@@ -457,6 +534,40 @@ pub fn nmcli_modify_args(req: &NetSet) -> Result<Vec<String>, SysError> {
         }
     }
     Ok(args)
+}
+
+/// Netplan fragment that only creates the VLAN (DHCP/SLAAC until Apply).
+pub fn netplan_vlan_yaml(req: &VlanAdd) -> Result<String, SysError> {
+    let req = req.clone().validate()?;
+    let name = req.iface_name();
+    Ok(format!(
+        "network:\n  version: 2\n  vlans:\n    {name}:\n      id: {}\n      link: {}\n      dhcp4: true\n      dhcp6: true\n",
+        req.vlan, req.iface
+    ))
+}
+
+/// `nmcli connection add type vlan` argv (no shell).
+pub fn nmcli_vlan_add_args(req: &VlanAdd) -> Result<Vec<String>, SysError> {
+    let req = req.clone().validate()?;
+    let name = req.iface_name();
+    Ok(vec![
+        "connection".into(),
+        "add".into(),
+        "type".into(),
+        "vlan".into(),
+        "con-name".into(),
+        name.clone(),
+        "ifname".into(),
+        name,
+        "dev".into(),
+        req.iface,
+        "id".into(),
+        req.vlan.to_string(),
+        "ipv4.method".into(),
+        "auto".into(),
+        "ipv6.method".into(),
+        "auto".into(),
+    ])
 }
 
 /// Max packages returned by Check for updates (UI table).
@@ -929,12 +1040,14 @@ mod tests {
         assert!(SysOp::UpdatesApply.mutating());
         assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::NetSet.mutating());
+        assert!(SysOp::VlanAdd.mutating());
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::GitlabRestore.mutating());
         assert!(SysOp::Reboot.mutating());
         assert!(SysOp::UnitRestart.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
+        assert_eq!(SysOp::VlanAdd.permission(), Permission::SysManage);
         assert_eq!(SysOp::GitlabBackup.permission(), Permission::SysManage);
         assert_eq!(SysOp::GitlabRestore.permission(), Permission::SysManage);
         assert_eq!(SysOp::UpdatesAutoremove.permission(), Permission::SysManage);
@@ -964,14 +1077,18 @@ mod tests {
         assert_eq!(GITLAB_CTL_BIN, "/opt/gitlab/bin/gitlab-ctl");
         assert_eq!(GITLAB_RESTORE_LIST_CAP, 50);
         assert_eq!(JOURNAL_UNITS.len(), 5);
+        assert_eq!(SysOp::VlanAdd.as_str(), "vlan_add");
+        assert!(SysOp::VlanAdd.mutating());
+        assert!(!SysOp::VlanAdd.streams());
         assert!(SysOp::NetSet.needs_step_up());
+        assert!(SysOp::VlanAdd.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::GitlabRestore.needs_step_up());
         assert!(!SysOp::GitlabBackup.needs_step_up());
         for op in SysOp::iter() {
             let want = matches!(
                 op,
-                SysOp::NetSet | SysOp::UnitRestart | SysOp::GitlabRestore
+                SysOp::NetSet | SysOp::VlanAdd | SysOp::UnitRestart | SysOp::GitlabRestore
             );
             assert_eq!(op.needs_step_up(), want, "{} step-up", op.as_str());
         }
@@ -988,6 +1105,7 @@ mod tests {
                 SysOp::UpdatesApply => "/sys/updates",
                 SysOp::UpdatesAutoremove => "/sys/autoremove",
                 SysOp::NetSet => "/sys/net_set",
+                SysOp::VlanAdd => "/sys/vlan_add",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
                 SysOp::GitlabRestore => "/sys/gitlab_restore",
                 SysOp::Reboot => "/sys/reboot",
@@ -1191,6 +1309,117 @@ mod tests {
     }
 
     #[test]
+    fn vlan_add_round_trip_and_rejects_shell() {
+        let req = VlanAdd {
+            iface: "eth0".into(),
+            vlan: 10,
+        }
+        .validate()
+        .unwrap();
+        assert_eq!(req.iface_name(), "eth0.10");
+        assert_eq!(parse_vlan_iface("eth0.10"), Some(("eth0".into(), 10)));
+        assert_eq!(netplan_fragment_path("eth0").unwrap(), NETPLAN_KEYSTONE);
+        assert_eq!(
+            netplan_fragment_path("eth0.10").unwrap(),
+            "/etc/netplan/99-keystone-vlan-eth0.10.yaml"
+        );
+        let yaml = netplan_vlan_yaml(&req).unwrap();
+        assert!(yaml.contains("vlans:"));
+        assert!(yaml.contains("eth0.10:"));
+        assert!(yaml.contains("id: 10"));
+        assert!(yaml.contains("link: eth0"));
+        assert!(yaml.contains("dhcp4: true"));
+        assert!(yaml.contains("dhcp6: true"));
+        assert!(!yaml.contains("ethernets:"));
+        assert!(!yaml.contains(';') && !yaml.contains('|'));
+        let args = nmcli_vlan_add_args(&req).unwrap();
+        assert_eq!(args[0], "connection");
+        assert!(args.contains(&"vlan".into()));
+        assert!(args.contains(&"eth0.10".into()));
+        assert!(args.contains(&"eth0".into()));
+        assert!(args.contains(&"10".into()));
+        assert!(!args.iter().any(|a| a.contains(';') || a.contains('|')));
+        assert_eq!(
+            VlanAdd {
+                iface: "eth0;rm".into(),
+                vlan: 10,
+            }
+            .validate(),
+            Err(SysError::Iface)
+        );
+        assert_eq!(
+            VlanAdd {
+                iface: "wlan0".into(),
+                vlan: 10,
+            }
+            .validate(),
+            Err(SysError::Iface)
+        );
+        assert_eq!(
+            VlanAdd {
+                iface: "eth0.10".into(),
+                vlan: 20,
+            }
+            .validate(),
+            Err(SysError::Iface)
+        );
+        assert_eq!(
+            VlanAdd {
+                iface: "eth0".into(),
+                vlan: 0,
+            }
+            .validate(),
+            Err(SysError::Vlan)
+        );
+        assert_eq!(
+            VlanAdd {
+                iface: "eth0".into(),
+                vlan: 4095,
+            }
+            .validate(),
+            Err(SysError::Vlan)
+        );
+        let addressed = NetSet {
+            iface: "eth0.10".into(),
+            method: NetMethod::Static,
+            address: "192.168.10.50".into(),
+            prefix: 24,
+            gateway: "192.168.10.1".into(),
+            dns: vec![],
+            ipv6_method: Ipv6Method::Auto,
+            ipv6_address: String::new(),
+            ipv6_prefix: 0,
+            ipv6_gateway: String::new(),
+            ipv6_dns: vec![],
+        }
+        .validate()
+        .unwrap();
+        let net_yaml = netplan_yaml(&addressed).unwrap();
+        assert!(net_yaml.contains("vlans:"));
+        assert!(net_yaml.contains("id: 10"));
+        assert!(net_yaml.contains("link: eth0"));
+        assert!(net_yaml.contains("192.168.10.50/24"));
+        assert!(!net_yaml.contains("ethernets:"));
+        assert_eq!(
+            NetSet {
+                iface: "eth0.10.20".into(),
+                method: NetMethod::Dhcp,
+                address: String::new(),
+                prefix: 0,
+                gateway: String::new(),
+                dns: vec![],
+                ipv6_method: Ipv6Method::Auto,
+                ipv6_address: String::new(),
+                ipv6_prefix: 0,
+                ipv6_gateway: String::new(),
+                ipv6_dns: vec![],
+            }
+            .validate(),
+            Err(SysError::Iface)
+        );
+    }
+
+    #[test]
     fn parse_apt_inst_lines() {
         let pkgs = parse_apt_simulate(
             "NOTE: This is only a simulation!\nInst git [1:2.34.1-1] (1:2.34.1-2 Ubuntu:22.04 [amd64])\nConf git (1:2.34.1-2 Ubuntu:22.04 [amd64])\n",
@@ -1279,6 +1508,7 @@ mod tests {
         assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
         assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
+        assert_eq!("vlan_add".parse::<SysOp>().unwrap(), SysOp::VlanAdd);
         assert_eq!(
             "updates_autoremove".parse::<SysOp>().unwrap(),
             SysOp::UpdatesAutoremove

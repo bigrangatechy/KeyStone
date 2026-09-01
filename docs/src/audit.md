@@ -22,8 +22,8 @@ prune audit rows.
 - Docker Manage: start, stop, restart, pause/resume, kill, remove, prune
   stopped; Compose up / start / stop / restart / down / pull / Update;
   image pull / remove / prune; volume and network create / remove / prune.
-- System Manage: apt apply, apt autoremove, IPv4/IPv6 DHCP vs static, leftover/failed unit restart, GitLab Omnibus backup,
-  GitLab Omnibus restore, confirmed reboot. A refused IPv4, unit-restart, or
+- System Manage: apt apply, apt autoremove, IPv4/IPv6 DHCP vs static, VLAN create, leftover/failed unit restart, GitLab Omnibus backup,
+  GitLab Omnibus restore, confirmed reboot. A refused IPv4, VLAN, unit-restart, or
   restore change (missing or bad authenticator code) is still a row (`ok` false).
 
 Observe-only lists and live logs are not rows. There is no interactive
