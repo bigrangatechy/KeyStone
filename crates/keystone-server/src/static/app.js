@@ -646,6 +646,7 @@
       const q = input.value.trim();
       if (q.length < 2) {
         if (searchAbort) searchAbort.abort();
+        if (tagsAbort) tagsAbort.abort();
         show(null);
         return;
       }
@@ -654,6 +655,7 @@
 
     async function runSearch(q) {
       if (searchAbort) searchAbort.abort();
+      if (tagsAbort) tagsAbort.abort();
       searchAbort = new AbortController();
       statusLine("Searching Docker Hub…", false);
       try {
@@ -674,21 +676,25 @@
 
     function paintRepos(results) {
       const wrap = el("div", "hub-panel");
-      wrap.appendChild(el("p", "muted", "Pick a repository, then a tag. That fills Pull — the agent still pulls."));
+      wrap.appendChild(el("p", "muted", "Pick a card, then a tag. That fills Pull — the agent still pulls. This is not an app store."));
       if (!results.length) {
         wrap.appendChild(el("p", "muted", "No repositories matched."));
         show(wrap);
         return;
       }
-      const list = document.createElement("ul");
-      list.className = "hub-list";
+      const board = el("div", "hub-board");
+      const grid = el("div", "hub-grid");
+      const detail = el("div", "hub-detail");
+      detail.hidden = true;
+      let openName = "";
       results.forEach((repo) => {
-        const li = document.createElement("li");
-        const btn = document.createElement("button");
-        btn.type = "button";
-        const title = document.createElement("span");
+        const pullName = repo.pull_name || repo.name || "";
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "hub-card";
+        const title = document.createElement("h3");
         const code = document.createElement("code");
-        code.textContent = repo.pull_name || repo.name || "";
+        code.textContent = pullName;
         title.appendChild(code);
         if (repo.official) {
           const badge = document.createElement("span");
@@ -696,36 +702,38 @@
           badge.textContent = "official";
           title.appendChild(badge);
         }
-        btn.appendChild(title);
-        const meta = document.createElement("span");
-        meta.className = "hub-meta muted";
-        const bits = [];
-        if (repo.description) bits.push(repo.description);
+        card.appendChild(title);
+        if (repo.description) card.appendChild(el("p", "muted", repo.description));
         const stars = formatStars(repo.stars);
-        if (stars) bits.push(stars);
-        meta.textContent = bits.join(" · ");
-        if (meta.textContent) btn.appendChild(meta);
-        btn.addEventListener("click", () => {
-          list.querySelectorAll("button").forEach((b) => b.classList.remove("is-open"));
-          btn.classList.add("is-open");
-          loadTags(wrap, repo);
+        if (stars) card.appendChild(el("span", "hub-stars", stars));
+        card.addEventListener("click", () => {
+          if (openName === pullName) {
+            openName = "";
+            card.classList.remove("is-open");
+            board.classList.remove("has-detail");
+            detail.hidden = true;
+            detail.replaceChildren();
+            return;
+          }
+          openName = pullName;
+          grid.querySelectorAll(".hub-card").forEach((c) => c.classList.remove("is-open"));
+          card.classList.add("is-open");
+          board.classList.add("has-detail");
+          detail.hidden = false;
+          loadTags(detail, repo);
         });
-        li.appendChild(btn);
-        list.appendChild(li);
+        grid.appendChild(card);
       });
-      wrap.appendChild(list);
+      board.appendChild(grid);
+      board.appendChild(detail);
+      wrap.appendChild(board);
       show(wrap);
     }
 
-    async function loadTags(wrap, repo) {
+    async function loadTags(host, repo) {
       if (tagsAbort) tagsAbort.abort();
       tagsAbort = new AbortController();
-      let tagsHost = wrap.querySelector(".hub-tags");
-      if (!tagsHost) {
-        tagsHost = el("div", "hub-tags");
-        wrap.appendChild(tagsHost);
-      }
-      tagsHost.replaceChildren(el("p", "muted", "Loading tags…"));
+      host.replaceChildren(el("p", "muted", "Loading tags…"));
       const ns = encodeURIComponent(repo.namespace || "library");
       const name = encodeURIComponent(repo.name || "");
       try {
@@ -734,28 +742,31 @@
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
-          tagsHost.replaceChildren(el("p", "error", hubError(r, data)));
+          host.replaceChildren(el("p", "error", hubError(r, data)));
           return;
         }
-        paintTags(tagsHost, Array.isArray(data.results) ? data.results : []);
+        paintTags(host, repo, Array.isArray(data.results) ? data.results : []);
       } catch (e) {
         if (e && e.name === "AbortError") return;
-        tagsHost.replaceChildren(el("p", "error", "Could not load tags. Type the image name to pull."));
+        host.replaceChildren(el("p", "error", "Could not load tags. Type the image name to pull."));
       }
     }
 
-    function paintTags(host, results) {
+    function paintTags(host, repo, results) {
       host.replaceChildren();
+      host.appendChild(el("h3", null, repo.pull_name || repo.name || ""));
+      host.appendChild(el("p", "muted", "A tag fills Pull (name, arch, last updated). You still press Pull."));
       if (!results.length) {
         host.appendChild(el("p", "muted", "No tags returned."));
         return;
       }
       const list = document.createElement("ul");
-      list.className = "hub-list";
+      list.className = "hub-tag-list";
       results.forEach((tag) => {
         const li = document.createElement("li");
         const btn = document.createElement("button");
         btn.type = "button";
+        btn.className = "hub-tag";
         const code = document.createElement("code");
         code.textContent = tag.pull_ref || "";
         btn.appendChild(code);

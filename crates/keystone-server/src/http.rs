@@ -3685,6 +3685,38 @@ mod tests {
     }
 
     #[test]
+    fn hub_images_ui_is_cards_filling_pull() {
+        let js = include_str!("static/app.js");
+        let css = include_str!("static/app.css");
+        let html = include_str!("../templates/node.html");
+        assert!(
+            html.contains("hub-query") && html.contains("image-pull-name"),
+            "Images toolbar must keep Search next to Pull"
+        );
+        assert!(
+            js.contains("hub-card") && js.contains("hub-detail") && js.contains("hub-tag"),
+            "Hub results must be glance cards with a tag detail pane"
+        );
+        assert!(
+            js.contains("nameField.value") && js.contains("pull_ref"),
+            "a tag must fill the existing Pull field"
+        );
+        assert!(
+            js.contains("not an app store"),
+            "Hub cards must not become a CasaOS-style shop"
+        );
+        assert!(
+            !js.contains("hub-list"),
+            "stacked Hub rows were replaced by cards"
+        );
+        assert!(css.contains(".hub-card") && css.contains(".hub-grid"));
+        assert!(
+            !js.contains("/v2/search/repositories"),
+            "the browser must not call Hub directly"
+        );
+    }
+
+    #[test]
     fn dockerhub_api_is_behind_the_session_cookie() {
         let src = include_str!("http.rs");
         let head = src.split("#[cfg(test)]").next().expect("router source");

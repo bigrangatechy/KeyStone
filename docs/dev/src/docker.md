@@ -153,6 +153,7 @@ handles `set_runtime` / `set_interval` / `cancel` before `handle_command`.
 Docker Hub search is not a `DockerOp`. Cookie-authed
 `GET /api/v1/dockerhub/search` and `.../tags` fetch Hub’s public HTTP API
 from the **server** and map JSON in `keystone-core` (`dockerhub.rs`).
-The UI fills the existing `image_pull` form. The server does not pull
-images and does not open `docker.sock`. Tests use Hub JSON fixtures; they
-must not hit the network.
+The Images tab paints glance **cards** (official, stars, description) then
+tag/arch/updated; a tag fills the existing `image_pull` form. This is not a
+CasaOS-style app shop. The server does not pull images and does not open
+`docker.sock`. Tests use Hub JSON fixtures; they must not hit the network.

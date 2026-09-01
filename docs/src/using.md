@@ -90,7 +90,7 @@ Tabs:
 - **Containers / Compose / Images / Volumes / Networks** — Docker Engine on
   *this* node. Containers are cards (click for details); the other Docker
   tabs are tables. **Logs** follows that container or Compose
-  project. Images can search Docker Hub to fill Pull. Empty or an explanation
+  project. Images search Docker Hub as cards that fill Pull. Empty or an explanation
   until Observe Docker is on and the agent can use the socket. See
   [Docker](docker.md).
 - **System** — health on the left (leftovers, failed units, journals, NTP,

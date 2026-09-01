@@ -75,8 +75,8 @@ is deleted and a new session id is issued.
 | GET | `/api/v1/catalog` | `{ "metrics": [ { name, metric_type, unit, help, labels } ] }` from `catalog()`. |
 | GET | `/api/v1/alerts` | `{ "alerts": [ { node_id, hostname, chip, label, severity, display, hint } ] }`. Live firing chips (`warn`/`crit`). Header badge polls this at 2s. |
 | GET | `/api/v1/nodes` | `{ "nodes": [ { node_id, hostname, os, status, last_seen, chips, alert_count } ] }`. `chips` are CPU/RAM/disk/temp (`id`, `label`, `display`, `tone`, optional `hint`). `alert_count` is how many chips are firing. Home page polls this at 1s. |
-| GET | `/api/v1/dockerhub/search` | Query Docker Hub (server-side). Cookie session. |
-| GET | `/api/v1/dockerhub/tags` | Hub tags for a repo. Cookie session. |
+| GET | `/api/v1/dockerhub/search` | Query Docker Hub (server-side). Cookie session. Images tab cards. |
+| GET | `/api/v1/dockerhub/tags` | Hub tags for a repo (arch, last updated). Cookie session. A tag fills Pull. |
 | GET | `/api/v1/nodes/{id}/sys/updates` | `{ packages: [{ name, from, to }], capped?: bool }` from `updates_list` (`apt-get update`, `apt list --upgradable`, simulated `dist-upgrade`). Cookie session. Cap 500. |
 | GET | `/api/v1/nodes/{id}/sys/wifi` | `{ ssids: [string] }` from `wifi_scan`. Query `iface` (wireless LAN). Cookie session. Cap 32. |
 | GET | `/api/v1/nodes/{id}/container-usage` | `{ "<short-id>": { cpu_ratio?, memory_bytes? }, … }` from latest pushed samples. 404 if unknown node. Cookie session. Does not talk to Docker Engine. |

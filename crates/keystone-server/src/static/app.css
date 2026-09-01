@@ -324,16 +324,60 @@ details.raw-metrics { margin-top: 0.5rem; color: var(--muted); }
 details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }
 
 .docker-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 0.75rem; align-items: center; }
-.hub-panel { margin: 0 0 0.85rem; max-width: 46rem; }
+.hub-panel { margin: 0 0 0.85rem; }
 .hub-panel .error { margin: 0.35rem 0 0; }
-.hub-list { list-style: none; padding: 0; margin: 0.4rem 0 0; display: flex; flex-direction: column; gap: 0.35rem; }
-.hub-list button {
-  display: block; width: 100%; text-align: left;
-  background: var(--card); color: var(--fg);
+.hub-board { display: grid; gap: 1rem; }
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem;
 }
-.hub-list button.is-open { border-color: var(--accent); }
-.hub-tags { margin-top: 0.55rem; }
-.hub-list .hub-meta { display: block; margin-top: 0.15rem; font-size: 0.85rem; }
+.hub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 0.85rem;
+  color: var(--fg);
+}
+.hub-card:hover { border-color: var(--accent); }
+.hub-card.is-open { border-color: var(--accent); }
+.hub-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hub-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg);
+}
+.hub-card p { margin: 0.35rem 0 0; font-size: 0.85rem; }
+.hub-stars { margin-top: auto; padding-top: 0.45rem; color: var(--muted); font-size: 0.85rem; }
+.hub-detail {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+}
+.hub-detail h3 { margin: 0 0 0.4rem; }
+.hub-tag-list { list-style: none; padding: 0; margin: 0.4rem 0 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.hub-tag {
+  display: block; width: 100%; text-align: left;
+  background: var(--bg); color: var(--fg);
+}
+.hub-tag .hub-meta { display: block; margin-top: 0.15rem; font-size: 0.85rem; }
+@media (min-width: 900px) {
+  .hub-board.has-detail {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem);
+    align-items: start;
+  }
+  .hub-detail { position: sticky; top: 0.75rem; }
+}
 .hub-official {
   display: inline-block;
   font-size: 0.72rem;

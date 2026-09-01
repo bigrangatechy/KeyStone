@@ -77,7 +77,7 @@ hidden when mutations are off.
   Put stacks in `/opt/…` or `chmod`/`setfacl` a home path; `ProtectHome`
   is read-only, not a hidden `/home`.
 - **Images** — tags, short id, size. With Manage: pull by name, search
-  Docker Hub to fill that name, prune unused, remove.
+  Docker Hub as cards that fill that name, prune unused, remove.
 - **Volumes** and **Networks** — list; create/remove and prune unused with
   Manage.
 
@@ -95,9 +95,10 @@ Type `nginx:1.27` (or `ghcr.io/…`) in **Pull** and submit. That is
 
 Optional: **Search Docker Hub** on the Images toolbar. The browser asks
 the KeyStone server; the server queries Hub’s public HTTP API (not
-`docker.sock`, and not your ingest token). Official images are marked.
-Pick a tag to see last updated and architectures (`amd64`, `arm64`, …).
-That **fills** the pull field — you still press Pull. This is not an app store
+`docker.sock`, and not your ingest token). Results are **cards** (official
+badge, stars, short description). Open a card for tags with last updated
+and architectures (`amd64`, `arm64`, …). A tag **fills** the pull field —
+you still press Pull (`image_pull` on the agent). This is not an app store
 and does not log into Hub.
 
 Unauthenticated Hub search is rate-limited per the **server’s** IP. If

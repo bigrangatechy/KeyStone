@@ -496,5 +496,9 @@ mod tests {
         assert!(docker.contains("image_pull"));
         assert!(docker.contains("not an app store"));
         assert!(docker.contains("rate-limited"));
+        assert!(
+            docker.contains("cards") && docker.contains("architectures"),
+            "operator Docker chapter must describe Hub cards then tag/arch"
+        );
     }
 }
