@@ -48,13 +48,15 @@ is deleted and a new session id is issued.
 | POST | `/settings/totp/confirm` | 6-digit code; enables TOTP, shows backup codes once. |
 | POST | `/settings/totp/disable` | Password + TOTP or backup; clears TOTP columns. |
 | POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`. Optional `totp` (6 digits). Enforced only when `needs_step_up()` and TOTP is on; no Docker op does yet. Redirect keeps `?panel=`. Audit log. Streaming ops are 400. |
-| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields or `unit` (hidden, leftover/failed name). Optional `totp`. `net_set` and `unit_restart` require a current authenticator code when TOTP is on (`needs_step_up`); backup codes are rejected; TOTP off is confirm-only. Failed step-up redirects `?panel=system&err=step-up` (or `step-up-locked`) and audits `ok` false. Audit log on mutate. Streaming ops redirect to their follow page (`updates_apply` → apply, `updates_autoremove` → autoremove, `gitlab_backup` → backup, `journal` → System tab). `reboot` and `unit_restart` are mutating and not streamed. |
+| POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields or `unit` (hidden, leftover/failed name) or `name` (hidden listed Omnibus dump). Optional `totp`. `net_set`, `unit_restart`, and `gitlab_restore` require a current authenticator code when TOTP is on (`needs_step_up`); backup codes are rejected; TOTP off is confirm-only. Failed step-up redirects `?panel=system&err=step-up` (or `step-up-locked`) and audits `ok` false. Audit log on mutate. Streaming ops redirect to their follow page (`updates_apply` → apply, `updates_autoremove` → autoremove, `gitlab_backup` → backup, `gitlab_restore` → restore after arming a one-shot ticket, `journal` → System tab). `reboot` and `unit_restart` are mutating and not streamed. |
 | GET | `/nodes/{id}/sys/updates` | HTML follow page for `apt-get upgrade`. |
 | GET | `/nodes/{id}/sys/updates/stream` | SSE for `updates_apply`. Cancel on drop. |
 | GET | `/nodes/{id}/sys/autoremove` | HTML follow page for `apt-get autoremove`. Not dist-upgrade. |
 | GET | `/nodes/{id}/sys/autoremove/stream` | SSE for `updates_autoremove`. Audit `started`. Cancel on drop. |
 | GET | `/nodes/{id}/sys/gitlab-backup` | HTML follow page for Omnibus `gitlab-backup create`. |
 | GET | `/nodes/{id}/sys/gitlab-backup/stream` | SSE for `gitlab_backup`. Audit `started`. Cancel on drop. |
+| GET | `/nodes/{id}/sys/gitlab-restore` | HTML follow page for Omnibus `gitlab-backup restore`. Reachable after POST `gitlab_restore` arms a ticket. |
+| GET | `/nodes/{id}/sys/gitlab-restore/stream` | SSE for `gitlab_restore`. Consumes the ticket (403 without it). Audit `started`. Cancel on drop does not abort the helper restore. |
 | GET | `/nodes/{id}/sys/journal/{unit}` | HTML follow page. `{unit}` must be an allowlisted systemd unit (`journal_unit`). 400 otherwise. |
 | GET | `/nodes/{id}/sys/journal/{unit}/stream` | SSE for `journal`. Observe; no audit. Cancel on drop. |
 | GET | `/nodes/{id}/containers/{cid}/logs` | HTML follow page. |

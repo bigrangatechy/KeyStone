@@ -1140,7 +1140,12 @@
       const glHead = el("div", "compose-head");
       glHead.appendChild(el("h3", null, "GitLab"));
       actions.appendChild(glHead);
-      actions.appendChild(el("p", "muted", "Omnibus gitlab-backup create on this node (not Docker GitLab). Copy /etc/gitlab next to the archive. Restore is not in this UI."));
+      actions.appendChild(el("p", "muted", "Omnibus gitlab-backup on this node (not Docker GitLab). Create writes *_gitlab_backup.tar under /var/opt/gitlab/backups. Restore picks a listed dump (not a path textbox). Copy /etc/gitlab (gitlab.rb and gitlab-secrets.json) yourself — they are not in the tar."));
+      if (stepUpErr === "step-up") {
+        actions.appendChild(el("p", "error", "This change needs a current authenticator code, not a backup code."));
+      } else if (stepUpErr === "step-up-locked") {
+        actions.appendChild(el("p", "error", "too many attempts; try again in a few minutes"));
+      }
       if (helperOn && manage) {
         const backup = document.createElement("button");
         backup.type = "button";
@@ -1152,6 +1157,38 @@
           window.location.href = "/nodes/" + encodeURIComponent(node) + "/sys/gitlab-backup";
         });
         actions.appendChild(backup);
+        const dumps = Array.isArray(gitlab.backups) ? gitlab.backups : [];
+        if (dumps.length) {
+          if (totpOn) {
+            const totp = document.createElement("input");
+            totp.id = "sys-gitlab-restore-totp";
+            totp.inputMode = "numeric";
+            totp.autocomplete = "one-time-code";
+            totp.maxLength = 6;
+            totp.required = true;
+            totp.placeholder = "000000";
+            const totpLab = labeled("Authenticator code", totp);
+            totpLab.appendChild(el("span", "muted", " Current 6-digit code to restore. Backup codes are for sign-in only."));
+            actions.appendChild(totpLab);
+          }
+          const dt = document.createElement("table");
+          dt.appendChild(thead(["Dump", ""]));
+          const db = document.createElement("tbody");
+          dumps.forEach((row) => {
+            const dumpName = (row && row.name) || "";
+            if (!dumpName) return;
+            const tr = document.createElement("tr");
+            tr.appendChild(tdCode(dumpName));
+            const td = document.createElement("td");
+            td.appendChild(gitlabRestoreForm(node, dumpName, totpOn));
+            tr.appendChild(td);
+            db.appendChild(tr);
+          });
+          dt.appendChild(db);
+          actions.appendChild(dt);
+        } else {
+          actions.appendChild(el("p", "muted", "No dump on disk to restore."));
+        }
       } else if (!helperOn) {
         actions.appendChild(el("p", "muted", "Enable the system helper to run gitlab-backup."));
       }
@@ -1321,6 +1358,43 @@
     const btn = document.createElement("button");
     btn.type = "submit";
     btn.textContent = "Restart";
+    form.appendChild(btn);
+    return form;
+  }
+
+  function gitlabRestoreForm(node, name, totpOn) {
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = "/nodes/" + encodeURIComponent(node) + "/sys/gitlab_restore";
+    form.className = "inline";
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "name";
+    hidden.value = name;
+    form.appendChild(hidden);
+    form.addEventListener("submit", (ev) => {
+      if (!window.confirm("Restore GitLab on this node from " + name + "? This replaces GitLab data. gitlab-ctl will stop puma and sidekiq, then restart. /etc/gitlab is not in the archive.")) {
+        ev.preventDefault();
+        return;
+      }
+      if (totpOn) {
+        const shared = document.getElementById("sys-gitlab-restore-totp");
+        const digits = ((shared && shared.value) || "").replace(/\D/g, "");
+        if (digits.length !== 6) {
+          ev.preventDefault();
+          return;
+        }
+        const t = document.createElement("input");
+        t.type = "hidden";
+        t.name = "totp";
+        t.value = digits;
+        form.appendChild(t);
+      }
+    });
+    const btn = document.createElement("button");
+    btn.type = "submit";
+    btn.className = "danger";
+    btn.textContent = "Restore";
     form.appendChild(btn);
     return form;
   }

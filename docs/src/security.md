@@ -169,7 +169,7 @@ name. There is no Hub login in this version.
 ## System (host apt, IPv4, GitLab backup)
 
 The metrics agent stays unprivileged (`NoNewPrivileges`, `ProtectSystem`).
-Host apt (upgrade and autoremove), addressing, and Omnibus GitLab backup go through an **opt-in**
+Host apt (upgrade and autoremove), addressing, leftover restart, and Omnibus GitLab backup/restore go through an **opt-in**
 root helper (`keystone-sys`) on `/run/keystone/sys.sock`. The package does
 not enable that socket. Compromised `keystone` user **plus** an enabled
 socket **plus** System Manage is host root for the allowlist (same class as
@@ -178,8 +178,9 @@ that should only report metrics.
 
 Changing IPv4 can lock you out of SSH and drop the agent session. Keep a
 console. Restarting a leftover `docker` or `ssh` unit can do the same.
-When authenticator 2FA is on, Apply IPv4 and leftover/failed **Restart**
-need a **current 6-digit code** from the app (not a backup code — those
+GitLab **Restore** replaces application data on that node.
+When authenticator 2FA is on, Apply IPv4, leftover/failed **Restart**, and
+GitLab **Restore** need a **current 6-digit code** from the app (not a backup code — those
 are for sign-in). A used window cannot be reused. Failed codes share the
 same eight-tries / 15-minute gate as login. If 2FA is off, confirm-only.
 Other System and Docker mutations stay confirm plus the two-hour idle cookie.

@@ -3,7 +3,7 @@
 
 //! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
 //! failed units, unit restart from those lists, reboot, journal follow, IPv4,
-//! GitLab Omnibus backup, and unattended-upgrades observe. No `sh -c`.
+//! GitLab Omnibus backup/restore, and unattended-upgrades observe. No `sh -c`.
 //! Started by systemd socket.
 
 use std::os::fd::FromRawFd;
@@ -13,12 +13,14 @@ use std::process::Stdio;
 
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
-    gitlab_backup_name_ok, journal_unit, merge_upgradable, netplan_yaml, newest_gitlab_backup,
-    nmcli_modify_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
-    parse_needrestart_batch, parse_ntp_sync, parse_restart_unit, parse_systemctl_failed,
+    gitlab_backup_id, gitlab_backup_name_ok, gitlab_backups_for_restore, gitlab_restore_listed,
+    journal_unit, merge_upgradable, netplan_yaml, newest_gitlab_backup, nmcli_modify_args,
+    parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json, parse_needrestart_batch,
+    parse_ntp_sync, parse_restart_unit, parse_restore_backup, parse_systemctl_failed,
     parse_unattended_periodic, unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp,
-    GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES,
-    UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
+    GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SYS_SOCKET_PATH,
+    UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
+    UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -133,6 +135,10 @@ async fn dispatch(
             gitlab_backup(writer).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
+        SysOp::GitlabRestore => {
+            gitlab_restore(&payload, writer).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
         SysOp::Reboot => reboot(writer).await,
         SysOp::Journal => journal_follow(&payload, writer).await,
         SysOp::UnitRestart => {
@@ -199,13 +205,19 @@ fn gitlab_status() -> Value {
     if gitlab_kind() != "omnibus" {
         return json!({ "kind": "none" });
     }
-    match newest_gitlab_backup(&read_gitlab_backup_entries(Path::new(GITLAB_BACKUP_DIR))) {
+    let entries = read_gitlab_backup_entries(Path::new(GITLAB_BACKUP_DIR));
+    let backups: Vec<Value> = gitlab_backups_for_restore(&entries)
+        .into_iter()
+        .map(|(name, unix)| json!({ "name": name, "unix": unix }))
+        .collect();
+    match newest_gitlab_backup(&entries) {
         Some((backup_name, backup_unix)) => json!({
             "kind": "omnibus",
             "backup_name": backup_name,
             "backup_unix": backup_unix,
+            "backups": backups,
         }),
-        None => json!({ "kind": "omnibus" }),
+        None => json!({ "kind": "omnibus", "backups": backups }),
     }
 }
 
@@ -575,21 +587,24 @@ async fn stream_apt(
     Ok(())
 }
 
-async fn gitlab_backup(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
-    if gitlab_kind() != "omnibus" {
-        anyhow::bail!(
-            "GitLab Omnibus is not installed on this node ({GITLAB_BACKUP_BIN} missing). Docker GitLab is not in this version."
-        );
-    }
-    let mut child = Command::new(GITLAB_BACKUP_BIN)
-        .arg("create")
+async fn stream_argv(
+    bin: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    fail: &str,
+) -> anyhow::Result<()> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("gitlab-backup")?;
-    let stdout = child.stdout.take().context("gitlab-backup stdout")?;
-    let stderr = child.stderr.take().context("gitlab-backup stderr")?;
+        .stderr(Stdio::piped());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().with_context(|| bin.to_string())?;
+    let stdout = child.stdout.take().context("stdout")?;
+    let stderr = child.stderr.take().context("stderr")?;
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
     let tx_out = tx.clone();
     let tx_err = tx.clone();
@@ -617,12 +632,93 @@ async fn gitlab_backup(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow:
     let _ = h_err.await;
     let st = child.wait().await?;
     if !st.success() {
-        anyhow::bail!("gitlab-backup create failed");
+        anyhow::bail!("{fail}");
     }
+    Ok(())
+}
+
+async fn gitlab_backup(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
+    if gitlab_kind() != "omnibus" {
+        anyhow::bail!(
+            "GitLab Omnibus is not installed on this node ({GITLAB_BACKUP_BIN} missing). Docker GitLab is not in this version."
+        );
+    }
+    stream_argv(
+        GITLAB_BACKUP_BIN,
+        &["create"],
+        &[],
+        writer,
+        "gitlab-backup create failed",
+    )
+    .await?;
     write_json(
         writer,
         &json!({
-            "t": "Copy /etc/gitlab (gitlab.rb and gitlab-secrets.json) next to the archive. Restore is not in this UI."
+            "t": "Copy /etc/gitlab (gitlab.rb and gitlab-secrets.json) next to the archive. They are not in the tar."
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn gitlab_restore(
+    payload: &Value,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+) -> anyhow::Result<()> {
+    let name = parse_restore_backup(&payload.to_string()).map_err(|e| anyhow!("{e}"))?;
+    if cfg!(test) {
+        anyhow::bail!("gitlab restore is not invoked in tests");
+    }
+    if gitlab_kind() != "omnibus" {
+        anyhow::bail!(
+            "GitLab Omnibus is not installed on this node ({GITLAB_BACKUP_BIN} missing). Docker GitLab is not in this version."
+        );
+    }
+    let dumps: Vec<String> = read_gitlab_backup_entries(Path::new(GITLAB_BACKUP_DIR))
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    if !gitlab_restore_listed(&name, &dumps) {
+        anyhow::bail!("dump is not in the Omnibus backups directory");
+    }
+    let id = gitlab_backup_id(&name).ok_or_else(|| anyhow!("backup name is invalid"))?;
+    let backup_arg = format!("BACKUP={id}");
+    stream_argv(
+        GITLAB_CTL_BIN,
+        &["stop", "puma"],
+        &[],
+        writer,
+        "gitlab-ctl stop puma failed",
+    )
+    .await?;
+    stream_argv(
+        GITLAB_CTL_BIN,
+        &["stop", "sidekiq"],
+        &[],
+        writer,
+        "gitlab-ctl stop sidekiq failed",
+    )
+    .await?;
+    stream_argv(
+        GITLAB_BACKUP_BIN,
+        &["restore", &backup_arg, "force=yes"],
+        &[("GITLAB_ASSUME_YES", "1")],
+        writer,
+        "gitlab-backup restore failed",
+    )
+    .await?;
+    stream_argv(
+        GITLAB_CTL_BIN,
+        &["restart"],
+        &[],
+        writer,
+        "gitlab-ctl restart failed",
+    )
+    .await?;
+    write_json(
+        writer,
+        &json!({
+            "t": "Restore finished. Copy /etc/gitlab (gitlab.rb and gitlab-secrets.json) if this dump needs them — they are not in the tar."
         }),
     )
     .await?;
@@ -957,12 +1053,100 @@ mod tests {
             .split("async fn gitlab_backup")
             .nth(1)
             .expect("gitlab_backup")
-            .split("async fn net_set")
+            .split("async fn gitlab_restore")
             .next()
             .expect("gitlab_backup body");
         assert!(body.contains("GITLAB_BACKUP_BIN"));
-        assert!(body.contains(".arg(\"create\")"));
+        assert!(body.contains("\"create\""));
+        assert!(body.contains("stream_argv"));
         assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("Restore is not in this UI"));
+    }
+
+    #[test]
+    fn gitlab_restore_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn gitlab_restore")
+            .nth(1)
+            .expect("gitlab_restore")
+            .split("async fn net_set")
+            .next()
+            .expect("gitlab_restore body");
+        assert!(body.contains("GITLAB_BACKUP_BIN"));
+        assert!(body.contains("GITLAB_CTL_BIN"));
+        assert!(body.contains("\"restore\""));
+        assert!(body.contains("\"stop\"") && body.contains("\"puma\""));
+        assert!(body.contains("\"sidekiq\""));
+        assert!(body.contains("\"restart\""));
+        assert!(body.contains("force=yes"));
+        assert!(body.contains("GITLAB_ASSUME_YES"));
+        assert!(body.contains("parse_restore_backup"));
+        assert!(body.contains("gitlab_restore_listed"));
+        assert!(body.contains("read_gitlab_backup_entries"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("poweroff"));
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_restore_name_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"gitlab_restore","payload":{"name":"foo_gitlab_backup.tar;rm"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("backup") || err.contains("invalid"),
+            "shell dump name must fail validation, got {err}"
+        );
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before spawn: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_gitlab_restore_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(
+                br#"{"op":"gitlab_restore","payload":{"name":"1712345678_gitlab_backup.tar"}}"#,
+            )
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "gitlab restore must not spawn gitlab-backup in CI, got {err}"
+        );
+        server.await.unwrap();
     }
 
     #[test]

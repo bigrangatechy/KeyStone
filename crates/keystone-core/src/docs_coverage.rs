@@ -425,8 +425,9 @@ fn operator_docs_cover_ipv4_step_up() {
     assert!(
         dev.contains("needs_step_up()")
             && dev.contains("`net_set`")
-            && dev.contains("`unit_restart`"),
-        "developer system.md must say net_set and unit_restart need step-up"
+            && dev.contains("`unit_restart`")
+            && dev.contains("`gitlab_restore`"),
+        "developer system.md must say net_set, unit_restart, and gitlab_restore need step-up"
     );
     assert!(
         docker.contains("needs_step_up()") && docker.contains("confirm"),
@@ -477,5 +478,51 @@ fn operator_docs_cover_leftover_unit_restart() {
     assert!(
         arch.contains("unit restart") && arch.contains("unit-name textbox"),
         "architecture.md must say listed restart is in and a textbox is not"
+    );
+}
+
+#[test]
+fn operator_docs_cover_gitlab_restore() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("gitlab-backup restore")
+            && system.contains("not a path textbox")
+            && system.contains("replaces GitLab application data"),
+        "System chapter must document listed-dump restore, not a path"
+    );
+    assert!(
+        using.contains("GitLab restore") && using.contains("current authenticator code"),
+        "using.md must mention GitLab restore and step-up"
+    );
+    assert!(
+        trouble.contains("Restore refused") && trouble.contains("listed dump"),
+        "troubleshooting must cover a stale restore pick and missing ticket"
+    );
+    assert!(
+        security.contains("Restore") && security.contains("replaces application data"),
+        "security.md must treat GitLab restore as data-destroy step-up"
+    );
+    assert!(
+        audit.contains("GitLab Omnibus restore"),
+        "Audit must list restore as a mutation"
+    );
+    assert!(
+        http.contains("`gitlab_restore`") && http.contains("ticket"),
+        "HTTP API must mention gitlab_restore and the one-shot ticket"
+    );
+    assert!(
+        dev.contains("`gitlab_restore`") && dev.contains("live backups dir"),
+        "developer system.md must say the helper re-checks the backups directory"
+    );
+    assert!(
+        arch.contains("GitLab restore") && !arch.contains("Watchtower, GitLab restore"),
+        "architecture.md must say Omnibus restore is in"
     );
 }

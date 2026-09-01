@@ -151,10 +151,10 @@
       <legend>System admin</legend>
       <div class="banner">
         <strong>System Manage can change this host.</strong>
-        Anyone signed in as admin can apt-upgrade, autoremove, change IPv4, restart leftover or failed units from the lists, run a GitLab Omnibus backup, and reboot this node once the root helper is on. Same class of trust as Docker Manage. Keep this off on Proxmox, TrueNAS, OMV, and Unraid.
+        Anyone signed in as admin can apt-upgrade, autoremove, change IPv4, restart leftover or failed units from the lists, run a GitLab Omnibus backup or restore, and reboot this node once the root helper is on. Same class of trust as Docker Manage. Keep this off on Proxmox, TrueNAS, OMV, and Unraid.
       </div>
       <label class="check"><input type="checkbox" name="sys_enabled" value="on"{% if sys_enabled %} checked{% endif %}> Observe host updates and addressing</label>
-      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, and reboot (root helper)</label>
+      <label class="check"><input type="checkbox" name="sys_manage" value="on"{% if sys_manage %} checked{% endif %}> Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, GitLab restore, and reboot (root helper)</label>
       <span class="muted">For Ubuntu Server, Debian, and Raspberry Pi OS. Keep this off on Proxmox, TrueNAS, OMV, Unraid. Both this checkbox and <code>sudo systemctl enable --now keystone-sys.socket</code> on the node. If the tab still says the helper is off, <code>sudo systemctl restart keystone-agent</code>. The metrics agent does not become root. Apply is apt, not dnf.</span>
     </fieldset>
     <button type="submit">Save settings</button>

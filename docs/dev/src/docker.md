@@ -145,7 +145,7 @@ node template / `app.js`, and add the `` `snake_name` `` row here.
 
 Control-plane ops that are **not** `DockerOp`: `set_runtime`,
 `set_interval`, `cancel`, and host `SysOp` (`status`, `updates_list`,
-`updates_apply`, `updates_autoremove`, `net_set`, `gitlab_backup`, `reboot`,
+`updates_apply`, `updates_autoremove`, `net_set`, `gitlab_backup`, `gitlab_restore`, `reboot`,
 `journal`, `unit_restart`) — see
 [Host system admin](system.md). The agent
 handles `set_runtime` / `set_interval` / `cancel` before `handle_command`.

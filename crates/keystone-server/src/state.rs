@@ -366,6 +366,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub alert_state: Arc<Mutex<BTreeMap<String, AlertSnapshot>>>,
     pub login_gate: Arc<Mutex<LoginGate>>,
+    pub stream_arms: Arc<Mutex<StreamArms>>,
     scrape_epoch: Arc<AtomicU64>,
     env_ingest_token: Option<String>,
 }
@@ -420,6 +421,47 @@ impl LoginGate {
     }
 }
 
+/// One-shot arm after confirm (+ step-up) so a streaming mutate cannot
+/// start from a GET of the follow page alone.
+#[derive(Clone, Debug)]
+pub struct StreamArm {
+    pub payload_json: String,
+}
+
+#[derive(Default)]
+pub struct StreamArms {
+    inner: HashMap<(String, String, String), (StreamArm, i64)>,
+}
+
+impl StreamArms {
+    pub const TTL_SECS: i64 = 120;
+
+    fn now() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+
+    pub fn arm(&mut self, user: &str, node: &str, op: &str, payload_json: String) {
+        self.inner.insert(
+            (user.to_string(), node.to_string(), op.to_string()),
+            (StreamArm { payload_json }, Self::now() + Self::TTL_SECS),
+        );
+    }
+
+    pub fn take(&mut self, user: &str, node: &str, op: &str) -> Option<StreamArm> {
+        let now = Self::now();
+        match self
+            .inner
+            .remove(&(user.to_string(), node.to_string(), op.to_string()))
+        {
+            Some((arm, exp)) if exp > now => Some(arm),
+            _ => None,
+        }
+    }
+}
+
 impl AppState {
     pub fn new(config: ServerConfig, stores: Stores) -> Self {
         let env_ingest_token = std::env::var("KEYSTONE_INGEST_TOKEN")
@@ -447,6 +489,7 @@ impl AppState {
             http,
             alert_state,
             login_gate: Arc::new(Mutex::new(LoginGate::default())),
+            stream_arms: Arc::new(Mutex::new(StreamArms::default())),
             scrape_epoch: Arc::new(AtomicU64::new(0)),
             env_ingest_token,
         }
@@ -536,5 +579,27 @@ mod tests {
         assert!(g.locked("admin"));
         g.clear("admin");
         assert!(!g.locked("admin"));
+    }
+
+    #[test]
+    fn stream_arms_are_one_shot_and_scoped() {
+        let mut arms = StreamArms::default();
+        arms.arm(
+            "admin",
+            "ranga",
+            "gitlab_restore",
+            r#"{"name":"a_gitlab_backup.tar"}"#.into(),
+        );
+        assert!(arms.take("other", "ranga", "gitlab_restore").is_none());
+        assert!(arms.take("admin", "other", "gitlab_restore").is_none());
+        assert!(arms.take("admin", "ranga", "gitlab_backup").is_none());
+        let got = arms
+            .take("admin", "ranga", "gitlab_restore")
+            .expect("armed");
+        assert!(got.payload_json.contains("a_gitlab_backup.tar"));
+        assert!(
+            arms.take("admin", "ranga", "gitlab_restore").is_none(),
+            "SSE reconnect must not start a second restore"
+        );
     }
 }

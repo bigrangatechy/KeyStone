@@ -87,8 +87,10 @@ WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, Docker Hub login, System shutdown from the UI, hostname /
 timezone / users / SSH / firewall editors, Wi-Fi / VLAN / IPv6, Fedora /
-Arch host updates, unattended-upgrades config editor, Watchtower, GitLab restore,
+Arch host updates, unattended-upgrades config editor, Watchtower,
 Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
 this slice; a unit-name textbox is not. Leftover/failed **unit restart** from
-those listed names is in (`systemctl restart`, step-up when TOTP is on). Observing whether unattended-upgrades
+those listed names is in (`systemctl restart`, step-up when TOTP is on).
+Omnibus **GitLab restore** from listed dumps is in (`gitlab-backup restore`,
+step-up, one-shot ticket before SSE). Observing whether unattended-upgrades
 is enabled and when it last ran is in; editing `20auto-upgrades` is not.

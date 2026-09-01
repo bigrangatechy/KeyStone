@@ -20,7 +20,7 @@ use futures_util::Stream;
 use keystone_core::docker::{docker_ref_ok, summarize_container_inspect, DockerOp};
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
-use keystone_core::sys::{journal_unit, SysOp};
+use keystone_core::sys::{journal_unit, parse_restore_backup, SysOp};
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
 use keystone_proto::StreamChunk;
@@ -113,6 +113,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/nodes/{id}/sys/gitlab-backup/stream",
             get(sys_gitlab_backup_sse),
+        )
+        .route(
+            "/nodes/{id}/sys/gitlab-restore",
+            get(sys_gitlab_restore_page),
+        )
+        .route(
+            "/nodes/{id}/sys/gitlab-restore/stream",
+            get(sys_gitlab_restore_sse),
         )
         .route("/nodes/{id}/sys/journal/{unit}", get(sys_journal_page))
         .route(
@@ -2205,6 +2213,7 @@ struct SysForm {
     gateway: Option<String>,
     dns: Option<String>,
     unit: Option<String>,
+    name: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2251,6 +2260,9 @@ fn sys_form_payload(form: &SysForm) -> String {
     if let Some(unit) = &form.unit {
         map.insert("unit".into(), serde_json::json!(unit.trim()));
     }
+    if let Some(name) = &form.name {
+        map.insert("name".into(), serde_json::json!(name.trim()));
+    }
     serde_json::Value::Object(map).to_string()
 }
 
@@ -2266,6 +2278,34 @@ async fn sys_action(
         Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
     };
     if parsed.streams() {
+        if parsed.needs_step_up() {
+            let armed = sys_form_payload(&form);
+            let target = armed.clone();
+            if parsed == SysOp::GitlabRestore && parse_restore_backup(&armed).is_err() {
+                return (StatusCode::BAD_REQUEST, "invalid backup name").into_response();
+            }
+            if let Err(err) = consume_step_up(&state, &username, true, &form.totp) {
+                return step_up_denied(
+                    &state,
+                    &username,
+                    &id,
+                    parsed.as_str(),
+                    &target,
+                    parsed.mutating(),
+                    err,
+                    "system",
+                );
+            }
+            state
+                .stream_arms
+                .lock()
+                .arm(&username, &id, parsed.as_str(), armed);
+            let dest = match parsed {
+                SysOp::GitlabRestore => format!("/nodes/{id}/sys/gitlab-restore"),
+                _ => format!("/nodes/{id}?panel=system"),
+            };
+            return Redirect::to(&dest).into_response();
+        }
         let dest = match parsed {
             SysOp::GitlabBackup => format!("/nodes/{id}/sys/gitlab-backup"),
             SysOp::Journal => format!("/nodes/{id}?panel=system"),
@@ -2399,7 +2439,7 @@ async fn sys_gitlab_backup_page(Path(id): Path<String>) -> impl IntoResponse {
             title: "GitLab backup".into(),
             node_id: id.clone(),
             subtitle: "gitlab-backup create".into(),
-            hint: "Streaming GitLab Omnibus backup. Leave this page to stop following (the backup keeps running on the node). Copy /etc/gitlab next to the archive. Restore is not in this UI.".into(),
+            hint: "Streaming GitLab Omnibus backup. Leave this page to stop following (the backup keeps running on the node). Copy /etc/gitlab next to the archive — it is not in the tar.".into(),
             back_href: format!("/nodes/{id}?panel=system"),
             stream_url: format!("/nodes/{}/sys/gitlab-backup/stream", urlencoding_path(&id)),
         }
@@ -2430,6 +2470,45 @@ async fn sys_gitlab_backup_sse(
         .metadata
         .audit(&username, &id, "gitlab_backup", "{}", true, "started");
     logs_sse_op(state, id, SysOp::GitlabBackup.as_str(), "{}".into())
+}
+
+async fn sys_gitlab_restore_page(Path(id): Path<String>) -> impl IntoResponse {
+    Html(
+        LogsTemplate {
+            title: "GitLab restore".into(),
+            node_id: id.clone(),
+            subtitle: "gitlab-backup restore".into(),
+            hint: "Streaming GitLab Omnibus restore. Leaving this page only stops following — the restore keeps running on the node. This replaces GitLab data. /etc/gitlab is not in the tar.".into(),
+            back_href: format!("/nodes/{id}?panel=system"),
+            stream_url: format!("/nodes/{}/sys/gitlab-restore/stream", urlencoding_path(&id)),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn sys_gitlab_restore_sse(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path(id): Path<String>,
+) -> Response {
+    let username = session_username(&state, &jar).unwrap_or_else(|| "unknown".into());
+    let Some(arm) = state
+        .stream_arms
+        .lock()
+        .take(&username, &id, SysOp::GitlabRestore.as_str())
+    else {
+        return (StatusCode::FORBIDDEN, "restore was not confirmed").into_response();
+    };
+    let _ = state.stores.metadata.audit(
+        &username,
+        &id,
+        "gitlab_restore",
+        &arm.payload_json,
+        true,
+        "started",
+    );
+    logs_sse_op(state, id, SysOp::GitlabRestore.as_str(), arm.payload_json)
 }
 
 async fn sys_journal_page(Path((id, unit)): Path<(String, String)>) -> Response {
@@ -3000,12 +3079,30 @@ mod tests {
             .split("async fn sys_gitlab_backup_sse")
             .nth(1)
             .expect("sys_gitlab_backup_sse")
-            .split("async fn sys_journal_page")
+            .split("async fn sys_gitlab_restore_page")
             .next()
             .expect("sys_gitlab_backup_sse body");
         assert!(
             gitlab.contains(".audit(") && gitlab.contains("gitlab_backup"),
             "GitLab backup must write audit when the stream starts"
+        );
+        let restore = src
+            .split("async fn sys_gitlab_restore_sse")
+            .nth(1)
+            .expect("sys_gitlab_restore_sse")
+            .split("async fn sys_journal_page")
+            .next()
+            .expect("sys_gitlab_restore_sse body");
+        assert!(
+            restore.contains("stream_arms")
+                && restore.contains(".take(")
+                && restore.contains(".audit(")
+                && restore.contains("gitlab_restore"),
+            "GitLab restore SSE must consume the step-up ticket then audit started"
+        );
+        assert!(
+            restore.contains("FORBIDDEN") || restore.contains("restore was not confirmed"),
+            "restore stream without a ticket must not start gitlab-backup restore"
         );
         let journal = src
             .split("async fn sys_journal_sse")
@@ -3034,6 +3131,14 @@ mod tests {
         assert!(
             streams.contains("/sys/gitlab-backup"),
             "streaming gitlab_backup must not redirect to apt apply"
+        );
+        assert!(
+            streams.contains("stream_arms") && streams.contains("gitlab-restore"),
+            "gitlab_restore POST must arm a ticket then go to the follow page"
+        );
+        assert!(
+            streams.contains("consume_step_up"),
+            "streaming restore must not start SSE until step-up is accepted"
         );
         let journal_arm = streams
             .split("SysOp::Journal")
@@ -3363,11 +3468,16 @@ mod tests {
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
+        assert!(js.contains("/sys/gitlab_restore"));
         assert!(js.contains("/sys/reboot"));
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::UpdatesApply.mutating());
         assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::GitlabBackup.mutating());
+        assert!(SysOp::GitlabRestore.mutating());
+        assert!(SysOp::GitlabRestore.streams());
+        assert!(SysOp::GitlabRestore.needs_step_up());
+        assert!(!SysOp::GitlabBackup.needs_step_up());
         assert!(SysOp::Reboot.mutating());
         assert!(SysOp::UnitRestart.mutating());
         assert!(!SysOp::Status.mutating());
@@ -3541,6 +3651,9 @@ mod tests {
         let backup = head
             .find("/nodes/{id}/sys/gitlab-backup")
             .expect("gitlab backup page");
+        let restore = head
+            .find("/nodes/{id}/sys/gitlab-restore")
+            .expect("gitlab restore page");
         let journal = head
             .find("/nodes/{id}/sys/journal/{unit}")
             .expect("journal follow page");
@@ -3551,6 +3664,7 @@ mod tests {
         assert!(apply < authed_end);
         assert!(autoremove < authed_end);
         assert!(backup < authed_end);
+        assert!(restore < authed_end);
         assert!(journal < authed_end);
         assert!(api < authed_end);
         let public = head[authed_end..]
@@ -3578,6 +3692,7 @@ mod tests {
             gateway: Some("192.168.0.1".into()),
             dns: Some("1.1.1.1 8.8.8.8".into()),
             unit: None,
+            name: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -3599,12 +3714,29 @@ mod tests {
             gateway: None,
             dns: None,
             unit: Some(" docker.service ".into()),
+            name: None,
             totp: "000000".into(),
             redirect: String::new(),
         };
         let r = sys_form_payload(&restart);
         assert!(r.contains("\"unit\":\"docker.service\""));
         assert!(!r.contains("000000"));
+        let restore = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            unit: None,
+            name: Some(" 1712345678_gitlab_backup.tar ".into()),
+            totp: "654321".into(),
+            redirect: String::new(),
+        };
+        let g = sys_form_payload(&restore);
+        assert!(g.contains("\"name\":\"1712345678_gitlab_backup.tar\""));
+        assert!(!g.contains("654321"));
     }
 
     #[test]
@@ -3702,6 +3834,10 @@ mod tests {
             "Settings manage checkbox must mention leftover unit restart"
         );
         assert!(
+            html.contains("GitLab restore"),
+            "Settings manage checkbox must mention GitLab restore"
+        );
+        assert!(
             html.contains("and reboot"),
             "Settings manage checkbox must mention reboot"
         );
@@ -3716,6 +3852,20 @@ mod tests {
         assert!(
             js.contains("Create a GitLab Omnibus backup"),
             "GitLab backup must ask before gitlab-backup create"
+        );
+        assert!(
+            js.contains("/sys/gitlab_restore")
+                && js.contains("sys-gitlab-restore-totp")
+                && js.contains("not a path textbox"),
+            "listed Omnibus dumps must offer restore behind step-up, not a path field"
+        );
+        assert!(
+            js.contains("This replaces GitLab data"),
+            "restore must warn that it replaces GitLab data"
+        );
+        assert!(
+            !js.contains("Restore is not in this UI"),
+            "Omnibus restore is in this slice"
         );
         assert!(
             js.contains("Change IPv4 on this node"),

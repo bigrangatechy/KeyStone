@@ -32,7 +32,7 @@ fn call_budget(op: SysOp) -> Duration {
         SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
             Duration::from_secs(120)
         }
-        SysOp::GitlabBackup => Duration::from_secs(1800),
+        SysOp::GitlabBackup | SysOp::GitlabRestore => Duration::from_secs(1800),
         SysOp::Journal => Duration::from_secs(3),
     }
 }
@@ -238,5 +238,9 @@ mod tests {
         );
         assert!(call_budget(SysOp::Reboot) >= Duration::from_secs(5));
         assert_eq!(call_budget(SysOp::UnitRestart), call_budget(SysOp::Reboot));
+        assert_eq!(
+            call_budget(SysOp::GitlabRestore),
+            call_budget(SysOp::GitlabBackup)
+        );
     }
 }

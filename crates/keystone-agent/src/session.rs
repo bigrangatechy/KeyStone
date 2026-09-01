@@ -739,6 +739,7 @@ async fn handle_sys(
             anyhow::bail!("updates_autoremove is streamed from the autoremove page")
         }
         SysOp::GitlabBackup => anyhow::bail!("gitlab_backup is streamed from the backup page"),
+        SysOp::GitlabRestore => anyhow::bail!("gitlab_restore is streamed from the restore page"),
         SysOp::Journal => anyhow::bail!("journal is streamed from the journal page"),
     }
 }
@@ -902,15 +903,15 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(reboot.contains("manage"), "{reboot}");
-        let restart = handle_sys(
+        let restore = handle_sys(
             &runtime,
-            SysOp::UnitRestart,
-            serde_json::json!({"unit": "docker.service"}),
+            SysOp::GitlabRestore,
+            serde_json::json!({"name": "1712345678_gitlab_backup.tar"}),
         )
         .await
         .unwrap_err()
         .to_string();
-        assert!(restart.contains("manage"), "{restart}");
+        assert!(restore.contains("manage"), "{restore}");
     }
 
     #[test]
@@ -922,6 +923,7 @@ mod tests {
             SysOp::UpdatesAutoremove,
             SysOp::NetSet,
             SysOp::GitlabBackup,
+            SysOp::GitlabRestore,
             SysOp::Reboot,
             SysOp::Journal,
             SysOp::UnitRestart,

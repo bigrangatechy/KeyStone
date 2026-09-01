@@ -95,9 +95,9 @@ Tabs:
   [Docker](docker.md).
 - **System** — health on the left (leftovers, failed units, journals, NTP,
   unattended-upgrades, addresses) and actions on the right (apt, autoremove,
-  reboot, GitLab backup, leftover restart, IPv4) on **this** Ubuntu or Debian server. Off until you
-  enable the root helper and Settings flags. If 2FA is on, changing IPv4 or
-  restarting a leftover unit also asks for a current authenticator code. Proxmox, TrueNAS, and other
+  reboot, GitLab backup, GitLab restore, leftover restart, IPv4) on **this** Ubuntu or Debian server. Off until you
+  enable the root helper and Settings flags. If 2FA is on, changing IPv4,
+  leftover restart, or GitLab restore also asks for a current authenticator code. Proxmox, TrueNAS, and other
   appliance OSes stay on Observe. See [System](system.md).
 - **Settings** — display name, notes, poll interval, NICs, labels, Docker
   flags, Compose paths, System-admin flags. See [Configuration](configuration.md).

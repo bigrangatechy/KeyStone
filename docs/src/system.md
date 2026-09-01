@@ -20,7 +20,7 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, and reboot** if
+   and **Allow apt upgrade, autoremove, IPv4, leftover restart, GitLab backup, GitLab restore, and reboot** if
    you want Apply, Autoremove, leftover Restart, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
@@ -45,7 +45,7 @@ It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
 `systemctl --failed`, `timedatectl`, `journalctl -u` for five named
 units, `systemctl reboot`, `systemctl restart` of a leftover or failed
 listed name, netplan or
-`nmcli`, Omnibus `gitlab-backup create`). There is no shell string and no
+`nmcli`, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
 unit-name textbox.
 
 ## Updates
@@ -110,20 +110,25 @@ Pick an Ethernet interface that is already up. **DHCP** or **static**
 `/etc/netplan` exists, otherwise NetworkManager.
 
 Changing the address can drop the agent session (and SSH). Keep a console.
-If you enabled an authenticator, Apply IPv4 also asks for a **current
-6-digit code** (not a backup code). Wi-Fi, VLANs, and IPv6 are not in this
-version.
+If you enabled an authenticator, Apply IPv4, leftover **Restart**, and
+GitLab **Restore** also ask for a **current 6-digit code** (not a backup
+code). Wi-Fi, VLANs, and IPv6 are not in this version.
 
-## GitLab backup
+## GitLab backup and restore
 
 If this node has Omnibus GitLab (`/opt/gitlab/bin/gitlab-backup`), the
 System tab shows **Backup GitLab**. That runs `gitlab-backup create` on
 the machine (GitLab’s own dump, not a volume tar) and streams the log.
 The tab shows the age of the newest `*_gitlab_backup.tar` in
-`/var/opt/gitlab/backups` when one is on disk. Copy `/etc/gitlab`
-(`gitlab.rb` and `gitlab-secrets.json`) next to the archive yourself.
-Restore is not in this UI. Docker GitLab is not this
-button.
+`/var/opt/gitlab/backups` when one is on disk, and lists dumps already
+there. **Restore** on a listed name runs `gitlab-ctl stop` puma and
+sidekiq, then `gitlab-backup restore`, then `gitlab-ctl restart`. It is
+not a path textbox. The helper re-checks the live directory. This
+replaces GitLab application data. Copy `/etc/gitlab` (`gitlab.rb` and
+`gitlab-secrets.json`) next to the archive yourself — they are not in
+the tar. If 2FA is on, Restore needs a current authenticator code.
+Leaving the follow page only stops the log; the restore keeps running.
+Docker GitLab is not this button.
 
 Anyone who can sign in to the UI and who turned Manage on can change that
 host. Same class of trust as Docker Manage. Mutations are written to

@@ -3,8 +3,8 @@
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
 //! restart from those lists, reboot, journal follow, IPv4, GitLab Omnibus
-//! backup, unattended-upgrades observe). No I/O — the helper and agent run
-//! them. Keep `docs/dev/src/system.md` in sync.
+//! backup/restore, unattended-upgrades observe). No I/O — the helper and
+//! agent run them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::Ipv4Addr;
 
@@ -20,8 +20,14 @@ pub const SYS_SOCKET_PATH: &str = "/run/keystone/sys.sock";
 /// Omnibus GitLab backup binary. Docker GitLab is not this path.
 pub const GITLAB_BACKUP_BIN: &str = "/opt/gitlab/bin/gitlab-backup";
 
-/// Omnibus default dump directory. Restore is not a SysOp.
+/// Omnibus `gitlab-ctl`. Restore stops puma/sidekiq then restarts.
+pub const GITLAB_CTL_BIN: &str = "/opt/gitlab/bin/gitlab-ctl";
+
+/// Omnibus default dump directory. Restore picks a listed name here.
 pub const GITLAB_BACKUP_DIR: &str = "/var/opt/gitlab/backups";
+
+/// Cap `status` dump names offered for restore. Newest first.
+pub const GITLAB_RESTORE_LIST_CAP: usize = 50;
 
 /// Units the System tab may follow. Not a textbox — stolen cookie reads
 /// these journals only.
@@ -67,6 +73,7 @@ pub enum SysOp {
     UpdatesAutoremove,
     NetSet,
     GitlabBackup,
+    GitlabRestore,
     Reboot,
     Journal,
     UnitRestart,
@@ -87,6 +94,9 @@ impl SysOp {
             Self::UpdatesAutoremove => "Remove unused packages (apt-get autoremove)",
             Self::NetSet => "Set IPv4 DHCP or static on one interface",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
+            Self::GitlabRestore => {
+                "Restore GitLab Omnibus from a listed dump (gitlab-backup restore)"
+            }
             Self::Reboot => "Reboot the node (systemctl reboot)",
             Self::Journal => "Follow journalctl for one allowlisted unit",
             Self::UnitRestart => {
@@ -102,6 +112,7 @@ impl SysOp {
                 | Self::UpdatesAutoremove
                 | Self::NetSet
                 | Self::GitlabBackup
+                | Self::GitlabRestore
                 | Self::Reboot
                 | Self::UnitRestart
         )
@@ -118,14 +129,19 @@ impl SysOp {
     pub fn streams(self) -> bool {
         matches!(
             self,
-            Self::UpdatesApply | Self::UpdatesAutoremove | Self::GitlabBackup | Self::Journal
+            Self::UpdatesApply
+                | Self::UpdatesAutoremove
+                | Self::GitlabBackup
+                | Self::GitlabRestore
+                | Self::Journal
         )
     }
 
     /// Fresh authenticator code when TOTP is on. IPv4 can drop SSH and
-    /// the agent; restarting leftover docker/ssh/keystone-server can too.
+    /// the agent; restarting leftover docker/ssh/keystone-server can too;
+    /// GitLab restore replaces application data.
     pub fn needs_step_up(self) -> bool {
-        matches!(self, Self::NetSet | Self::UnitRestart)
+        matches!(self, Self::NetSet | Self::UnitRestart | Self::GitlabRestore)
     }
 }
 
@@ -147,6 +163,8 @@ pub enum SysError {
     Op,
     #[error("unit name is invalid")]
     Unit,
+    #[error("backup name is invalid")]
+    Backup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -686,6 +704,43 @@ pub fn newest_gitlab_backup(entries: &[(String, i64)]) -> Option<(String, i64)> 
         .cloned()
 }
 
+/// `BACKUP=` id for Omnibus restore: filename without `_gitlab_backup.tar`.
+pub fn gitlab_backup_id(name: &str) -> Option<&str> {
+    if !gitlab_backup_name_ok(name) {
+        return None;
+    }
+    name.strip_suffix("_gitlab_backup.tar")
+        .filter(|id| !id.is_empty())
+}
+
+/// Form/JSON `name` for `gitlab_restore`. Token only — membership of the
+/// backups dir is checked on the helper from a live listing.
+pub fn parse_restore_backup(payload: &str) -> Result<String, SysError> {
+    let v: serde_json::Value = serde_json::from_str(payload).map_err(|_| SysError::Op)?;
+    let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+    if gitlab_backup_id(name).is_none() {
+        return Err(SysError::Backup);
+    }
+    Ok(name.to_string())
+}
+
+/// True when `name` is on the live dump list (exact match).
+pub fn gitlab_restore_listed(name: &str, dumps: &[String]) -> bool {
+    gitlab_backup_id(name).is_some() && dumps.iter().any(|n| n == name)
+}
+
+/// Newest first, capped. Input is `(filename, mtime_unix)`.
+pub fn gitlab_backups_for_restore(entries: &[(String, i64)]) -> Vec<(String, i64)> {
+    let mut v: Vec<_> = entries
+        .iter()
+        .filter(|(n, _)| gitlab_backup_id(n).is_some())
+        .cloned()
+        .collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.truncate(GITLAB_RESTORE_LIST_CAP);
+    v
+}
+
 /// Last `APT::Periodic::Unattended-Upgrade` assignment in an apt conf snippet.
 /// Comments are skipped. Not an editor — observe only.
 pub fn parse_unattended_periodic(conf: &str) -> Option<bool> {
@@ -736,21 +791,25 @@ mod tests {
         assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::GitlabBackup.mutating());
+        assert!(SysOp::GitlabRestore.mutating());
         assert!(SysOp::Reboot.mutating());
         assert!(SysOp::UnitRestart.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::GitlabBackup.permission(), Permission::SysManage);
+        assert_eq!(SysOp::GitlabRestore.permission(), Permission::SysManage);
         assert_eq!(SysOp::UpdatesAutoremove.permission(), Permission::SysManage);
         assert_eq!(SysOp::Reboot.permission(), Permission::SysManage);
         assert_eq!(SysOp::UnitRestart.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
         assert!(SysOp::GitlabBackup.streams());
+        assert!(SysOp::GitlabRestore.streams());
         assert!(!SysOp::Status.streams());
         assert!(!SysOp::Reboot.streams());
         assert!(!SysOp::UnitRestart.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
+        assert_eq!(SysOp::GitlabRestore.as_str(), "gitlab_restore");
         assert_eq!(SysOp::UnitRestart.as_str(), "unit_restart");
         assert!(!SysOp::Journal.mutating());
         assert_eq!(SysOp::Journal.permission(), Permission::SysView);
@@ -763,11 +822,18 @@ mod tests {
         );
         assert_eq!(GITLAB_BACKUP_DIR, "/var/opt/gitlab/backups");
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
+        assert_eq!(GITLAB_CTL_BIN, "/opt/gitlab/bin/gitlab-ctl");
+        assert_eq!(GITLAB_RESTORE_LIST_CAP, 50);
         assert_eq!(JOURNAL_UNITS.len(), 5);
         assert!(SysOp::NetSet.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
+        assert!(SysOp::GitlabRestore.needs_step_up());
+        assert!(!SysOp::GitlabBackup.needs_step_up());
         for op in SysOp::iter() {
-            let want = matches!(op, SysOp::NetSet | SysOp::UnitRestart);
+            let want = matches!(
+                op,
+                SysOp::NetSet | SysOp::UnitRestart | SysOp::GitlabRestore
+            );
             assert_eq!(op.needs_step_up(), want, "{} step-up", op.as_str());
         }
     }
@@ -784,6 +850,7 @@ mod tests {
                 SysOp::UpdatesAutoremove => "/sys/autoremove",
                 SysOp::NetSet => "/sys/net_set",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
+                SysOp::GitlabRestore => "/sys/gitlab_restore",
                 SysOp::Reboot => "/sys/reboot",
                 SysOp::UnitRestart => "/sys/unit_restart",
                 SysOp::Status | SysOp::UpdatesList | SysOp::Journal => {
@@ -979,6 +1046,10 @@ mod tests {
             "gitlab_backup".parse::<SysOp>().unwrap(),
             SysOp::GitlabBackup
         );
+        assert_eq!(
+            "gitlab_restore".parse::<SysOp>().unwrap(),
+            SysOp::GitlabRestore
+        );
         assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
         assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
@@ -1113,6 +1184,49 @@ mod tests {
         assert_eq!(newest.0, "new_gitlab_backup.tar");
         assert_eq!(newest.1, 200);
         assert!(newest_gitlab_backup(&[]).is_none());
+        let name = "1712345678_2026_04_05_16.11.3_gitlab_backup.tar";
+        assert_eq!(
+            gitlab_backup_id(name),
+            Some("1712345678_2026_04_05_16.11.3")
+        );
+        assert_eq!(
+            parse_restore_backup(&format!(r#"{{"name":"{name}"}}"#)).unwrap(),
+            name
+        );
+        assert_eq!(
+            parse_restore_backup(r#"{"name":" ../escape_gitlab_backup.tar"}"#),
+            Err(SysError::Backup)
+        );
+        assert_eq!(
+            parse_restore_backup(r#"{"name":"foo_gitlab_backup.tar;rm"}"#),
+            Err(SysError::Backup)
+        );
+        assert_eq!(parse_restore_backup("{}"), Err(SysError::Backup));
+        assert_eq!(parse_restore_backup("not-json"), Err(SysError::Op));
+        let dumps = vec![name.to_string(), "other_gitlab_backup.tar".into()];
+        assert!(gitlab_restore_listed(name, &dumps));
+        assert!(!gitlab_restore_listed("missing_gitlab_backup.tar", &dumps));
+        assert!(!gitlab_restore_listed("foo_gitlab_backup.tar;rm", &dumps));
+        let capped = gitlab_backups_for_restore(&[
+            ("old_gitlab_backup.tar".into(), 100),
+            ("new_gitlab_backup.tar".into(), 200),
+            ("skip.txt".into(), 999),
+        ]);
+        assert_eq!(
+            capped.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            vec!["new_gitlab_backup.tar", "old_gitlab_backup.tar"]
+        );
+        let many: Vec<(String, i64)> = (0..=GITLAB_RESTORE_LIST_CAP as i64)
+            .map(|i| (format!("{i}_gitlab_backup.tar"), i))
+            .collect();
+        assert_eq!(
+            gitlab_backups_for_restore(&many).len(),
+            GITLAB_RESTORE_LIST_CAP
+        );
+        assert_eq!(
+            gitlab_backups_for_restore(&many)[0].0,
+            format!("{}_gitlab_backup.tar", GITLAB_RESTORE_LIST_CAP)
+        );
     }
 
     #[test]
