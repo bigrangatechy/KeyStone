@@ -89,6 +89,14 @@ How to extend the catalog, widgets, ingest protocol, and crates is in
 publishes the operator book at the site root and the developer book at
 `/dev/`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Contributing
+
+Bugs, features, and support use this GitLab (templates under `.gitlab/`)
+and the org rules in
+[Ranga/community](https://git.bigrangatech.com/Ranga/community).
+Code changes land here with `git commit -s` (DCO). There is no CLA. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Architecture (short)
 
 - **Agent** collects catalog metrics, optionally talks to Docker via the

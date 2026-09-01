@@ -5,10 +5,20 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Contributing to KeyStone
 
+This project follows the BigRangaTech community-wide Contributing Guidelines.
+
+Read the full document here:
+https://git.bigrangatech.com/Ranga/community/-/blob/main/CONTRIBUTING.md
+
+If you are using AI-assisted development tools, you must also read the AI Agent Guidelines:
+https://git.bigrangatech.com/Ranga/community/-/blob/main/AI-AGENT-GUIDELINES.md
+
 KeyStone is licensed under [GPL-2.0-or-later](COPYING). By contributing, you
 agree that your contribution is licensed under the same terms.
 
-## Developer Certificate of Origin
+## Project-Specific Contributions
+
+### Developer Certificate of Origin
 
 Every commit must be signed off (`git commit -s`) to certify the
 [Developer Certificate of Origin](https://developercertificate.org/) (DCO)
@@ -51,7 +61,15 @@ By making a contribution to this project, I certify that:
     this project or the open source license(s) involved.
 ```
 
-## Documentation
+### Issues and merge requests
+
+Use the templates in this repository (GitLab fills them in from
+`.gitlab/issue_templates/` and `.gitlab/merge_request_templates/`). They
+match [Ranga/community TEMPLATES](https://git.bigrangatech.com/Ranga/community/-/tree/main/TEMPLATES).
+Code of Conduct, support, and vulnerability reporting are the stub files at
+the repository root, which point at community.
+
+### Documentation
 
 Operator docs (`docs/src/`) are hand-written and compiled into the server
 (`/help`, `keystone docs`). Developer docs (`docs/dev/src/`) are a separate
@@ -68,7 +86,7 @@ mdbook build docs
 mdbook build docs/dev
 ```
 
-## Checks
+### Checks
 
 ```
 cargo fmt --all

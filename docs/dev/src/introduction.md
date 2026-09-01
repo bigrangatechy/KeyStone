@@ -27,5 +27,6 @@ fail if the catalog, `DockerOp`, or `Permission` lists in these pages miss a
 variant. Packaging scripts are similarly tested so they cannot `chown -R`
 or depend on Docker Engine.
 
-Commits need `git commit -s` (DCO). There is no CLA. See CONTRIBUTING.md
-at the repository root.
+Commits need `git commit -s` (DCO). There is no CLA. Org-wide rules live
+in [Ranga/community](https://git.bigrangatech.com/Ranga/community). See
+CONTRIBUTING.md at the repository root.
