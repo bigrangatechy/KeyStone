@@ -161,6 +161,13 @@ impl DockerOp {
     pub fn streams(self) -> bool {
         matches!(self, Self::ContainerLogs | Self::ComposeLogs)
     }
+
+    /// Fresh authenticator code when TOTP is on. No Docker op uses this
+    /// yet; keep-outs we promote later opt in here. IPv4 is a `SysOp`.
+    pub fn needs_step_up(self) -> bool {
+        let _ = self;
+        false
+    }
 }
 
 /// CPU/memory from pushed container series, keyed by short container `id`.
@@ -516,5 +523,16 @@ mod tests {
         assert!(!DockerOp::ComposePs.mutating());
         assert_eq!(DockerOp::ComposeStop.as_str(), "compose_stop");
         assert_eq!(DockerOp::ContainerPause.as_str(), "container_pause");
+    }
+
+    #[test]
+    fn no_docker_op_needs_step_up_yet() {
+        for op in DockerOp::all() {
+            assert!(
+                !op.needs_step_up(),
+                "{} is confirm-only until a keep-out is promoted",
+                op.as_str()
+            );
+        }
     }
 }

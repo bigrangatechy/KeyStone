@@ -116,6 +116,12 @@ impl SysOp {
             Self::UpdatesApply | Self::UpdatesAutoremove | Self::GitlabBackup | Self::Journal
         )
     }
+
+    /// Fresh authenticator code when TOTP is on. IPv4 can drop SSH and
+    /// the agent; other mutations stay confirm-only until we promote them.
+    pub fn needs_step_up(self) -> bool {
+        matches!(self, Self::NetSet)
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -721,6 +727,13 @@ mod tests {
         assert_eq!(GITLAB_BACKUP_DIR, "/var/opt/gitlab/backups");
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
         assert_eq!(JOURNAL_UNITS.len(), 5);
+        assert!(SysOp::NetSet.needs_step_up());
+        for op in SysOp::iter() {
+            if op == SysOp::NetSet {
+                continue;
+            }
+            assert!(!op.needs_step_up(), "{} stays confirm-only", op.as_str());
+        }
     }
 
     #[test]

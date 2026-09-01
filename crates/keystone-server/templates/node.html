@@ -112,7 +112,7 @@
   {% if !sys_error.is_empty() %}
   <p class="error">System: {{ sys_error }}</p>
   {% endif %}
-  <div id="system" data-json="{{ sys_json }}" data-node="{{ node_id }}" data-manage="{% if sys_manage %}1{% else %}0{% endif %}" data-reason="{{ sys_reason }}" data-enabled="{% if sys_enabled %}1{% else %}0{% endif %}" data-ui-host="{% if sys_ui_host %}1{% else %}0{% endif %}"></div>
+  <div id="system" data-json="{{ sys_json }}" data-node="{{ node_id }}" data-manage="{% if sys_manage %}1{% else %}0{% endif %}" data-reason="{{ sys_reason }}" data-enabled="{% if sys_enabled %}1{% else %}0{% endif %}" data-ui-host="{% if sys_ui_host %}1{% else %}0{% endif %}" data-totp="{% if totp_enabled %}1{% else %}0{% endif %}"></div>
 </section>
 <section class="tab-panel" data-panel="settings">
   <h2>Node settings</h2>

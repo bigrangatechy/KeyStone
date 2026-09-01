@@ -385,3 +385,49 @@ fn operator_docs_cover_container_cards_and_system_split() {
         "developer docker.md must say inspect is summarized without Env"
     );
 }
+
+#[test]
+fn operator_docs_cover_ipv4_step_up() {
+    let using = include_str!("../../../docs/src/using.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let system = include_str!("../../../docs/src/system.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let docker = include_str!("../../../docs/dev/src/docker.md");
+    assert!(
+        using.contains("current authenticator code") && using.contains("IPv4"),
+        "using.md must say IPv4 asks for a current authenticator code when 2FA is on"
+    );
+    assert!(
+        security.contains("current")
+            && security.contains("backup code")
+            && security.contains("IPv4"),
+        "security.md must say IPv4 needs a current code, not a backup code"
+    );
+    assert!(
+        trouble.contains("IPv4 wants a code") && trouble.contains("not a backup code"),
+        "troubleshooting must cover IPv4 step-up"
+    );
+    assert!(
+        system.contains("current") && system.contains("6-digit"),
+        "System chapter must say Apply IPv4 asks for a current 6-digit code"
+    );
+    assert!(
+        audit.contains("authenticator") && audit.contains("ok"),
+        "Audit must mention refused IPv4 step-up"
+    );
+    assert!(
+        http.contains("`totp`") && http.contains("needs_step_up") && http.contains("net_set"),
+        "HTTP API must document the totp form field on net_set"
+    );
+    assert!(
+        dev.contains("needs_step_up()") && dev.contains("`net_set`"),
+        "developer system.md must say only net_set needs step-up"
+    );
+    assert!(
+        docker.contains("needs_step_up()") && docker.contains("confirm"),
+        "developer docker.md must say no Docker op needs step-up yet"
+    );
+}

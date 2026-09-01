@@ -46,10 +46,13 @@ hardcoded unit list (not a textbox). `reboot` is hardcoded
 | `updates_list` | no | `sys_view` | List pending apt upgrades |
 | `updates_apply` | yes | `sys_manage` | Apply apt upgrades (streamed). `NEEDRESTART_MODE=list`. |
 | `updates_autoremove` | yes | `sys_manage` | `apt-get autoremove` (streamed). This is not `dist-upgrade`. Tests must not run it. |
-| `net_set` | yes | `sys_manage` | Set IPv4 DHCP or static on one interface |
+| `net_set` | yes | `sys_manage` | Set IPv4 DHCP or static on one interface. `needs_step_up()`: current authenticator code when TOTP is on (not a backup code). TOTP off stays confirm-only. |
 | `gitlab_backup` | yes | `sys_manage` | Omnibus `gitlab-backup create` (streamed). Missing binary is an error; tests must not run it. Docker GitLab is not this op. |
 | `reboot` | yes | `sys_manage` | Hardcoded `systemctl reboot`. Not streamed. Tests must not invoke it. Poweroff is not an op. |
 | `journal` | no | `sys_view` | Follow `journalctl` for one allowlisted unit (streamed). Not a PTY. Tests must not follow a live journal. |
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
-token cannot call these routes.
+token cannot call these routes. `SysOp::needs_step_up()` is `net_set` only.
+The same `consume_step_up` helper as Docker POSTs enforces form field `totp`.
+Failed IPv4 step-up is still an audit row (`ok` false) and does not call the
+agent.

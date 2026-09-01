@@ -880,6 +880,8 @@
     const reason = host.getAttribute("data-reason") || "";
     const node = host.getAttribute("data-node") || "";
     const manage = host.getAttribute("data-manage") === "1";
+    const totpOn = host.getAttribute("data-totp") === "1";
+    const stepUpErr = new URLSearchParams(location.search).get("err");
     if (reason === "offline") {
       host.replaceChildren(el("p", "muted", "Agent is not connected. System commands need a live session."));
       return;
@@ -1146,6 +1148,11 @@
       netHead.appendChild(el("h3", null, "IPv4"));
       actions.appendChild(netHead);
       actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version."));
+      if (stepUpErr === "step-up") {
+        actions.appendChild(el("p", "error", "This change needs a current authenticator code, not a backup code."));
+      } else if (stepUpErr === "step-up-locked") {
+        actions.appendChild(el("p", "error", "too many attempts; try again in a few minutes"));
+      }
       const net = data.net || {};
       const ether = ifaces.filter((i) => ethernetIface(i.name || ""));
       if (!ether.length) {
@@ -1158,6 +1165,14 @@
         form.addEventListener("submit", (ev) => {
           if (!window.confirm("Change IPv4 on this node? You may lose the agent until you reconnect.")) {
             ev.preventDefault();
+            return;
+          }
+          if (totpOn) {
+            const field = form.querySelector('input[name="totp"]');
+            const digits = ((field && field.value) || "").replace(/\D/g, "");
+            if (digits.length !== 6) {
+              ev.preventDefault();
+            }
           }
         });
         const iface = document.createElement("select");
@@ -1227,6 +1242,18 @@
         }
         method.addEventListener("change", setStaticVisible);
         setStaticVisible();
+        if (totpOn) {
+          const totp = document.createElement("input");
+          totp.name = "totp";
+          totp.inputMode = "numeric";
+          totp.autocomplete = "one-time-code";
+          totp.maxLength = 6;
+          totp.required = true;
+          totp.placeholder = "000000";
+          const totpLab = labeled("Authenticator code", totp, "span-2");
+          totpLab.appendChild(el("span", "muted", "Current 6-digit code. Backup codes are for sign-in only."));
+          form.appendChild(totpLab);
+        }
         const save = document.createElement("button");
         save.type = "submit";
         save.className = "danger span-2";

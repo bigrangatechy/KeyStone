@@ -26,7 +26,10 @@ The server never opens `docker.sock`. `keystone-agent` uses bollard (and
 UI POST `/nodes/{id}/docker/{op}` requires a cookie session. The ingest
 token cannot call it. Mutations are written to `audit` (header `GET /audit`).
 Streaming ops (`container_logs`, `compose_logs`) are not POSTed; they use
-SSE (below).
+SSE (below). `DockerOp::needs_step_up()` is empty this version: confirm
+only. The same `consume_step_up` helper as System will enforce a current
+6-digit `totp` form field when a Docker op opts in. Backup codes are for
+sign-in only. TOTP off stays confirm-only.
 
 `Permission` mapping: `container_exec` → `docker_exec`; other mutating ops
 → `docker_manage`; the rest → `docker_view`. The signed-in admin has all of

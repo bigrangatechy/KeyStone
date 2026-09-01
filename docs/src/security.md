@@ -177,7 +177,13 @@ Docker Manage). Keep the allowlist tiny; do not start the helper on nodes
 that should only report metrics.
 
 Changing IPv4 can lock you out of SSH and drop the agent session. Keep a
-console. Mutations are written to [Audit](audit.md). The ingest token
+console. When authenticator 2FA is on, Apply IPv4 also needs a **current
+6-digit code** from the app (not a backup code — those are for sign-in). A
+used window cannot be reused. Failed codes share the same eight-tries /
+15-minute gate as login. If 2FA is off, confirm-only. Other System and
+Docker mutations stay confirm plus the two-hour idle cookie.
+
+Mutations are written to [Audit](audit.md). The ingest token
 cannot call them.
 
 ## Metrics allowlist

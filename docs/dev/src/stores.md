@@ -22,7 +22,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
   `KEYSTONE_ADMIN_PASSWORD` or the default `changeme`, cleared after a
   successful UI password change.
   TOTP: `totp_secret`, `totp_pending`, `totp_enabled`, `totp_backup_json`
-  (JSON array of Argon2 hashes), `totp_last_step` (replay).
+  (JSON array of Argon2 hashes), `totp_last_step` (login and IPv4 step-up
+  replay).
   `set_user_password` updates only hash + `must_change_password`.
 - `sessions` — cookie id, username, expiry (purged on read), `pending_2fa`
   (0/1). `put_session(..., pending_2fa)`. Finished logins are two hours

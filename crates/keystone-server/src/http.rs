@@ -587,6 +587,78 @@ fn session_username(state: &AppState, jar: &CookieJar) -> Option<String> {
         .map(|s| s.username)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepUpError {
+    Locked,
+    Denied,
+}
+
+/// When `needs` and TOTP is on: current 6-digit code, one window, no
+/// backup codes. TOTP off (or `needs` false) is confirm-only.
+fn consume_step_up(
+    state: &AppState,
+    username: &str,
+    needs: bool,
+    code: &str,
+) -> Result<(), StepUpError> {
+    if !needs {
+        return Ok(());
+    }
+    if username == "unknown" {
+        return Err(StepUpError::Denied);
+    }
+    let Some(mut rec) = state.stores.metadata.user_totp(username).ok().flatten() else {
+        return Ok(());
+    };
+    if !rec.enabled {
+        return Ok(());
+    }
+    if state.login_gate.lock().locked(username) {
+        return Err(StepUpError::Locked);
+    }
+    if let Some(step) = totp::verify_code_step(&rec.secret, username, code, Some(rec.last_step)) {
+        rec.last_step = step;
+        let _ = state.stores.metadata.set_user_totp(username, &rec);
+        state.login_gate.lock().clear(username);
+        return Ok(());
+    }
+    if totp::normalize_totp(code).is_some() {
+        state.login_gate.lock().record_fail(username);
+    }
+    Err(StepUpError::Denied)
+}
+
+fn step_up_denied(
+    state: &AppState,
+    username: &str,
+    node_id: &str,
+    op: &str,
+    target: &str,
+    mutating: bool,
+    err: StepUpError,
+    panel: &str,
+) -> Response {
+    if mutating {
+        let detail = match err {
+            StepUpError::Locked => "too many authenticator attempts",
+            StepUpError::Denied => "authenticator code required",
+        };
+        let _ = state
+            .stores
+            .metadata
+            .audit(username, node_id, op, target, false, detail);
+    }
+    let q = match err {
+        StepUpError::Locked => "step-up-locked",
+        StepUpError::Denied => "step-up",
+    };
+    Redirect::to(&format!(
+        "/nodes/{}?panel={panel}&err={q}",
+        urlencoding_path(node_id)
+    ))
+    .into_response()
+}
+
 #[derive(Template)]
 #[template(path = "settings.html")]
 struct SettingsTemplate {
@@ -1546,6 +1618,7 @@ struct NodeTemplate {
     sys_json: String,
     sys_error: String,
     sys_ui_host: bool,
+    totp_enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -1684,6 +1757,11 @@ async fn node_page(
     nics.sort();
     nics.dedup();
     let sys_ui_host = node_is_this_ui_host(&id, &node.hostname);
+    let totp_enabled = state
+        .stores
+        .metadata
+        .user_totp_enabled(&state.config.auth.username)
+        .unwrap_or(false);
     Html(
         NodeTemplate {
             node_id: node.node_id,
@@ -1725,6 +1803,7 @@ async fn node_page(
             sys_json,
             sys_error,
             sys_ui_host,
+            totp_enabled,
         }
         .render()
         .unwrap_or_else(|e| e.to_string()),
@@ -1982,6 +2061,8 @@ struct DockerForm {
     id: Option<String>,
     project: Option<String>,
     #[serde(default)]
+    totp: String,
+    #[serde(default)]
     redirect: String,
 }
 
@@ -2062,18 +2143,7 @@ async fn docker_action(
     Path((id, op)): Path<(String, String)>,
     Form(form): Form<DockerForm>,
 ) -> Response {
-    let username = jar
-        .get(SESSION_COOKIE)
-        .and_then(|c| {
-            state
-                .stores
-                .metadata
-                .get_session(c.value())
-                .ok()
-                .flatten()
-                .map(|s| s.username)
-        })
-        .unwrap_or_else(|| "unknown".into());
+    let username = session_username(&state, &jar).unwrap_or_else(|| "unknown".into());
     let parsed = match op.parse::<DockerOp>() {
         Ok(o) => o,
         Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
@@ -2087,6 +2157,18 @@ async fn docker_action(
     }
     let payload = docker_form_payload(&form);
     let target = payload.clone();
+    if let Err(err) = consume_step_up(&state, &username, parsed.needs_step_up(), &form.totp) {
+        return step_up_denied(
+            &state,
+            &username,
+            &id,
+            parsed.as_str(),
+            &target,
+            parsed.mutating(),
+            err,
+            panel_for_op(parsed),
+        );
+    }
     let result = state.agents.call(&id, parsed.as_str(), payload).await;
     let (ok, detail) = match &result {
         Ok(r) => (
@@ -2122,6 +2204,8 @@ struct SysForm {
     prefix: Option<String>,
     gateway: Option<String>,
     dns: Option<String>,
+    #[serde(default)]
+    totp: String,
     #[serde(default)]
     redirect: String,
 }
@@ -2172,18 +2256,7 @@ async fn sys_action(
     Path((id, op)): Path<(String, String)>,
     Form(form): Form<SysForm>,
 ) -> Response {
-    let username = jar
-        .get(SESSION_COOKIE)
-        .and_then(|c| {
-            state
-                .stores
-                .metadata
-                .get_session(c.value())
-                .ok()
-                .flatten()
-                .map(|s| s.username)
-        })
-        .unwrap_or_else(|| "unknown".into());
+    let username = session_username(&state, &jar).unwrap_or_else(|| "unknown".into());
     let parsed = match op.parse::<SysOp>() {
         Ok(o) => o,
         Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
@@ -2199,6 +2272,18 @@ async fn sys_action(
     }
     let payload = sys_form_payload(&form);
     let target = payload.clone();
+    if let Err(err) = consume_step_up(&state, &username, parsed.needs_step_up(), &form.totp) {
+        return step_up_denied(
+            &state,
+            &username,
+            &id,
+            parsed.as_str(),
+            &target,
+            parsed.mutating(),
+            err,
+            "system",
+        );
+    }
     let result = state.agents.call(&id, parsed.as_str(), payload).await;
     let (ok, detail) = match &result {
         Ok(r) => (
@@ -2766,14 +2851,20 @@ mod tests {
             name: None,
             id: None,
             project: None,
+            totp: "123456".into(),
             redirect: String::new(),
         };
         assert_eq!(docker_form_payload(&json), r#"{"name":"nginx"}"#);
+        assert!(
+            !docker_form_payload(&json).contains("123456"),
+            "authenticator code must not go to the Docker payload"
+        );
         let named = DockerForm {
             payload: None,
             name: Some(" data ".into()),
             id: None,
             project: None,
+            totp: String::new(),
             redirect: String::new(),
         };
         assert_eq!(docker_form_payload(&named), r#"{"name":"data"}"#);
@@ -2782,6 +2873,7 @@ mod tests {
             name: None,
             id: Some("abc123".into()),
             project: None,
+            totp: String::new(),
             redirect: String::new(),
         };
         assert_eq!(docker_form_payload(&id), r#"{"id":"abc123"}"#);
@@ -2851,6 +2943,10 @@ mod tests {
             docker.contains("parsed.mutating()"),
             "non-mutating Docker POSTs must not write audit"
         );
+        assert!(
+            docker.contains("consume_step_up") && docker.contains("needs_step_up"),
+            "Docker POSTs must share step-up with System"
+        );
 
         let sys = src
             .split("async fn sys_action")
@@ -2866,6 +2962,10 @@ mod tests {
         assert!(
             sys.contains("parsed.mutating()"),
             "status and updates_list must not write audit"
+        );
+        assert!(
+            sys.contains("consume_step_up") && sys.contains("needs_step_up"),
+            "System POSTs must share step-up with Docker"
         );
 
         let sse = src
@@ -3047,6 +3147,109 @@ mod tests {
         assert!(
             !start.contains("err=totp\""),
             "setup must not reuse the disable error"
+        );
+    }
+
+    fn scratch_admin() -> (std::path::PathBuf, crate::state::AppState) {
+        let dir = std::env::temp_dir().join(format!("ks-step-{}", uuid::Uuid::new_v4()));
+        let stores = keystone_store::Stores::open(&dir, 24).unwrap();
+        let hash = crate::auth::hash_password("test-pass-ok").unwrap();
+        crate::auth::ensure_admin(&stores.metadata, "admin", &hash).unwrap();
+        let cfg = keystone_core::config::ServerConfig {
+            data_dir: dir.to_string_lossy().into(),
+            ..keystone_core::config::ServerConfig::default()
+        };
+        (dir, crate::state::AppState::for_test(cfg, stores))
+    }
+
+    fn enable_totp(state: &crate::state::AppState, codes: &[String]) -> String {
+        let secret = totp::new_secret();
+        let hashes = totp::hash_backup_codes(codes).unwrap();
+        state
+            .stores
+            .metadata
+            .set_user_totp(
+                "admin",
+                &keystone_store::TotpRecord {
+                    secret: secret.clone(),
+                    pending: String::new(),
+                    enabled: true,
+                    backup_json: totp::backup_hashes_json(&hashes),
+                    last_step: 0,
+                },
+            )
+            .unwrap();
+        secret
+    }
+
+    #[test]
+    fn step_up_skips_when_not_required_or_totp_off() {
+        let (dir, state) = scratch_admin();
+        assert!(consume_step_up(&state, "admin", false, "").is_ok());
+        assert!(consume_step_up(&state, "admin", true, "").is_ok());
+        assert_eq!(
+            consume_step_up(&state, "unknown", true, "123456"),
+            Err(StepUpError::Denied)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn step_up_requires_fresh_code_not_backup() {
+        let (dir, state) = scratch_admin();
+        let codes = totp::generate_backup_codes();
+        let secret = enable_totp(&state, &codes);
+        assert_eq!(
+            consume_step_up(&state, "admin", true, ""),
+            Err(StepUpError::Denied)
+        );
+        assert_eq!(
+            consume_step_up(&state, "admin", true, &codes[0]),
+            Err(StepUpError::Denied)
+        );
+        let code = totp::code_now(&secret, "admin");
+        assert!(consume_step_up(&state, "admin", true, &code).is_ok());
+        assert_eq!(
+            consume_step_up(&state, "admin", true, &code),
+            Err(StepUpError::Denied)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn step_up_shares_login_gate() {
+        let (dir, state) = scratch_admin();
+        let secret = enable_totp(&state, &totp::generate_backup_codes());
+        for _ in 0..8 {
+            assert_eq!(
+                consume_step_up(&state, "admin", true, "000000"),
+                Err(StepUpError::Denied)
+            );
+        }
+        let code = totp::code_now(&secret, "admin");
+        assert_eq!(
+            consume_step_up(&state, "admin", true, &code),
+            Err(StepUpError::Locked)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn step_up_rejects_backup_codes_in_source() {
+        let consume = include_str!("http.rs")
+            .split("fn consume_step_up")
+            .nth(1)
+            .expect("consume_step_up")
+            .split("fn step_up_denied")
+            .next()
+            .expect("consume_step_up body");
+        assert!(
+            consume.contains("verify_code_step"),
+            "step-up must consume a TOTP window"
+        );
+        assert!(
+            !consume.contains("take_backup_code"),
+            "backup codes are for sign-in only"
         );
     }
 
@@ -3367,6 +3570,7 @@ mod tests {
             prefix: Some("24".into()),
             gateway: Some("192.168.0.1".into()),
             dns: Some("1.1.1.1 8.8.8.8".into()),
+            totp: "123456".into(),
             redirect: String::new(),
         };
         let p = sys_form_payload(&form);
@@ -3374,6 +3578,10 @@ mod tests {
         assert!(p.contains("\"method\":\"static\""));
         assert!(p.contains("192.168.0.50"));
         assert!(!p.contains(';'));
+        assert!(
+            !p.contains("totp") && !p.contains("123456"),
+            "authenticator code must not go to the helper payload"
+        );
     }
 
     #[test]
@@ -3457,6 +3665,10 @@ mod tests {
             "System tab must know if this node serves the UI"
         );
         assert!(
+            html.contains("data-totp"),
+            "System tab must know whether TOTP is on"
+        );
+        assert!(
             html.contains("and reboot"),
             "Settings manage checkbox must mention reboot"
         );
@@ -3475,6 +3687,12 @@ mod tests {
         assert!(
             js.contains("Change IPv4 on this node"),
             "net_set must ask before changing addressing"
+        );
+        assert!(
+            js.contains("data-totp")
+                && js.contains("one-time-code")
+                && js.contains("Backup codes are for sign-in only"),
+            "IPv4 must collect a current authenticator code when TOTP is on"
         );
         assert!(
             js.contains("ethernetIface"),

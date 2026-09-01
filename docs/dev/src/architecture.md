@@ -19,7 +19,8 @@ stream; the server never dials an agent and never opens a remote
        │  gRPC Session: PushFrame / Command / StreamChunk
        ▼
   keystone-server
-       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`);
+       ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`); IPv4 `net_set` needs a fresh authenticator
+       │     code when TOTP is on (backup codes stay sign-in only);
        │     idle two hours, heartbeat while a tab is open (Log out to end it)
        │     optional rustls on `http_listen` (`tls.rs`)
        ├── ingest (tonic), optional rustls on `grpc_listen`

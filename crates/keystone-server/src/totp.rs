@@ -82,6 +82,14 @@ pub fn verify_code_step(
     None
 }
 
+#[cfg(test)]
+pub(crate) fn code_now(secret_b32: &str, account: &str) -> String {
+    totp(secret_b32, account)
+        .expect("totp secret")
+        .generate_current()
+        .expect("clock")
+}
+
 pub fn current_step() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

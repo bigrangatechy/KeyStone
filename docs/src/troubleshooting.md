@@ -170,6 +170,9 @@ token does not.
   in this UI.
 - Static IPv4 dropped the session: that address is now on the interface.
   Use a console if you cannot reach the new IP.
+- IPv4 wants a code: authenticator 2FA is on. Type a current 6-digit
+  authenticator code, not a backup code. “too many attempts” is the same
+  eight-tries / 15-minute gate as login.
 - Journal page 400: that unit is not on the allowlist (`keystone-agent`,
   `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`). There is no
   unit-name textbox.

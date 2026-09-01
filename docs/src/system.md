@@ -105,7 +105,9 @@ Pick an Ethernet interface that is already up. **DHCP** or **static**
 `/etc/netplan` exists, otherwise NetworkManager.
 
 Changing the address can drop the agent session (and SSH). Keep a console.
-Wi-Fi, VLANs, and IPv6 are not in this version.
+If you enabled an authenticator, Apply IPv4 also asks for a **current
+6-digit code** (not a backup code). Wi-Fi, VLANs, and IPv6 are not in this
+version.
 
 ## GitLab backup
 
