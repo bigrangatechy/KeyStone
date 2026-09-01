@@ -10,8 +10,9 @@ Axum router in `crates/keystone-server/src/http.rs`. Cookie `keystone_session` o
 Finished logins are a session cookie (no `Max-Age`) so the browser drops
 them on quit. They also expire after **two hours idle** (`SESSION_IDLE_SECS`);
 `require_session` slides `expires_unix` about every ten minutes of traffic.
-`GET /api/v1/session` is a cookie heartbeat so an open logs page counts as
-traffic. Closing the last UI tab `sendBeacon`s `POST /logout`. `pending_2fa`
+`GET /api/v1/session` is a cookie heartbeat so an open UI (including a
+background tab) counts as traffic. Do not `sendBeacon` `/logout` from
+`pagehide`. `pending_2fa`
 is still five minutes (`Max-Age=300`) and is not slid. Static CSS/JS are `include_str!`’d into the binary. A `pending_2fa` session
 may only hit `/login/totp` and `/logout`. After a good code the pending row
 is deleted and a new session id is issued.

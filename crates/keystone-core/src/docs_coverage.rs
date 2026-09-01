@@ -149,8 +149,8 @@ fn operator_docs_cover_idle_session() {
         );
     }
     assert!(
-        security.contains("copied from DevTools"),
-        "security.md must say closing the last tab kills a stolen cookie"
+        security.contains("Log out") && !security.contains("copied from DevTools"),
+        "security.md must not claim last-tab close kills a stolen cookie"
     );
 }
 

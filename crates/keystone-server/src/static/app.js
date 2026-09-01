@@ -1943,65 +1943,16 @@
 
   function bindSessionLifetime() {
     if (!document.querySelector("header.bar")) return;
-    const tabKey = "keystone_tabs";
-    const tabId = String(Math.random()).slice(2);
-    const ttlMs = 20000;
-    let stay = false;
-    function markStay() {
-      stay = true;
-    }
-    function readTabs() {
-      try {
-        const raw = JSON.parse(localStorage.getItem(tabKey) || "[]");
-        return Array.isArray(raw) ? raw : [];
-      } catch (_) {
-        return [];
-      }
-    }
-    function writeTabs(list) {
-      localStorage.setItem(tabKey, JSON.stringify(list));
-    }
-    function pulse() {
-      const now = Date.now();
-      const list = readTabs().filter((t) => t && (t.id === tabId || now - t.t < ttlMs));
-      const i = list.findIndex((t) => t.id === tabId);
-      if (i >= 0) list[i].t = now;
-      else list.push({ id: tabId, t: now });
-      writeTabs(list);
-    }
-    function drop() {
-      writeTabs(readTabs().filter((t) => t && t.id !== tabId));
-    }
-    document.addEventListener("click", (e) => {
-      const a = e.target.closest("a[href]");
-      if (!a || a.target === "_blank") return;
-      try {
-        if (new URL(a.href, location.href).origin === location.origin) markStay();
-      } catch (_) {}
-    });
-    document.addEventListener("submit", markStay);
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "F5" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r")) {
-        markStay();
-      }
-    });
-    pulse();
-    setInterval(pulse, 5000);
-    window.addEventListener("pagehide", (e) => {
-      drop();
-      if (e.persisted || stay) return;
-      const live = readTabs().filter((t) => t && Date.now() - t.t < ttlMs);
-      if (live.length) return;
-      try {
-        navigator.sendBeacon("/logout", new Blob([], { type: "text/plain" }));
-      } catch (_) {}
-    });
+    // Do not sendBeacon /logout on pagehide. Tab switch, mobile background,
+    // and Chrome discard all fire it, which signed people out after ~10 min.
     function beat() {
-      if (document.visibilityState === "hidden") return;
       fetch("/api/v1/session", { credentials: "same-origin" }).catch(() => {});
     }
     beat();
     setInterval(beat, 30000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) beat();
+    });
   }
 
   bindSessionLifetime();

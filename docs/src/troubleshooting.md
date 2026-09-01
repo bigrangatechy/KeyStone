@@ -26,9 +26,11 @@ the package.
   backup code (`XXXX-XXXX`).
 - “too many attempts”: eight failed password or TOTP tries in 15 minutes
   for that username. Wait for the window to pass.
-- Sent back to login after leaving the tab: closing the last KeyStone tab
-  signs you out. A session also dies after two hours with no UI traffic
-  (a tab left in the background counts). Sign in again.
+- Sent back to login after switching tabs: that was last-tab logout on
+  `pagehide` (Chrome discard and tab switch look like close). Current
+  builds keep the session; use **Log out** when you are done. A session
+  still dies after two hours with no heartbeat (discarded tab, asleep
+  laptop). Sign in again.
 
 ## Stuck on “Choose a password”
 

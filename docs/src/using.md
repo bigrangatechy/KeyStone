@@ -28,10 +28,10 @@ If you enabled an **authenticator** on Settings, sign-in asks for a 6-digit
 code (or a backup code) after the password. See [Security](security.md).
 
 Sessions are cookie-based. The UI stays signed in while a KeyStone tab is
-open (including Compose/container logs). Closing the last tab signs you
-out. After **two hours** with no UI traffic you will need to sign in
-again even if a tab was left in the background. Use **Log out** in the
-header when you are done. If `[tls]` is set
+open (including Compose/container logs, and while that tab is in the
+background). After **two hours** with no heartbeat (discarded tab, asleep
+laptop) you will need to sign in again. Closing a tab does not sign you
+out — use **Log out** in the header, or quit the browser. If `[tls]` is set
 in `server.toml`, open `https://` on `http_listen`. You
 can still put a reverse proxy in front instead; see [Security](security.md).
 

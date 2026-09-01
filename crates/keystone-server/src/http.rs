@@ -3255,19 +3255,19 @@ mod tests {
     }
 
     #[test]
-    fn last_tab_close_logs_out_and_heartbeat_keeps_logs_alive() {
+    fn pagehide_must_not_logout_and_heartbeat_keeps_ui_alive() {
         let js = include_str!("static/app.js");
         assert!(
-            js.contains("sendBeacon(\"/logout\""),
-            "closing the last UI tab must POST logout so a copied cookie dies"
+            !js.contains("sendBeacon(\"/logout\""),
+            "pagehide must not POST logout; tab switch and Chrome discard fire it"
         );
         assert!(
-            js.contains("keystone_tabs"),
-            "in-app clicks must not look like the last tab closing"
+            !js.contains("keystone_tabs"),
+            "last-tab localStorage must not drive logout"
         );
         assert!(
-            js.contains("/api/v1/session"),
-            "an open logs page must heartbeat so idle does not kick a sitting operator"
+            js.contains("/api/v1/session") && js.contains("visibilitychange"),
+            "an open UI must heartbeat so idle does not kick a sitting operator"
         );
     }
 

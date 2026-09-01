@@ -58,11 +58,12 @@ in-tree certs. The cookie is `HttpOnly` and `SameSite=Lax`.
 
 A finished login is a **session cookie** (the browser drops it when that
 browser actually quits) plus **two hours of idle** on the server. Using
-the UI, including an open logs page, slides the idle window. Closing the
-**last** KeyStone tab signs you out so a cookie copied from DevTools dies
-with that tab. Clicking around inside the UI does not. The
-password-then-TOTP step is still five minutes and does not get the idle
-slide. The ingest token is not this cookie and is not expired by it.
+the UI, including an open logs page or a tab left in the background,
+slides the idle window. Closing a tab does not sign you out — that used
+to fire on tab switch and Chrome discard. Use **Log out** in the header
+when you are done. The password-then-TOTP step is still five minutes and
+does not get the idle slide. The ingest token is not this cookie and is
+not expired by it.
 
 Lost phone: use a backup code, then enroll again from Settings. Lost both:
 you need filesystem access to `data_dir` on the server host — there is no

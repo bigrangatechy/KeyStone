@@ -20,7 +20,7 @@ stream; the server never dials an agent and never opens a remote
        ▼
   keystone-server
        ├── HTTP UI + cookie session (axum), optional TOTP (`totp.rs`);
-       │     last-tab logout, idle two hours, slides while a tab is open
+       │     idle two hours, heartbeat while a tab is open (Log out to end it)
        │     optional rustls on `http_listen` (`tls.rs`)
        ├── ingest (tonic), optional rustls on `grpc_listen`
        ├── mDNS advertise of ingest (`mdns.rs`, UDP 5353; no token in TXT)
