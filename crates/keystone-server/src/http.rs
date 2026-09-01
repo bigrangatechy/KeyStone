@@ -3791,6 +3791,37 @@ mod tests {
     }
 
     #[test]
+    fn compose_ui_is_cards_then_detail() {
+        let js = include_str!("static/app.js");
+        let css = include_str!("static/app.css");
+        assert!(
+            js.contains("compose-card")
+                && js.contains("compose-detail")
+                && js.contains("data-project")
+                && js.contains(" running")
+                && js.contains(" exited"),
+            "Compose tab must be glance cards with running/exited counts"
+        );
+        assert!(
+            js.contains("compose_update")
+                && js.contains("compose_up")
+                && js.contains("compose_down")
+                && js.contains("/compose/")
+                && js.contains("/logs"),
+            "Compose detail must keep Up/Down/Update and Logs"
+        );
+        assert!(
+            js.contains("Service") && js.contains("Ports"),
+            "Compose detail must keep the service table"
+        );
+        assert!(
+            js.contains("not a CasaOS shop"),
+            "Compose cards must not become a CasaOS-style shop"
+        );
+        assert!(css.contains(".compose-card") && css.contains(".compose-grid"));
+    }
+
+    #[test]
     fn dockerhub_api_is_behind_the_session_cookie() {
         let src = include_str!("http.rs");
         let head = src.split("#[cfg(test)]").next().expect("router source");

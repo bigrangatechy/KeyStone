@@ -750,3 +750,30 @@ fn operator_docs_cover_image_login() {
         "architecture.md must say login is in and GHCR browse stays out"
     );
 }
+
+#[test]
+fn operator_docs_cover_compose_cards() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        docker.contains("one card per project")
+            && docker.contains("running/exited")
+            && docker.contains("service table")
+            && docker.contains("CasaOS-style app shop"),
+        "operator Docker doc must describe Compose glance cards, not a shop"
+    );
+    assert!(
+        using.contains("Compose are cards") && using.contains("Volumes and Networks are tables"),
+        "using.md must mention Compose cards and keep Volumes/Networks as tables"
+    );
+    assert!(
+        dev.contains("glance cards") && dev.contains("No extra inspect"),
+        "developer docker.md must say Compose cards reuse compose_ps"
+    );
+    assert!(
+        arch.contains("compose_ps") && arch.contains("service table") && arch.contains("app shop"),
+        "architecture.md must say Compose cards are not an app shop"
+    );
+}

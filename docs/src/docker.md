@@ -44,13 +44,13 @@ add `keystone` to `docker` and restart the agent.
 
 ## What the tabs do
 
-With Observe on and a live session, Compose / Images / Volumes / Networks
-are tables (not a JSON dump). **Containers** are cards: name, state, CPU,
-and memory on the face; click for image, ports, mounts, networks, and
-Manage actions. Inspect JSON is summarized and does **not** include
-container `Env`. If the agent is offline or Observe is off, the tab says so
-instead of showing stale lists. Manage buttons and pull/create toolbars are
-hidden when mutations are off.
+With Observe on and a live session, Images / Volumes / Networks are tables
+(not a JSON dump). **Containers** and **Compose** are cards. Container
+cards show name, state, CPU, and memory; click for image, ports, mounts,
+networks, and Manage actions. Inspect JSON is summarized and does **not**
+include container `Env`. If the agent is offline or Observe is off, the tab
+says so instead of showing stale lists. Manage buttons and pull/create
+toolbars are hidden when mutations are off.
 
 - **Containers** — one card per container (name, state, CPU, memory). Click
   opens details (image, ports, Compose project, mounts, networks) and
@@ -59,9 +59,10 @@ hidden when mutations are off.
   that node’s poll interval while the tab is open (not a live Engine
   `stats` stream). With Manage: start / stop / restart / pause / resume /
   kill / remove, and **Prune stopped**.
-- **Compose** — projects discovered from `com.docker.compose.project`
-  labels **and** from **Compose files** on Settings, with a service table
-  per project.   **Logs** follows `docker compose logs`. With Manage: **Up**, **Start**,
+- **Compose** — one card per project (name, running/exited counts) from
+  `com.docker.compose.project` labels **and** from **Compose files** on
+  Settings. Click opens the service table, **Logs**, and Manage actions.
+  **Logs** follows `docker compose logs`. With Manage: **Up**, **Start**,
   **Stop**, **Restart**, **Down**, **Pull**, **Update** (pull then up — use
   this for a Cloudflare Tunnel stack, not the System tab). **Stop** keeps
   the containers (exited) on this tab. **Restart** bounces them without
@@ -75,7 +76,7 @@ hidden when mutations are off.
   readable compose file on Settings. The packaged agent user is
   `keystone`: the YAML (and its directory) must be readable by that user.
   Put stacks in `/opt/…` or `chmod`/`setfacl` a home path; `ProtectHome`
-  is read-only, not a hidden `/home`.
+  is read-only, not a hidden `/home`. This tab is not a CasaOS-style app shop.
 - **Images** — tags, short id, size. With Manage: pull by name, search
   Docker Hub as cards that fill that name, prune unused, remove.
 - **Volumes** and **Networks** — list; create/remove and prune unused with

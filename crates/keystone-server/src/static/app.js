@@ -558,51 +558,114 @@
 
   const compose = document.getElementById("compose");
   if (compose && !dockerBlocked(compose)) {
+    // Glance cards then the existing service table — not a CasaOS shop.
     const data = parse(compose);
     const node = compose.getAttribute("data-node");
-    const wrap = document.createElement("div");
+    const board = el("div", "compose-board");
+    const grid = el("div", "compose-grid");
+    const detail = el("div", "compose-detail");
+    detail.hidden = true;
+    let selectedProject = "";
+
+    function projectCounts(services) {
+      let running = 0, exited = 0;
+      (Array.isArray(services) ? services : []).forEach((s) => {
+        if ((s.state || "").toLowerCase() === "running") running++;
+        else exited++;
+      });
+      return { running: running, exited: exited, total: running + exited };
+    }
+
+    function projectState(counts) {
+      if (!counts.total) return { cls: "unknown", label: "down" };
+      if (counts.running) return { cls: "running", label: "running" };
+      return { cls: "exited", label: "exited" };
+    }
+
+    function showProjectDetail(project, services) {
+      const counts = projectCounts(services);
+      const st = projectState(counts);
+      detail.hidden = false;
+      board.classList.add("has-detail");
+      detail.replaceChildren();
+      detail.appendChild(el("h3", null, project));
+      detail.appendChild(el("span", "state state-" + st.cls, st.label));
+      const table = document.createElement("table");
+      table.appendChild(thead(["Service", "Name", "Image", "Ports", "State"]));
+      const body = document.createElement("tbody");
+      if (!services.length) {
+        body.appendChild(emptyRow(5, "No containers (Compose down removes them). Start or Up brings them back."));
+      } else {
+        services.forEach((s) => {
+          const tr = document.createElement("tr");
+          tr.appendChild(tdText(s.service || ""));
+          tr.appendChild(tdText(s.name || ""));
+          tr.appendChild(tdText(s.image || ""));
+          tr.appendChild(tdCode(s.ports || "—"));
+          tr.appendChild(stateCell(s.state, s.status));
+          body.appendChild(tr);
+        });
+      }
+      table.appendChild(body);
+      detail.appendChild(table);
+      const tools = el("div", "actions");
+      if (manageOn(compose)) {
+        tools.appendChild(actionForm(node, "compose_up", { project: project }));
+        tools.appendChild(actionForm(node, "compose_start", { project: project }));
+        tools.appendChild(actionForm(node, "compose_stop", { project: project }));
+        tools.appendChild(actionForm(node, "compose_restart", { project: project }));
+        tools.appendChild(actionForm(node, "compose_down", { project: project }));
+        tools.appendChild(actionForm(node, "compose_pull", { project: project }));
+        tools.appendChild(actionForm(node, "compose_update", { project: project }));
+      }
+      tools.appendChild(logsLink("/nodes/" + encodeURIComponent(node) + "/compose/" + encodeURIComponent(project) + "/logs"));
+      detail.appendChild(tools);
+    }
+
+    function selectProject(project, services) {
+      if (selectedProject === project) {
+        selectedProject = "";
+        detail.hidden = true;
+        board.classList.remove("has-detail");
+        grid.querySelectorAll(".compose-card").forEach((card) => card.classList.remove("is-open"));
+        return;
+      }
+      selectedProject = project;
+      grid.querySelectorAll(".compose-card").forEach((card) => {
+        card.classList.toggle("is-open", card.getAttribute("data-project") === project);
+      });
+      showProjectDetail(project, services);
+    }
+
     const projects = (data && typeof data === "object" && !Array.isArray(data)) ? Object.keys(data) : [];
     if (!projects.length) {
-      wrap.appendChild(el("p", "muted", "No Compose projects. Set Compose files on Settings (paths the keystone user can read), or start a stack that sets com.docker.compose.project."));
+      board.appendChild(el("p", "muted", "No Compose projects. Set Compose files on Settings (paths the keystone user can read), or start a stack that sets com.docker.compose.project."));
     } else {
       projects.forEach((project) => {
-        const head = el("div", "compose-head");
-        head.appendChild(el("h3", null, project));
-        const tools = el("div", "actions");
-        if (manageOn(compose)) {
-          tools.appendChild(actionForm(node, "compose_up", { project: project }));
-          tools.appendChild(actionForm(node, "compose_start", { project: project }));
-          tools.appendChild(actionForm(node, "compose_stop", { project: project }));
-          tools.appendChild(actionForm(node, "compose_restart", { project: project }));
-          tools.appendChild(actionForm(node, "compose_down", { project: project }));
-          tools.appendChild(actionForm(node, "compose_pull", { project: project }));
-          tools.appendChild(actionForm(node, "compose_update", { project: project }));
-        }
-        tools.appendChild(logsLink("/nodes/" + encodeURIComponent(node) + "/compose/" + encodeURIComponent(project) + "/logs"));
-        head.appendChild(tools);
-        wrap.appendChild(head);
-        const table = document.createElement("table");
-        table.appendChild(thead(["Service", "Name", "Image", "Ports", "State"]));
-        const body = document.createElement("tbody");
         const services = Array.isArray(data[project]) ? data[project] : [];
-        if (!services.length) {
-          body.appendChild(emptyRow(5, "No containers (Compose down removes them). Start or Up brings them back."));
+        const counts = projectCounts(services);
+        const st = projectState(counts);
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "compose-card";
+        card.setAttribute("data-project", project);
+        card.appendChild(el("h3", null, project));
+        card.appendChild(el("span", "state state-" + st.cls, st.label));
+        const metrics = el("div", "container-metrics");
+        if (!counts.total) {
+          metrics.appendChild(el("span", null, "No containers"));
         } else {
-          services.forEach((s) => {
-            const tr = document.createElement("tr");
-            tr.appendChild(tdText(s.service || ""));
-            tr.appendChild(tdText(s.name || ""));
-            tr.appendChild(tdText(s.image || ""));
-            tr.appendChild(tdCode(s.ports || "—"));
-            tr.appendChild(stateCell(s.state, s.status));
-            body.appendChild(tr);
-          });
+          metrics.appendChild(el("span", null, counts.running + " running"));
+          metrics.appendChild(el("span", null, counts.exited + " exited"));
         }
-        table.appendChild(body);
-        wrap.appendChild(table);
+        card.appendChild(metrics);
+        card.addEventListener("click", () => selectProject(project, services));
+        grid.appendChild(card);
       });
+      board.appendChild(grid);
+      board.appendChild(detail);
     }
-    compose.replaceChildren(wrap);
+    compose.replaceChildren(board);
   }
 
   function hubError(r, data) {

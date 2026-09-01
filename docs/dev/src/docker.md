@@ -91,8 +91,10 @@ List payloads the UI expects:
   `container_stats` stream. `ports` is a host publish string, e.g.
   `0.0.0.0:8080->80/tcp`)
 - compose ps: `{ "<project>": [{id, id_short, name, image, state, status, service, ports}] }`
-  (union of engine labels, Settings `compose_paths`, and last-seen projects
-  so Down does not drop the tab)
+  (glance cards: name plus running/exited; click opens the service table
+  already in that payload, then Logs and Manage actions. No extra inspect
+  RPC. Union of engine labels, Settings `compose_paths`, and last-seen
+  projects so Down does not drop the tab. Not a CasaOS-style app shop.)
 - images: `[{id, id_short, tags, size}]`
 - volumes: `[{name, driver, mountpoint}]`
 - networks: `[{id, id_short, name, driver, scope}]`
