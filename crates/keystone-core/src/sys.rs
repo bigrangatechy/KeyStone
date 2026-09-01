@@ -3,8 +3,9 @@
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
 //! restart from those lists, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
-//! create, GitLab Omnibus backup/restore, unattended-upgrades observe). No
-//! I/O — the helper and agent run them. Keep `docs/dev/src/system.md` in sync.
+//! create, Wi-Fi join from a scan list, GitLab Omnibus backup/restore,
+//! unattended-upgrades observe). No I/O — the helper and agent run them.
+//! Keep `docs/dev/src/system.md` in sync.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -73,6 +74,8 @@ pub enum SysOp {
     UpdatesAutoremove,
     NetSet,
     VlanAdd,
+    WifiScan,
+    WifiJoin,
     GitlabBackup,
     GitlabRestore,
     Reboot,
@@ -95,6 +98,8 @@ impl SysOp {
             Self::UpdatesAutoremove => "Remove unused packages (apt-get autoremove)",
             Self::NetSet => "Set IPv4/IPv6 DHCP or static on one Ethernet interface",
             Self::VlanAdd => "Create an 802.1Q VLAN on a listed Ethernet parent",
+            Self::WifiScan => "List nearby Wi-Fi SSIDs on one wireless interface",
+            Self::WifiJoin => "Join a listed Wi-Fi SSID on one wireless interface",
             Self::GitlabBackup => "Create a GitLab Omnibus backup (gitlab-backup create)",
             Self::GitlabRestore => {
                 "Restore GitLab Omnibus from a listed dump (gitlab-backup restore)"
@@ -114,6 +119,7 @@ impl SysOp {
                 | Self::UpdatesAutoremove
                 | Self::NetSet
                 | Self::VlanAdd
+                | Self::WifiJoin
                 | Self::GitlabBackup
                 | Self::GitlabRestore
                 | Self::Reboot
@@ -142,11 +148,12 @@ impl SysOp {
 
     /// Fresh authenticator code when TOTP is on. Addressing can drop SSH and
     /// the agent; restarting leftover docker/ssh/keystone-server can too;
-    /// GitLab restore replaces application data.
+    /// GitLab restore replaces application data; joining Wi-Fi can drop the
+    /// session if that is how you reach the node.
     pub fn needs_step_up(self) -> bool {
         matches!(
             self,
-            Self::NetSet | Self::VlanAdd | Self::UnitRestart | Self::GitlabRestore
+            Self::NetSet | Self::VlanAdd | Self::WifiJoin | Self::UnitRestart | Self::GitlabRestore
         )
     }
 }
@@ -179,6 +186,10 @@ pub enum SysError {
     Backup,
     #[error("VLAN id must be 1–4094")]
     Vlan,
+    #[error("SSID is invalid")]
+    Ssid,
+    #[error("Wi-Fi password is invalid")]
+    Psk,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -322,6 +333,65 @@ impl VlanAdd {
     }
 }
 
+/// Scan or join one wireless LAN interface (`wlan0`, `wlp3s0`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiIface {
+    pub iface: String,
+}
+
+impl WifiIface {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
+        v.validate()
+    }
+
+    pub fn validate(mut self) -> Result<Self, SysError> {
+        self.iface = validate_wifi_iface(&self.iface)?;
+        Ok(self)
+    }
+}
+
+/// Join a listed SSID. `psk` is argv-only and must not be audited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiJoin {
+    pub iface: String,
+    pub ssid: String,
+    pub psk: String,
+}
+
+impl WifiJoin {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
+        v.validate()
+    }
+
+    pub fn validate(mut self) -> Result<Self, SysError> {
+        self.iface = validate_wifi_iface(&self.iface)?;
+        self.ssid = validate_ssid(&self.ssid)?;
+        self.psk = validate_psk(&self.psk)?;
+        Ok(self)
+    }
+}
+
+/// Cap SSIDs returned by a scan (UI picker).
+pub const WIFI_SSID_CAP: usize = 32;
+
+/// Drop `psk` from a Wi-Fi join payload before Audit.
+pub fn audit_sys_target(op: SysOp, payload: &str) -> String {
+    if op != SysOp::WifiJoin {
+        return payload.to_string();
+    }
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return "{\"psk\":\"\"}".into();
+    };
+    if let Some(obj) = v.as_object_mut() {
+        if obj.contains_key("psk") {
+            obj.insert("psk".into(), serde_json::json!(""));
+        }
+    }
+    v.to_string()
+}
+
 /// Netplan fragment for physical Ethernet apply.
 pub const NETPLAN_KEYSTONE: &str = "/etc/netplan/99-keystone.yaml";
 
@@ -383,6 +453,103 @@ pub fn validate_iface(raw: &str) -> Result<String, SysError> {
         return Err(SysError::Iface);
     }
     Ok(s.to_string())
+}
+
+/// Wireless LAN token (`wlan0`, `wlp3s0`). Not Ethernet, not WWAN, not a shell string.
+pub fn validate_wifi_iface(raw: &str) -> Result<String, SysError> {
+    let s = raw.trim();
+    if s.is_empty() || s.len() > 15 {
+        return Err(SysError::Iface);
+    }
+    let b = s.as_bytes();
+    if !b[0].is_ascii_alphabetic() {
+        return Err(SysError::Iface);
+    }
+    if !b
+        .iter()
+        .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+    {
+        return Err(SysError::Iface);
+    }
+    let lower = s.to_ascii_lowercase();
+    if !lower.starts_with("wl") {
+        return Err(SysError::Iface);
+    }
+    Ok(s.to_string())
+}
+
+pub fn validate_ssid(raw: &str) -> Result<String, SysError> {
+    let s = raw.trim();
+    if s.is_empty() || s.len() > 32 {
+        return Err(SysError::Ssid);
+    }
+    if s.bytes()
+        .any(|c| c < 0x20 || c == 0x7f || c == b'"' || c == b'\\')
+    {
+        return Err(SysError::Ssid);
+    }
+    Ok(s.to_string())
+}
+
+pub fn validate_psk(raw: &str) -> Result<String, SysError> {
+    let s = raw.trim();
+    if s.contains('\0')
+        || s.contains('\n')
+        || s.contains('\r')
+        || s.contains('"')
+        || s.contains('\\')
+    {
+        return Err(SysError::Psk);
+    }
+    if s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(s.to_string());
+    }
+    if (8..=63).contains(&s.len()) {
+        return Ok(s.to_string());
+    }
+    Err(SysError::Psk)
+}
+
+pub fn ssid_listed(ssid: &str, names: &[String]) -> bool {
+    names.iter().any(|s| s == ssid)
+}
+
+/// `nmcli -t -f SSID device wifi list` lines.
+pub fn parse_nmcli_wifi_list(stdout: &str) -> Vec<String> {
+    cap_ssids(stdout.lines().filter_map(|line| {
+        let s = line.trim();
+        if s.is_empty() || s == "--" {
+            return None;
+        }
+        validate_ssid(s).ok()
+    }))
+}
+
+/// `iw dev wlan0 scan` `SSID:` lines.
+pub fn parse_iw_scan(stdout: &str) -> Vec<String> {
+    cap_ssids(stdout.lines().filter_map(|line| {
+        let line = line.trim();
+        let rest = line.strip_prefix("SSID:")?;
+        let s = rest.trim();
+        if s.is_empty() {
+            return None;
+        }
+        validate_ssid(s).ok()
+    }))
+}
+
+fn cap_ssids(iter: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for s in iter {
+        if out.iter().any(|e| e == &s) {
+            continue;
+        }
+        out.push(s);
+        if out.len() >= WIFI_SSID_CAP {
+            break;
+        }
+    }
+    out
 }
 
 pub fn validate_ipv4(raw: &str) -> Result<Ipv4Addr, SysError> {
@@ -568,6 +735,68 @@ pub fn nmcli_vlan_add_args(req: &VlanAdd) -> Result<Vec<String>, SysError> {
         "ipv6.method".into(),
         "auto".into(),
     ])
+}
+
+/// `nmcli device wifi list` argv after `nmcli` (no shell).
+pub fn nmcli_wifi_list_args(iface: &str) -> Result<Vec<String>, SysError> {
+    let iface = validate_wifi_iface(iface)?;
+    Ok(vec![
+        "-t".into(),
+        "-f".into(),
+        "SSID".into(),
+        "device".into(),
+        "wifi".into(),
+        "list".into(),
+        "ifname".into(),
+        iface,
+    ])
+}
+
+/// `nmcli device wifi rescan` argv after `nmcli`.
+pub fn nmcli_wifi_rescan_args(iface: &str) -> Result<Vec<String>, SysError> {
+    let iface = validate_wifi_iface(iface)?;
+    Ok(vec![
+        "device".into(),
+        "wifi".into(),
+        "rescan".into(),
+        "ifname".into(),
+        iface,
+    ])
+}
+
+/// `nmcli device wifi connect` argv after `nmcli` (password is a separate argv).
+pub fn nmcli_wifi_join_args(req: &WifiJoin) -> Result<Vec<String>, SysError> {
+    let req = req.clone().validate()?;
+    Ok(vec![
+        "device".into(),
+        "wifi".into(),
+        "connect".into(),
+        req.ssid,
+        "password".into(),
+        req.psk,
+        "ifname".into(),
+        req.iface,
+    ])
+}
+
+/// `iw dev IFACE scan` argv after `iw`.
+pub fn iw_scan_args(iface: &str) -> Result<Vec<String>, SysError> {
+    let iface = validate_wifi_iface(iface)?;
+    Ok(vec!["dev".into(), iface, "scan".into()])
+}
+
+/// Netplan Wi-Fi fragment (DHCP/SLAAC). File mode must be 600 — it holds the PSK.
+pub fn netplan_wifi_yaml(req: &WifiJoin) -> Result<String, SysError> {
+    let req = req.clone().validate()?;
+    Ok(format!(
+        "network:\n  version: 2\n  wifis:\n    {}:\n      dhcp4: true\n      dhcp6: true\n      access-points:\n        \"{}\":\n          password: \"{}\"\n",
+        req.iface, req.ssid, req.psk
+    ))
+}
+
+pub fn netplan_wifi_path(iface: &str) -> Result<String, SysError> {
+    let iface = validate_wifi_iface(iface)?;
+    Ok(format!("/etc/netplan/99-keystone-wifi-{iface}.yaml"))
 }
 
 /// Max packages returned by Check for updates (UI table).
@@ -1041,6 +1270,10 @@ mod tests {
         assert!(SysOp::UpdatesAutoremove.mutating());
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::VlanAdd.mutating());
+        assert!(SysOp::WifiJoin.mutating());
+        assert!(!SysOp::WifiScan.mutating());
+        assert_eq!(SysOp::WifiScan.permission(), Permission::SysView);
+        assert_eq!(SysOp::WifiJoin.permission(), Permission::SysManage);
         assert!(SysOp::GitlabBackup.mutating());
         assert!(SysOp::GitlabRestore.mutating());
         assert!(SysOp::Reboot.mutating());
@@ -1078,17 +1311,27 @@ mod tests {
         assert_eq!(GITLAB_RESTORE_LIST_CAP, 50);
         assert_eq!(JOURNAL_UNITS.len(), 5);
         assert_eq!(SysOp::VlanAdd.as_str(), "vlan_add");
+        assert_eq!(SysOp::WifiScan.as_str(), "wifi_scan");
+        assert_eq!(SysOp::WifiJoin.as_str(), "wifi_join");
         assert!(SysOp::VlanAdd.mutating());
         assert!(!SysOp::VlanAdd.streams());
+        assert!(!SysOp::WifiScan.streams());
+        assert!(!SysOp::WifiJoin.streams());
         assert!(SysOp::NetSet.needs_step_up());
         assert!(SysOp::VlanAdd.needs_step_up());
+        assert!(SysOp::WifiJoin.needs_step_up());
+        assert!(!SysOp::WifiScan.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::GitlabRestore.needs_step_up());
         assert!(!SysOp::GitlabBackup.needs_step_up());
         for op in SysOp::iter() {
             let want = matches!(
                 op,
-                SysOp::NetSet | SysOp::VlanAdd | SysOp::UnitRestart | SysOp::GitlabRestore
+                SysOp::NetSet
+                    | SysOp::VlanAdd
+                    | SysOp::WifiJoin
+                    | SysOp::UnitRestart
+                    | SysOp::GitlabRestore
             );
             assert_eq!(op.needs_step_up(), want, "{} step-up", op.as_str());
         }
@@ -1106,11 +1349,12 @@ mod tests {
                 SysOp::UpdatesAutoremove => "/sys/autoremove",
                 SysOp::NetSet => "/sys/net_set",
                 SysOp::VlanAdd => "/sys/vlan_add",
+                SysOp::WifiJoin => "/sys/wifi_join",
                 SysOp::GitlabBackup => "/sys/gitlab-backup",
                 SysOp::GitlabRestore => "/sys/gitlab_restore",
                 SysOp::Reboot => "/sys/reboot",
                 SysOp::UnitRestart => "/sys/unit_restart",
-                SysOp::Status | SysOp::UpdatesList | SysOp::Journal => {
+                SysOp::Status | SysOp::UpdatesList | SysOp::Journal | SysOp::WifiScan => {
                     unreachable!("not mutating")
                 }
             };
@@ -1420,6 +1664,73 @@ mod tests {
     }
 
     #[test]
+    fn wifi_join_round_trip_and_rejects_shell() {
+        assert!(validate_wifi_iface("wlan0").is_ok());
+        assert!(validate_wifi_iface("wlp3s0").is_ok());
+        assert_eq!(validate_wifi_iface("eth0"), Err(SysError::Iface));
+        assert_eq!(validate_wifi_iface("wlan0;rm"), Err(SysError::Iface));
+        assert_eq!(validate_ssid("Home Lab"), Ok("Home Lab".into()));
+        assert_eq!(validate_ssid("x;rm"), Ok("x;rm".into()));
+        assert_eq!(validate_ssid("bad\"ssid"), Err(SysError::Ssid));
+        assert_eq!(validate_ssid(""), Err(SysError::Ssid));
+        assert_eq!(validate_psk("testpass1"), Ok("testpass1".into()));
+        assert_eq!(validate_psk("short"), Err(SysError::Psk));
+        assert_eq!(validate_psk("has\"quote"), Err(SysError::Psk));
+        let req = WifiJoin {
+            iface: "wlan0".into(),
+            ssid: "Home Lab".into(),
+            psk: "testpass1".into(),
+        }
+        .validate()
+        .unwrap();
+        let yaml = netplan_wifi_yaml(&req).unwrap();
+        assert!(yaml.contains("wifis:"));
+        assert!(yaml.contains("wlan0:"));
+        assert!(yaml.contains("\"Home Lab\""));
+        assert!(yaml.contains("password: \"testpass1\""));
+        assert!(!yaml.contains("sh -c"));
+        let args = nmcli_wifi_join_args(&req).unwrap();
+        assert_eq!(args[0], "device");
+        assert!(args.contains(&"connect".into()));
+        assert!(args.contains(&"Home Lab".into()));
+        assert!(args.contains(&"testpass1".into()));
+        assert!(args.contains(&"wlan0".into()));
+        assert!(!args.iter().any(|a| a.contains("sh -c")));
+        let list = parse_nmcli_wifi_list("Home Lab\nHome Lab\n--\nLab\n");
+        assert_eq!(list, vec!["Home Lab".to_string(), "Lab".to_string()]);
+        assert!(ssid_listed("Home Lab", &list));
+        assert!(!ssid_listed("Evil", &list));
+        let iw = parse_iw_scan("BSS aa:bb\n\tSSID: Home Lab\n\tSSID:\n\tSSID: Lab\n");
+        assert_eq!(iw, vec!["Home Lab".to_string(), "Lab".to_string()]);
+        let raw = r#"{"iface":"wlan0","ssid":"Home Lab","psk":"testpass1"}"#;
+        let redacted = audit_sys_target(SysOp::WifiJoin, raw);
+        assert!(redacted.contains("Home Lab"));
+        assert!(!redacted.contains("testpass1"));
+        assert_eq!(
+            audit_sys_target(SysOp::NetSet, r#"{"iface":"eth0"}"#),
+            r#"{"iface":"eth0"}"#
+        );
+        let list_args = nmcli_wifi_list_args("wlan0").unwrap();
+        assert!(list_args.contains(&"list".into()));
+        assert!(!list_args.iter().any(|a| a.contains(';')));
+        let iw_args = iw_scan_args("wlan0").unwrap();
+        assert_eq!(iw_args, vec!["dev", "wlan0", "scan"]);
+        assert_eq!(
+            netplan_wifi_path("wlan0").unwrap(),
+            "/etc/netplan/99-keystone-wifi-wlan0.yaml"
+        );
+        assert_eq!(
+            WifiJoin {
+                iface: "eth0".into(),
+                ssid: "Home".into(),
+                psk: "testpass1".into(),
+            }
+            .validate(),
+            Err(SysError::Iface)
+        );
+    }
+
+    #[test]
     fn parse_apt_inst_lines() {
         let pkgs = parse_apt_simulate(
             "NOTE: This is only a simulation!\nInst git [1:2.34.1-1] (1:2.34.1-2 Ubuntu:22.04 [amd64])\nConf git (1:2.34.1-2 Ubuntu:22.04 [amd64])\n",
@@ -1509,6 +1820,8 @@ mod tests {
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
         assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
         assert_eq!("vlan_add".parse::<SysOp>().unwrap(), SysOp::VlanAdd);
+        assert_eq!("wifi_scan".parse::<SysOp>().unwrap(), SysOp::WifiScan);
+        assert_eq!("wifi_join".parse::<SysOp>().unwrap(), SysOp::WifiJoin);
         assert_eq!(
             "updates_autoremove".parse::<SysOp>().unwrap(),
             SysOp::UpdatesAutoremove

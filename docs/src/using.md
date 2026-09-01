@@ -10,7 +10,7 @@ page is the Netdata-shaped **fleet** (live chips per host). Open a node for
 that machine’s Overview; the Docker tabs are the Portainer-shaped control
 plane; **System** is health vs actions on the machine itself (apt, leftover
 services, confirmed reboot, allowlisted journals, NTP, unattended-upgrades,
-IPv4, VLAN, GitLab Omnibus backup — not Docker).
+IPv4, VLAN, Wi-Fi, GitLab Omnibus backup — not Docker).
 
 ## Sign in
 
@@ -95,9 +95,9 @@ Tabs:
   [Docker](docker.md).
 - **System** — health on the left (leftovers, failed units, journals, NTP,
   unattended-upgrades, addresses) and actions on the right (apt, autoremove,
-  reboot, GitLab backup, GitLab restore, leftover restart, IPv4/IPv6, VLAN) on **this** Ubuntu or Debian server. Off until you
+  reboot, GitLab backup, GitLab restore, leftover restart, IPv4/IPv6, VLAN, Wi-Fi) on **this** Ubuntu or Debian server. Off until you
   enable the root helper and Settings flags. If 2FA is on, changing IPv4 or IPv6,
-  adding a VLAN, leftover restart, or GitLab restore also asks for a current authenticator code. Proxmox, TrueNAS, and other
+  adding a VLAN, joining Wi-Fi, leftover restart, or GitLab restore also asks for a current authenticator code. Proxmox, TrueNAS, and other
   appliance OSes stay on Observe. See [System](system.md).
 - **Settings** — display name, notes, poll interval, NICs, labels, Docker
   flags, Compose paths, System-admin flags. See [Configuration](configuration.md).

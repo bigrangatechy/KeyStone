@@ -3,10 +3,12 @@
 
 //! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
 //! failed units, unit restart from those lists, reboot, journal follow,
-//! IPv4/IPv6, 802.1Q VLAN create, GitLab Omnibus backup/restore, and
-//! unattended-upgrades observe. No `sh -c`. Started by systemd socket.
+//! IPv4/IPv6, 802.1Q VLAN create, Wi-Fi join from a scan list, GitLab Omnibus
+//! backup/restore, and unattended-upgrades observe. No `sh -c`. Started by
+//! systemd socket.
 
 use std::os::fd::FromRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::path::Path;
 use std::process::Stdio;
@@ -14,13 +16,16 @@ use std::process::Stdio;
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     gitlab_backup_id, gitlab_backup_name_ok, gitlab_backups_for_restore, gitlab_restore_listed,
-    journal_unit, merge_upgradable, netplan_fragment_path, netplan_vlan_yaml, netplan_yaml,
-    newest_gitlab_backup, nmcli_modify_args, nmcli_vlan_add_args, parse_apt_list_upgradable,
-    parse_apt_simulate, parse_ip_addr_json, parse_needrestart_batch, parse_ntp_sync,
-    parse_restart_unit, parse_restore_backup, parse_systemctl_failed, parse_unattended_periodic,
-    unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp, VlanAdd, GITLAB_BACKUP_BIN,
-    GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG,
-    UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
+    iw_scan_args, journal_unit, merge_upgradable, netplan_fragment_path, netplan_vlan_yaml,
+    netplan_wifi_path, netplan_wifi_yaml, netplan_yaml, newest_gitlab_backup, nmcli_modify_args,
+    nmcli_vlan_add_args, nmcli_wifi_join_args, nmcli_wifi_list_args, nmcli_wifi_rescan_args,
+    parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json, parse_iw_scan,
+    parse_needrestart_batch, parse_nmcli_wifi_list, parse_ntp_sync, parse_restart_unit,
+    parse_restore_backup, parse_systemctl_failed, parse_unattended_periodic, ssid_listed,
+    unit_listed_for_restart, NeedrestartBatch, NetSet, SysOp, VlanAdd, WifiIface, WifiJoin,
+    GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SYS_SOCKET_PATH,
+    UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
+    UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -135,6 +140,18 @@ async fn dispatch(
             let raw = payload.to_string();
             let req = VlanAdd::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
             vlan_add(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
+        SysOp::WifiScan => {
+            let raw = payload.to_string();
+            let req = WifiIface::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            let body = wifi_scan(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": body})).await
+        }
+        SysOp::WifiJoin => {
+            let raw = payload.to_string();
+            let req = WifiJoin::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            wifi_join(&req).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
         SysOp::GitlabBackup => {
@@ -873,6 +890,105 @@ fn iface_named(ifaces: &Value, name: &str) -> bool {
         .into_iter()
         .flatten()
         .any(|row| row.get("name").and_then(|n| n.as_str()) == Some(name))
+}
+
+async fn wifi_scan(req: &WifiIface) -> anyhow::Result<Value> {
+    if cfg!(test) {
+        anyhow::bail!("wifi scan is not invoked in tests");
+    }
+    let names = wifi_ssid_list(&req.iface).await?;
+    Ok(json!({ "ssids": names }))
+}
+
+async fn wifi_ssid_list(iface: &str) -> anyhow::Result<Vec<String>> {
+    if which("nmcli") {
+        let rescan = nmcli_wifi_rescan_args(iface).map_err(|e| anyhow!("{e}"))?;
+        let _ = timeout(
+            Duration::from_secs(8),
+            Command::new("nmcli").args(&rescan).status(),
+        )
+        .await;
+        let args = nmcli_wifi_list_args(iface).map_err(|e| anyhow!("{e}"))?;
+        let output = timeout(
+            Duration::from_secs(8),
+            Command::new("nmcli")
+                .args(&args)
+                .stdin(Stdio::null())
+                .output(),
+        )
+        .await
+        .context("nmcli wifi list")?
+        .context("nmcli wifi list")?;
+        if !output.status.success() {
+            anyhow::bail!("nmcli wifi list failed");
+        }
+        return Ok(parse_nmcli_wifi_list(&String::from_utf8_lossy(
+            &output.stdout,
+        )));
+    }
+    if which("iw") {
+        let args = iw_scan_args(iface).map_err(|e| anyhow!("{e}"))?;
+        let output = timeout(
+            Duration::from_secs(12),
+            Command::new("iw").args(&args).stdin(Stdio::null()).output(),
+        )
+        .await
+        .context("iw scan")?
+        .context("iw scan")?;
+        if !output.status.success() {
+            anyhow::bail!("iw scan failed");
+        }
+        return Ok(parse_iw_scan(&String::from_utf8_lossy(&output.stdout)));
+    }
+    anyhow::bail!("no nmcli or iw to scan Wi-Fi")
+}
+
+async fn wifi_join(req: &WifiJoin) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("wifi join is not invoked in tests");
+    }
+    let ifaces = ip_addrs().await;
+    if !iface_named(&ifaces, &req.iface) {
+        anyhow::bail!("wireless interface is not on this host");
+    }
+    let names = wifi_ssid_list(&req.iface).await?;
+    if !ssid_listed(&req.ssid, &names) {
+        anyhow::bail!("SSID is not on the live scan list");
+    }
+    if which("nmcli") {
+        let args = nmcli_wifi_join_args(req).map_err(|e| anyhow!("{e}"))?;
+        let st = Command::new("nmcli")
+            .args(&args)
+            .status()
+            .await
+            .context("nmcli wifi connect")?;
+        if !st.success() {
+            anyhow::bail!("nmcli wifi connect failed");
+        }
+        return Ok(());
+    }
+    if detect_backend() == "netplan" {
+        let yaml = netplan_wifi_yaml(req).map_err(|e| anyhow!("{e}"))?;
+        let path = netplan_wifi_path(&req.iface).map_err(|e| anyhow!("{e}"))?;
+        tokio::fs::write(&path, yaml)
+            .await
+            .with_context(|| format!("write {path}"))?;
+        let mut perms = std::fs::metadata(&path)
+            .with_context(|| format!("stat {path}"))?
+            .permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(&path, perms).with_context(|| format!("chmod {path}"))?;
+        let st = Command::new("netplan")
+            .arg("apply")
+            .status()
+            .await
+            .context("netplan apply")?;
+        if !st.success() {
+            anyhow::bail!("netplan apply failed");
+        }
+        return Ok(());
+    }
+    anyhow::bail!("no NetworkManager or netplan to join Wi-Fi")
 }
 
 async fn reboot(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
@@ -1769,6 +1885,91 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn helper_rejects_shell_wifi_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"wifi_join","payload":{"iface":"wlan0;rm","ssid":"Home","psk":"testpass1"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("interface") || err.contains("invalid"),
+            "shell wifi iface must fail validation, got {err}"
+        );
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before nmcli: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_wifi_join_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"wifi_join","payload":{"iface":"wlan0","ssid":"Home","psk":"testpass1"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "wifi_join must not run nmcli/netplan in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_wifi_scan_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"wifi_scan","payload":{"iface":"wlan0"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "wifi_scan must not run nmcli/iw in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
     #[test]
     fn net_set_writes_ipv6_without_shell() {
         let src = include_str!("sys_helper.rs");
@@ -1797,7 +1998,7 @@ mod tests {
             .split("async fn vlan_add")
             .nth(1)
             .expect("vlan_add")
-            .split("async fn reboot")
+            .split("async fn wifi_scan")
             .next()
             .expect("vlan_add body");
         assert!(body.contains("netplan_vlan_yaml"));
@@ -1810,6 +2011,35 @@ mod tests {
             "Wi-Fi stays out of this slice"
         );
         assert!(!body.contains("poweroff"));
+    }
+
+    #[test]
+    fn wifi_join_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let scan = src
+            .split("async fn wifi_scan")
+            .nth(1)
+            .expect("wifi_scan")
+            .split("async fn wifi_join")
+            .next()
+            .expect("wifi_scan body");
+        assert!(scan.contains("nmcli_wifi_list_args") || scan.contains("wifi_ssid_list"));
+        assert!(scan.contains("cfg!(test)"));
+        assert!(!scan.contains("sh -c") && !scan.contains("bash -c"));
+        assert!(!scan.contains("iwconfig") && !scan.contains("wpa_supplicant"));
+        let join = src
+            .split("async fn wifi_join")
+            .nth(1)
+            .expect("wifi_join")
+            .split("async fn reboot")
+            .next()
+            .expect("wifi_join body");
+        assert!(join.contains("nmcli_wifi_join_args"));
+        assert!(join.contains("ssid_listed"));
+        assert!(join.contains("cfg!(test)"));
+        assert!(!join.contains("sh -c") && !join.contains("bash -c"));
+        assert!(!join.contains("iwconfig") && !join.contains("wpa_supplicant"));
+        assert!(!join.contains("poweroff"));
     }
 
     struct SockGuard(std::path::PathBuf);

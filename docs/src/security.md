@@ -10,13 +10,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - The **server** holds admin sessions, the ingest token, metric history, and
   the audit log. Anyone who can write `data_dir` or log in as the admin owns
 the lab view and can send Docker commands to connected agents that allow
-them. The same session can apply apt upgrades, autoremove unused packages, reboot, change IPv4/IPv6, and add a VLAN when System
+them. The same session can apply apt upgrades, autoremove unused packages, reboot, change IPv4/IPv6, add a VLAN, and join Wi-Fi when System
 Manage and the opt-in root helper are on.
 - Each **agent** runs as a system user. With Docker Observe enabled it can
   use the engine socket — that is root-equivalent on **that** host.
 - The **ingest token** proves an agent is allowed to push. It does **not**
   grant UI login and cannot start, stop, or exec containers, apply apt
-  upgrades, autoremove packages, reboot a node, change IPv4/IPv6, or add a VLAN.
+  upgrades, autoremove packages, reboot a node, change IPv4/IPv6, add a VLAN, or join Wi-Fi.
 
 ## UI account
 
@@ -177,10 +177,12 @@ Docker Manage). Keep the allowlist tiny; do not start the helper on nodes
 that should only report metrics.
 
 Changing IPv4 or IPv6 can lock you out of SSH and drop the agent session. Keep a
-console. Adding a VLAN can bounce the NIC the same way. Restarting a leftover `docker` or `ssh` unit can do the same.
+console. Adding a VLAN can bounce the NIC the same way. **Join Wi-Fi** can drop
+the session if that radio is how you reach the node. The PSK is not written to
+Audit. Restarting a leftover `docker` or `ssh` unit can do the same.
 GitLab **Restore** replaces application data on that node.
 When authenticator 2FA is on, Apply IPv4, leftover/failed **Restart**, GitLab
-**Restore**, and **Add VLAN** need a **current 6-digit code** from the app (not a backup code — those
+**Restore**, **Add VLAN**, and **Join Wi-Fi** need a **current 6-digit code** from the app (not a backup code — those
 are for sign-in). A used window cannot be reused. Failed codes share the
 same eight-tries / 15-minute gate as login. If 2FA is off, confirm-only.
 Other System and Docker mutations stay confirm plus the two-hour idle cookie.

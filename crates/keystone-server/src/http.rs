@@ -20,7 +20,9 @@ use futures_util::Stream;
 use keystone_core::docker::{docker_ref_ok, summarize_container_inspect, DockerOp};
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
-use keystone_core::sys::{journal_unit, parse_restore_backup, SysOp};
+use keystone_core::sys::{
+    audit_sys_target, journal_unit, parse_restore_backup, validate_wifi_iface, SysOp,
+};
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
 use keystone_proto::StreamChunk;
@@ -153,6 +155,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/dockerhub/search", get(crate::dockerhub::search))
         .route("/api/v1/dockerhub/tags", get(crate::dockerhub::tags))
         .route("/api/v1/nodes/{id}/sys/updates", get(sys_updates_api))
+        .route("/api/v1/nodes/{id}/sys/wifi", get(sys_wifi_api))
         .route(
             "/api/v1/nodes/{id}/container-usage",
             get(container_usage_api),
@@ -2220,6 +2223,8 @@ struct SysForm {
     unit: Option<String>,
     name: Option<String>,
     vlan: Option<String>,
+    ssid: Option<String>,
+    psk: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2299,6 +2304,12 @@ fn sys_form_payload(form: &SysForm) -> String {
         let n: u16 = v.trim().parse().unwrap_or(0);
         map.insert("vlan".into(), serde_json::json!(n));
     }
+    if let Some(s) = &form.ssid {
+        map.insert("ssid".into(), serde_json::json!(s.trim()));
+    }
+    if let Some(p) = &form.psk {
+        map.insert("psk".into(), serde_json::json!(p.trim()));
+    }
     serde_json::Value::Object(map).to_string()
 }
 
@@ -2351,7 +2362,7 @@ async fn sys_action(
         return Redirect::to(&dest).into_response();
     }
     let payload = sys_form_payload(&form);
-    let target = payload.clone();
+    let target = audit_sys_target(parsed, &payload);
     if let Err(err) = consume_step_up(&state, &username, parsed.needs_step_up(), &form.totp) {
         return step_up_denied(
             &state,
@@ -2586,6 +2597,38 @@ async fn sys_updates_api(State(state): State<AppState>, Path(id): Path<String>) 
         Ok(body) => {
             let val: serde_json::Value =
                 serde_json::from_str(&body).unwrap_or(serde_json::json!({ "packages": [] }));
+            axum::Json(val).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct WifiScanQuery {
+    iface: String,
+}
+
+async fn sys_wifi_api(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<WifiScanQuery>,
+) -> Response {
+    let Ok(iface) = validate_wifi_iface(&q.iface) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "invalid interface" })),
+        )
+            .into_response();
+    };
+    let payload = serde_json::json!({ "iface": iface }).to_string();
+    match call_json_op(&state, &id, SysOp::WifiScan.as_str(), &payload).await {
+        Ok(body) => {
+            let val: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::json!({ "ssids": [] }));
             axum::Json(val).into_response()
         }
         Err(e) => (
@@ -3086,6 +3129,10 @@ mod tests {
             sys.contains("consume_step_up") && sys.contains("needs_step_up"),
             "System POSTs must share step-up with Docker"
         );
+        assert!(
+            sys.contains("audit_sys_target"),
+            "Wi-Fi join must not audit the PSK"
+        );
 
         let sse = src
             .split("async fn sys_updates_sse")
@@ -3502,6 +3549,7 @@ mod tests {
         }
         assert!(js.contains("/sys/net_set"));
         assert!(js.contains("/sys/vlan_add"));
+        assert!(js.contains("/sys/wifi_join"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
@@ -3509,6 +3557,11 @@ mod tests {
         assert!(js.contains("/sys/reboot"));
         assert!(SysOp::NetSet.mutating());
         assert!(SysOp::VlanAdd.mutating());
+        assert!(SysOp::WifiJoin.mutating());
+        assert!(SysOp::WifiJoin.needs_step_up());
+        assert!(!SysOp::WifiScan.mutating());
+        assert!(!SysOp::WifiScan.needs_step_up());
+        assert!(!SysOp::WifiJoin.streams());
         assert!(SysOp::VlanAdd.needs_step_up());
         assert!(!SysOp::VlanAdd.streams());
         assert!(SysOp::UpdatesApply.mutating());
@@ -3700,6 +3753,9 @@ mod tests {
         let api = head
             .find("/api/v1/nodes/{id}/sys/updates")
             .expect("sys updates API");
+        let wifi = head
+            .find("/api/v1/nodes/{id}/sys/wifi")
+            .expect("sys wifi API");
         assert!(post < authed_end);
         assert!(apply < authed_end);
         assert!(autoremove < authed_end);
@@ -3707,6 +3763,7 @@ mod tests {
         assert!(restore < authed_end);
         assert!(journal < authed_end);
         assert!(api < authed_end);
+        assert!(wifi < authed_end);
         let public = head[authed_end..]
             .split("async fn health()")
             .next()
@@ -3739,6 +3796,8 @@ mod tests {
             unit: None,
             name: None,
             vlan: None,
+            ssid: None,
+            psk: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -3768,6 +3827,8 @@ mod tests {
             unit: Some(" docker.service ".into()),
             name: None,
             vlan: None,
+            ssid: None,
+            psk: None,
             totp: "000000".into(),
             redirect: String::new(),
         };
@@ -3790,6 +3851,8 @@ mod tests {
             unit: None,
             name: Some(" 1712345678_gitlab_backup.tar ".into()),
             vlan: None,
+            ssid: None,
+            psk: None,
             totp: "654321".into(),
             redirect: String::new(),
         };
@@ -3812,6 +3875,8 @@ mod tests {
             unit: None,
             name: None,
             vlan: None,
+            ssid: None,
+            psk: None,
             totp: "111111".into(),
             redirect: String::new(),
         };
@@ -3835,6 +3900,8 @@ mod tests {
             unit: None,
             name: None,
             vlan: Some(" 10 ".into()),
+            ssid: None,
+            psk: None,
             totp: "222222".into(),
             redirect: String::new(),
         };
@@ -3842,6 +3909,34 @@ mod tests {
         assert!(v.contains("\"iface\":\"eth0\""));
         assert!(v.contains("\"vlan\":10"));
         assert!(!v.contains("222222"));
+        let wifi = SysForm {
+            payload: None,
+            iface: Some("wlan0".into()),
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: Some(" Home Lab ".into()),
+            psk: Some("testpass1".into()),
+            totp: "333333".into(),
+            redirect: String::new(),
+        };
+        let w = sys_form_payload(&wifi);
+        assert!(w.contains("\"ssid\":\"Home Lab\""));
+        assert!(w.contains("testpass1"));
+        assert!(!w.contains("333333"));
+        let redacted = keystone_core::sys::audit_sys_target(SysOp::WifiJoin, &w);
+        assert!(!redacted.contains("testpass1"));
+        assert!(redacted.contains("Home Lab"));
     }
 
     #[test]
@@ -3947,6 +4042,10 @@ mod tests {
             "Settings manage checkbox must mention VLAN create"
         );
         assert!(
+            html.contains("Wi-Fi"),
+            "Settings manage checkbox must mention Wi-Fi join"
+        );
+        assert!(
             html.contains("and reboot"),
             "Settings manage checkbox must mention reboot"
         );
@@ -3986,6 +4085,15 @@ mod tests {
                 && js.contains("Not a name textbox")
                 && js.contains(r#"vlanId.name = "vlan""#),
             "VLAN create must be parent + numeric id, not a name field"
+        );
+        assert!(
+            js.contains("/sys/wifi_join")
+                && js.contains("/api/v1/nodes/")
+                && js.contains("sys/wifi")
+                && js.contains("Join Wi-Fi")
+                && js.contains("not an SSID textbox")
+                && js.contains("wifiIface"),
+            "Wi-Fi join must scan listed SSIDs, not a free SSID field"
         );
         assert!(
             js.contains("data-totp")

@@ -1200,7 +1200,7 @@
       const netHead = el("div", "compose-head");
       netHead.appendChild(el("h3", null, "Addressing"));
       actions.appendChild(netHead);
-      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version. Add a VLAN below, then Apply addressing on it. Wi-Fi is not in this UI."));
+      actions.appendChild(el("p", "muted", "Setting a static address can drop this agent session. Keep a console. Ethernet only this version. Add a VLAN below, then Apply addressing on it. Wi-Fi join is a separate form."));
       if (stepUpErr === "step-up") {
         actions.appendChild(el("p", "error", "This change needs a current authenticator code, not a backup code."));
       } else if (stepUpErr === "step-up-locked") {
@@ -1368,7 +1368,7 @@
       const vlanHead = el("div", "compose-head");
       vlanHead.appendChild(el("h3", null, "VLAN"));
       actions.appendChild(vlanHead);
-      actions.appendChild(el("p", "muted", "Creates parent.id (for example eth0.10). Not a name textbox. QinQ, delete, and Wi-Fi are not in this UI. Applying can bounce the NIC — keep a console."));
+      actions.appendChild(el("p", "muted", "Creates parent.id (for example eth0.10). Not a name textbox. QinQ, delete, and hotspot/802.1X are not in this UI. Applying can bounce the NIC — keep a console."));
       if (!parents.length) {
         actions.appendChild(el("p", "muted", "No Ethernet parent to add a VLAN on."));
       } else {
@@ -1435,6 +1435,123 @@
         add.textContent = "Add VLAN";
         vform.appendChild(add);
         actions.appendChild(vform);
+      }
+      const radios = ifaces.filter((i) => wifiIface(i.name || ""));
+      const wifiHead = el("div", "compose-head");
+      wifiHead.appendChild(el("h3", null, "Wi-Fi"));
+      actions.appendChild(wifiHead);
+      actions.appendChild(el("p", "muted", "Scan, then join a listed SSID (not an SSID textbox). DHCP/SLAAC only. Hidden networks, hotspot, and 802.1X are not in this UI. Joining can drop the agent — keep a console."));
+      if (!radios.length) {
+        actions.appendChild(el("p", "muted", "No wireless interface on this node."));
+      } else {
+        const wform = document.createElement("form");
+        wform.method = "post";
+        wform.action = "/nodes/" + encodeURIComponent(node) + "/sys/wifi_join";
+        wform.className = "sys-net";
+        wform.addEventListener("submit", (ev) => {
+          const radio = wform.querySelector('select[name="iface"]');
+          const ssidSel = wform.querySelector('select[name="ssid"]');
+          const ifn = (radio && radio.value) || "";
+          const ssid = (ssidSel && ssidSel.value) || "";
+          if (!ssid) {
+            ev.preventDefault();
+            return;
+          }
+          if (!window.confirm("Join Wi-Fi " + ssid + " on " + ifn + "? This can drop the agent until you reconnect.")) {
+            ev.preventDefault();
+            return;
+          }
+          if (totpOn) {
+            const field = wform.querySelector('input[name="totp"]');
+            const digits = ((field && field.value) || "").replace(/\D/g, "");
+            if (digits.length !== 6) {
+              ev.preventDefault();
+            }
+          }
+        });
+        const radioSel = document.createElement("select");
+        radioSel.name = "iface";
+        radios.forEach((i) => {
+          const o = document.createElement("option");
+          o.value = i.name || "";
+          o.textContent = i.name || "";
+          radioSel.appendChild(o);
+        });
+        const ssidSel = document.createElement("select");
+        ssidSel.name = "ssid";
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "Scan first";
+        ssidSel.appendChild(empty);
+        const psk = document.createElement("input");
+        psk.name = "psk";
+        psk.type = "password";
+        psk.autocomplete = "off";
+        psk.required = true;
+        psk.minLength = 8;
+        function wlabeled(name, input, span) {
+          const lab = document.createElement("label");
+          if (span) lab.className = span;
+          lab.appendChild(document.createTextNode(name));
+          lab.appendChild(input);
+          return lab;
+        }
+        wform.appendChild(wlabeled("Interface", radioSel));
+        const scanBtn = document.createElement("button");
+        scanBtn.type = "button";
+        scanBtn.textContent = "Scan";
+        scanBtn.addEventListener("click", async () => {
+          scanBtn.disabled = true;
+          scanBtn.textContent = "Scanning…";
+          try {
+            const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/sys/wifi?iface=" + encodeURIComponent(radioSel.value));
+            const data = await r.json();
+            const ssids = Array.isArray(data.ssids) ? data.ssids : [];
+            ssidSel.replaceChildren();
+            if (!ssids.length) {
+              const o = document.createElement("option");
+              o.value = "";
+              o.textContent = "No SSID in range";
+              ssidSel.appendChild(o);
+            } else {
+              ssids.forEach((s) => {
+                const o = document.createElement("option");
+                o.value = s;
+                o.textContent = s;
+                ssidSel.appendChild(o);
+              });
+            }
+          } catch (e) {
+            ssidSel.replaceChildren();
+            const o = document.createElement("option");
+            o.value = "";
+            o.textContent = "Scan failed";
+            ssidSel.appendChild(o);
+          }
+          scanBtn.disabled = false;
+          scanBtn.textContent = "Scan";
+        });
+        wform.appendChild(scanBtn);
+        wform.appendChild(wlabeled("SSID", ssidSel, "span-2"));
+        wform.appendChild(wlabeled("Password", psk, "span-2"));
+        if (totpOn) {
+          const totp = document.createElement("input");
+          totp.name = "totp";
+          totp.inputMode = "numeric";
+          totp.autocomplete = "one-time-code";
+          totp.maxLength = 6;
+          totp.required = true;
+          totp.placeholder = "000000";
+          const totpLab = wlabeled("Authenticator code", totp, "span-2");
+          totpLab.appendChild(el("span", "muted", "Current 6-digit code. Backup codes are for sign-in only."));
+          wform.appendChild(totpLab);
+        }
+        const join = document.createElement("button");
+        join.type = "submit";
+        join.className = "danger span-2";
+        join.textContent = "Join Wi-Fi";
+        wform.appendChild(join);
+        actions.appendChild(wform);
       }
     }
     split.appendChild(health);
@@ -1560,6 +1677,11 @@
     if (n.indexOf("virbr") === 0 || n.indexOf("cni") === 0 || n.indexOf("flannel") === 0) return false;
     if (n.indexOf("tun") === 0 || n.indexOf("tap") === 0) return false;
     return true;
+  }
+
+  function wifiIface(name) {
+    const n = String(name || "").toLowerCase();
+    return n.indexOf("wl") === 0;
   }
 
   function donut(ratio) {

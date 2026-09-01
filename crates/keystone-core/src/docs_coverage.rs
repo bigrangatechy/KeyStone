@@ -426,9 +426,10 @@ fn operator_docs_cover_ipv4_step_up() {
         dev.contains("needs_step_up()")
             && dev.contains("`net_set`")
             && dev.contains("`vlan_add`")
+            && dev.contains("`wifi_join`")
             && dev.contains("`unit_restart`")
             && dev.contains("`gitlab_restore`"),
-        "developer system.md must say net_set, vlan_add, unit_restart, and gitlab_restore need step-up"
+        "developer system.md must say net_set, vlan_add, wifi_join, unit_restart, and gitlab_restore need step-up"
     );
     assert!(
         docker.contains("needs_step_up()") && docker.contains("confirm"),
@@ -538,8 +539,8 @@ fn operator_docs_cover_ethernet_ipv6() {
     let dev = include_str!("../../../docs/dev/src/system.md");
     let arch = include_str!("../../../docs/dev/src/architecture.md");
     assert!(
-        system.contains("IPv6") && system.contains("SLAAC") && system.contains("Wi-Fi are not"),
-        "System chapter must document Ethernet IPv6 and keep Wi-Fi out"
+        system.contains("IPv6") && system.contains("SLAAC") && system.contains("Ethernet"),
+        "System chapter must document Ethernet IPv6"
     );
     assert!(
         using.contains("IPv6") && using.contains("current authenticator code"),
@@ -562,8 +563,8 @@ fn operator_docs_cover_ethernet_ipv6() {
         "developer system.md must say IPv6 is on net_set and tests must not apply it"
     );
     assert!(
-        arch.contains("IPv6") && arch.contains("Wi-Fi"),
-        "architecture.md must say Ethernet IPv6 is in and Wi-Fi stays out"
+        arch.contains("IPv6") && arch.contains("net_set"),
+        "architecture.md must say Ethernet IPv6 is in on net_set"
     );
 }
 
@@ -608,5 +609,51 @@ fn operator_docs_cover_vlan_add() {
     assert!(
         arch.contains("VLAN create") && arch.contains("QinQ"),
         "architecture.md must say VLAN create is in and QinQ stays out"
+    );
+}
+
+#[test]
+fn operator_docs_cover_wifi_join() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("Join Wi-Fi")
+            && system.contains("listed SSID")
+            && system.contains("SSID textbox"),
+        "System chapter must document scan-then-join, not an SSID textbox"
+    );
+    assert!(
+        using.contains("Wi-Fi") && using.contains("current authenticator code"),
+        "using.md must mention Wi-Fi join and step-up"
+    );
+    assert!(
+        trouble.contains("Join Wi-Fi refused") && trouble.contains("live scan"),
+        "troubleshooting must cover a stale Wi-Fi scan"
+    );
+    assert!(
+        security.contains("Join Wi-Fi") && security.contains("PSK"),
+        "security.md must say the Wi-Fi password is not audited"
+    );
+    assert!(
+        audit.contains("Wi-Fi join") && audit.contains("PSK"),
+        "Audit must list Wi-Fi join and say the PSK is stripped"
+    );
+    assert!(
+        http.contains("`wifi_join`") && http.contains("`wifi_scan`") && http.contains("`psk`"),
+        "HTTP API must mention wifi_scan and wifi_join"
+    );
+    assert!(
+        dev.contains("`wifi_join`") && dev.contains("live scan"),
+        "developer system.md must say the helper re-checks the live scan"
+    );
+    assert!(
+        arch.contains("Wi-Fi join") && arch.contains("802.1X"),
+        "architecture.md must say Wi-Fi join is in and 802.1X stays out"
     );
 }
