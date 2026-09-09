@@ -5,7 +5,8 @@
 //! failed units, unit restart from those lists, KeyStone boot enable,
 //! reboot, journal follow,
 //! IPv4/IPv6, 802.1Q VLAN create, Wi-Fi join from a scan list, SSH password
-//! toggle, GitLab Omnibus backup/restore, and unattended-upgrades observe.
+//! toggle, timezone from a dropdown, GitLab Omnibus backup/restore, and
+//! unattended-upgrades observe.
 //! No `sh -c`. Started by systemd socket.
 
 use std::os::fd::FromRawFd;
@@ -23,12 +24,15 @@ use keystone_core::sys::{
     nmcli_wifi_rescan_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
     parse_iw_scan, parse_needrestart_batch, parse_nmcli_wifi_list, parse_ntp_sync,
     parse_restart_unit, parse_restore_backup, parse_sshd_t, parse_systemctl_failed,
-    parse_systemctl_is_enabled, parse_unattended_periodic, ssh_reload_args, sshd_keystone_dropin,
-    sshd_t_args, sshd_test_args, ssid_listed, systemctl_boot_args, systemctl_is_enabled_args,
-    unit_listed_for_restart, KeystoneBootUnit, NeedrestartBatch, NetSet, SshPassword, SysOp,
-    UnitEnable, VlanAdd, WifiIface, WifiJoin, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN,
-    KEYSTONE_BOOT_UNITS, SSHD_BIN, SSHD_KEYSTONE_DROPIN, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES,
-    UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
+    parse_systemctl_is_enabled, parse_timezone_list, parse_timezone_name,
+    parse_unattended_periodic, ssh_reload_args, sshd_keystone_dropin, sshd_t_args, sshd_test_args,
+    ssid_listed, systemctl_boot_args, systemctl_is_enabled_args, timedatectl_list_timezones_args,
+    timedatectl_set_timezone_args, timedatectl_show_ntp_args, timedatectl_show_timezone_args,
+    timezone_listed, unit_listed_for_restart, KeystoneBootUnit, NeedrestartBatch, NetSet,
+    SshPassword, SysOp, TimezoneSet, UnitEnable, VlanAdd, WifiIface, WifiJoin, GITLAB_BACKUP_BIN,
+    GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, KEYSTONE_BOOT_UNITS, SSHD_BIN, SSHD_KEYSTONE_DROPIN,
+    SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP,
+    UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -181,6 +185,12 @@ async fn dispatch(
             let raw = payload.to_string();
             let req = UnitEnable::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
             unit_enable(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
+        SysOp::TimezoneSet => {
+            let raw = payload.to_string();
+            let req = TimezoneSet::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            timezone_set(&req).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
     }
@@ -394,23 +404,41 @@ async fn failed_units() -> Vec<String> {
 }
 
 async fn ntp_sync() -> Value {
+    let (sync_out, tz_out, zones_out) = tokio::join!(
+        timedatectl_output(timedatectl_show_ntp_args()),
+        timedatectl_output(timedatectl_show_timezone_args()),
+        timedatectl_output(timedatectl_list_timezones_args()),
+    );
+    let synchronized = sync_out.as_deref().and_then(parse_ntp_sync);
+    let timezone = tz_out
+        .as_deref()
+        .and_then(parse_timezone_name)
+        .unwrap_or_default();
+    let zones = zones_out
+        .as_deref()
+        .map(parse_timezone_list)
+        .unwrap_or_default();
+    json!({
+        "available": synchronized.is_some() || !timezone.is_empty(),
+        "synchronized": synchronized.unwrap_or(false),
+        "timezone": timezone,
+        "zones": zones,
+    })
+}
+
+async fn timedatectl_output(args: Vec<String>) -> Option<String> {
     let output = timeout(
         Duration::from_secs(2),
         Command::new("timedatectl")
-            .args(["show", "-p", "NTPSynchronized", "--value"])
+            .args(&args)
             .stdin(Stdio::null())
             .output(),
     )
     .await;
     match output {
-        Ok(Ok(o)) if o.status.success() => {
-            if let Some(sync) = parse_ntp_sync(&String::from_utf8_lossy(&o.stdout)) {
-                return json!({ "available": true, "synchronized": sync });
-            }
-        }
-        _ => {}
+        Ok(Ok(o)) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
+        _ => None,
     }
-    json!({ "available": false, "synchronized": false })
 }
 
 async fn ssh_status() -> Value {
@@ -1182,6 +1210,33 @@ async fn unit_enable(req: &UnitEnable) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn timezone_set(req: &TimezoneSet) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("timedatectl set-timezone is not invoked in tests");
+    }
+    let listed = timezone_list_live().await;
+    if !timezone_listed(&req.timezone, &listed) {
+        anyhow::bail!("timezone is not on the live list");
+    }
+    let args = timedatectl_set_timezone_args(&req.timezone).map_err(|e| anyhow!("{e}"))?;
+    let st = Command::new("timedatectl")
+        .args(&args)
+        .status()
+        .await
+        .context("timedatectl set-timezone")?;
+    if !st.success() {
+        anyhow::bail!("timedatectl set-timezone failed");
+    }
+    Ok(())
+}
+
+async fn timezone_list_live() -> Vec<String> {
+    timedatectl_output(timedatectl_list_timezones_args())
+        .await
+        .map(|s| parse_timezone_list(&s))
+        .unwrap_or_default()
+}
+
 async fn journal_follow(
     payload: &Value,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -1345,6 +1400,22 @@ mod tests {
                 .and_then(|v| v.as_bool())
                 .is_some(),
             "status ntp.synchronized must be a bool, got {line}"
+        );
+        assert!(
+            payload
+                .get("ntp")
+                .and_then(|n| n.get("timezone"))
+                .and_then(|v| v.as_str())
+                .is_some(),
+            "status ntp.timezone must be a string, got {line}"
+        );
+        assert!(
+            payload
+                .get("ntp")
+                .and_then(|n| n.get("zones"))
+                .and_then(|v| v.as_array())
+                .is_some(),
+            "status ntp.zones must be an array, got {line}"
         );
         assert!(
             payload
@@ -1838,7 +1909,7 @@ mod tests {
             .split("async fn unit_enable")
             .nth(1)
             .expect("unit_enable")
-            .split("async fn journal_follow")
+            .split("async fn timezone_set")
             .next()
             .expect("unit_enable body");
         assert!(body.contains("systemctl"));
@@ -1889,6 +1960,78 @@ mod tests {
         let mut client = UnixStream::connect(&path).await.expect("connect");
         client
             .write_all(br#"{"op":"unit_enable","payload":{"enabled":"yes;rm"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before spawn: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn timezone_set_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn timezone_set")
+            .nth(1)
+            .expect("timezone_set")
+            .split("async fn timezone_list_live")
+            .next()
+            .expect("timezone_set body");
+        assert!(body.contains("timedatectl_set_timezone_args"));
+        assert!(body.contains("timezone_listed"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("poweroff"));
+        assert!(!body.contains("hostnamectl"));
+    }
+
+    #[tokio::test]
+    async fn helper_timezone_set_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"timezone_set","payload":{"timezone":"UTC"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "timezone_set must not spawn timedatectl set-timezone in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_timezone_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"timezone_set","payload":{"timezone":"UTC;rm"}}"#)
             .await
             .unwrap();
         client.write_all(b"\n").await.unwrap();
@@ -2445,6 +2588,7 @@ mod tests {
             SysOp::Journal => Some("journal_follow"),
             SysOp::UnitRestart => Some("unit_restart"),
             SysOp::UnitEnable => Some("unit_enable"),
+            SysOp::TimezoneSet => Some("timezone_set"),
         }
     }
 

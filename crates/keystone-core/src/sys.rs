@@ -3,7 +3,8 @@
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
 //! restart from those lists, KeyStone boot enable, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
-//! create, Wi-Fi join from a scan list, SSH password-auth toggle, GitLab
+//! create, Wi-Fi join from a scan list, SSH password-auth toggle, timezone
+//! from a dropdown, GitLab
 //! Omnibus backup/restore, unattended-upgrades observe). No I/O — the helper
 //! and agent run them. Keep `docs/dev/src/system.md` in sync.
 
@@ -91,6 +92,8 @@ pub enum SysOp {
     UnitRestart,
     /// `systemctl enable`/`disable` of packaged KeyStone units. Not `--now`.
     UnitEnable,
+    /// Listed IANA name from `timedatectl list-timezones`. Not a textbox.
+    TimezoneSet,
 }
 
 impl SysOp {
@@ -107,7 +110,7 @@ impl SysOp {
     pub fn description(self) -> &'static str {
         match self {
             Self::Status => {
-                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, GitLab dump age, unattended-upgrades, SSH password-auth, helper)"
+                "Host snapshot (addresses, reboot-needed, leftover services, failed units, NTP, timezone, GitLab dump age, unattended-upgrades, SSH password-auth, helper)"
             }
             Self::UpdatesList => "List pending apt upgrades",
             Self::UpdatesApply => "Apply apt upgrades",
@@ -129,6 +132,9 @@ impl SysOp {
             Self::UnitEnable => {
                 "Enable or disable packaged KeyStone units for boot (not --now, not keystone-sys)"
             }
+            Self::TimezoneSet => {
+                "Set the host timezone from a listed IANA name (timedatectl set-timezone)"
+            }
         }
     }
 
@@ -146,6 +152,7 @@ impl SysOp {
                 | Self::Reboot
                 | Self::UnitRestart
                 | Self::UnitEnable
+                | Self::TimezoneSet
         )
     }
 
@@ -220,6 +227,8 @@ pub enum SysError {
     Ssid,
     #[error("Wi-Fi password is invalid")]
     Psk,
+    #[error("timezone is invalid")]
+    Timezone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -486,6 +495,104 @@ pub fn systemctl_boot_args(enabled: bool, unit: &str) -> Result<Vec<String>, Sys
     }
     let verb = if enabled { "enable" } else { "disable" };
     Ok(vec![verb.into(), "--".into(), unit.into()])
+}
+
+/// Listed IANA name from `timedatectl list-timezones`. Not a textbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimezoneSet {
+    pub timezone: String,
+}
+
+impl TimezoneSet {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        Ok(Self {
+            timezone: parse_timezone_set(raw)?,
+        })
+    }
+}
+
+/// Cap names offered in the System tab dropdown.
+pub const TIMEZONE_LIST_CAP: usize = 1024;
+
+pub fn timezone_ok(name: &str) -> bool {
+    let s = name.trim();
+    if s.is_empty() || s.len() > 64 {
+        return false;
+    }
+    let b = s.as_bytes();
+    if !b[0].is_ascii_alphabetic() {
+        return false;
+    }
+    if s.contains("..") {
+        return false;
+    }
+    b.iter()
+        .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'/' | b'_' | b'+' | b'-'))
+}
+
+/// `timedatectl show -p Timezone --value` or one `list-timezones` line.
+pub fn parse_timezone_name(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if timezone_ok(s) {
+        Some(s.to_string())
+    } else {
+        None
+    }
+}
+
+pub fn parse_timezone_list(stdout: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        if let Some(z) = parse_timezone_name(line) {
+            if !out.iter().any(|x| x == &z) {
+                out.push(z);
+            }
+        }
+        if out.len() >= TIMEZONE_LIST_CAP {
+            break;
+        }
+    }
+    out
+}
+
+/// True when `name` is on the live `timedatectl list-timezones` list.
+pub fn timezone_listed(name: &str, zones: &[String]) -> bool {
+    timezone_ok(name) && zones.iter().any(|z| z == name)
+}
+
+/// Form/JSON `timezone` for `timezone_set`. Token only — membership of the
+/// live list is checked on the helper.
+pub fn parse_timezone_set(payload: &str) -> Result<String, SysError> {
+    let v: serde_json::Value = serde_json::from_str(payload).map_err(|_| SysError::Op)?;
+    let name = v.get("timezone").and_then(|t| t.as_str()).unwrap_or("");
+    parse_timezone_name(name).ok_or(SysError::Timezone)
+}
+
+pub fn timedatectl_show_ntp_args() -> Vec<String> {
+    vec![
+        "show".into(),
+        "-p".into(),
+        "NTPSynchronized".into(),
+        "--value".into(),
+    ]
+}
+
+pub fn timedatectl_show_timezone_args() -> Vec<String> {
+    vec![
+        "show".into(),
+        "-p".into(),
+        "Timezone".into(),
+        "--value".into(),
+    ]
+}
+
+pub fn timedatectl_list_timezones_args() -> Vec<String> {
+    vec!["list-timezones".into()]
+}
+
+pub fn timedatectl_set_timezone_args(zone: &str) -> Result<Vec<String>, SysError> {
+    let zone = parse_timezone_name(zone).ok_or(SysError::Timezone)?;
+    Ok(vec!["set-timezone".into(), "--".into(), zone])
 }
 
 /// Drop-in so KeyStone wins first-match over `50-cloud-init.conf`.
@@ -1442,6 +1549,7 @@ mod tests {
         assert!(SysOp::Reboot.mutating());
         assert!(SysOp::UnitRestart.mutating());
         assert!(SysOp::UnitEnable.mutating());
+        assert!(SysOp::TimezoneSet.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::VlanAdd.permission(), Permission::SysManage);
@@ -1451,6 +1559,7 @@ mod tests {
         assert_eq!(SysOp::Reboot.permission(), Permission::SysManage);
         assert_eq!(SysOp::UnitRestart.permission(), Permission::SysManage);
         assert_eq!(SysOp::UnitEnable.permission(), Permission::SysManage);
+        assert_eq!(SysOp::TimezoneSet.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
         assert!(SysOp::GitlabBackup.streams());
@@ -1459,10 +1568,12 @@ mod tests {
         assert!(!SysOp::Reboot.streams());
         assert!(!SysOp::UnitRestart.streams());
         assert!(!SysOp::UnitEnable.streams());
+        assert!(!SysOp::TimezoneSet.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
         assert_eq!(SysOp::GitlabRestore.as_str(), "gitlab_restore");
         assert_eq!(SysOp::UnitRestart.as_str(), "unit_restart");
         assert_eq!(SysOp::UnitEnable.as_str(), "unit_enable");
+        assert_eq!(SysOp::TimezoneSet.as_str(), "timezone_set");
         assert!(!SysOp::Journal.mutating());
         assert_eq!(SysOp::Journal.permission(), Permission::SysView);
         assert!(SysOp::Journal.streams());
@@ -1497,6 +1608,7 @@ mod tests {
         assert!(!SysOp::WifiScan.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::UnitEnable.needs_step_up());
+        assert!(!SysOp::TimezoneSet.needs_step_up());
         assert!(SysOp::GitlabRestore.needs_step_up());
         assert!(!SysOp::GitlabBackup.needs_step_up());
         for op in SysOp::iter() {
@@ -1527,6 +1639,7 @@ mod tests {
             SysOp::Reboot => Some("/sys/reboot"),
             SysOp::UnitRestart => Some("/sys/unit_restart"),
             SysOp::UnitEnable => Some("/sys/unit_enable"),
+            SysOp::TimezoneSet => Some("/sys/timezone_set"),
             SysOp::Status | SysOp::UpdatesList | SysOp::Journal | SysOp::WifiScan => None,
         }
     }
@@ -2191,6 +2304,7 @@ mod tests {
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
         assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
         assert_eq!("unit_enable".parse::<SysOp>().unwrap(), SysOp::UnitEnable);
+        assert_eq!("timezone_set".parse::<SysOp>().unwrap(), SysOp::TimezoneSet);
         assert_eq!("vlan_add".parse::<SysOp>().unwrap(), SysOp::VlanAdd);
         assert_eq!("wifi_scan".parse::<SysOp>().unwrap(), SysOp::WifiScan);
         assert_eq!("wifi_join".parse::<SysOp>().unwrap(), SysOp::WifiJoin);
@@ -2307,6 +2421,61 @@ mod tests {
         assert_eq!(parse_ntp_sync("YES"), Some(true));
         assert_eq!(parse_ntp_sync("timedatectl: command not found"), None);
         assert_eq!(parse_ntp_sync("yes, later"), None);
+    }
+
+    #[test]
+    fn timezone_set_is_listed_names_only() {
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":"Australia/Sydney"}"#).unwrap(),
+            "Australia/Sydney"
+        );
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":" UTC "}"#).unwrap(),
+            "UTC"
+        );
+        assert_eq!(
+            parse_timezone_name("Etc/GMT+12\n").as_deref(),
+            Some("Etc/GMT+12")
+        );
+        assert_eq!(
+            parse_timezone_name("America/Argentina/Buenos_Aires").as_deref(),
+            Some("America/Argentina/Buenos_Aires")
+        );
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":"UTC;rm"}"#),
+            Err(SysError::Timezone)
+        );
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":"../Etc"}"#),
+            Err(SysError::Timezone)
+        );
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":"-UTC"}"#),
+            Err(SysError::Timezone)
+        );
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":""}"#),
+            Err(SysError::Timezone)
+        );
+        assert_eq!(
+            parse_timezone_set(r#"{"timezone":"Australia/Sydney;reboot"}"#),
+            Err(SysError::Timezone)
+        );
+        let listed = parse_timezone_list("UTC\nAustralia/Sydney\nEtc/GMT+12\nbad;rm\n");
+        assert_eq!(listed, vec!["UTC", "Australia/Sydney", "Etc/GMT+12"]);
+        assert!(timezone_listed("Australia/Sydney", &listed));
+        assert!(!timezone_listed("Europe/Paris", &listed));
+        assert_eq!(
+            timedatectl_set_timezone_args("Australia/Sydney").unwrap(),
+            vec!["set-timezone", "--", "Australia/Sydney"]
+        );
+        assert!(timedatectl_set_timezone_args("UTC;rm").is_err());
+        assert_eq!(
+            TimezoneSet::parse_json(r#"{"timezone":"UTC"}"#)
+                .unwrap()
+                .timezone,
+            "UTC"
+        );
     }
 
     #[test]

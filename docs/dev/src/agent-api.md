@@ -158,7 +158,7 @@ Do not fork UI mutations onto the Unix socket “for convenience.”
 
 ## Proposed slices (when we build it)
 
-One at a time. Not mixed with journal allowlist, timezone, or exec UI.
+One at a time. Not mixed with exec UI.
 
 1. **Observe Unix socket** — unit + hello + `observe` keys in Settings +
    Audit + rate limit. Lists and inspect only. No TCP.

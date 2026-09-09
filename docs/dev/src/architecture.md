@@ -97,7 +97,7 @@ SSO, multi-user RBAC enforcement beyond the permission enum, required 2FA,
 WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, System shutdown from the UI, hostname /
-timezone / users / firewall / sshd_config editors, Wi-Fi hotspot / 802.1X, Fedora /
+timezone textbox / users / firewall / sshd_config editors, Wi-Fi hotspot / 802.1X, Fedora /
 Arch host updates, unattended-upgrades config editor, Watchtower,
 Docker GitLab backup. Allowlisted `journalctl` follow (six units, including
 `unattended-upgrades.service`) is in
@@ -115,7 +115,9 @@ is in on the same `net_set` as IPv4 (step-up when TOTP is on). **VLAN create**
 audited) is in; hidden SSID, hotspot, and 802.1X are not. **SSH password**
 (`ssh_password`, step-up) is a yes/no toggle (`sshd -T` observe, drop-in
 `PasswordAuthentication` then `systemctl reload` ssh); user / firewall /
-`PermitRootLogin` editors stay out. Observing whether unattended-upgrades
+`PermitRootLogin` editors stay out. **Timezone** (`timezone_set`, listed
+IANA name from `timedatectl list-timezones`, then `timedatectl set-timezone`;
+not a timezone textbox) is in. Observing whether unattended-upgrades
 is enabled and when it last ran is in; editing `20auto-upgrades` is not.
 **Hub/GHCR login** (`image_login`) stores credentials on the **agent** with
 `docker login` (password not audited, not in the server DB). Public GHCR

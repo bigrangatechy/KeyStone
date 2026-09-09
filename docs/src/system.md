@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
 Pi OS** boxes. Health is on the left (leftover services, failed units,
 allowlisted journals, NTP, unattended-upgrades glance, addresses). Actions
-are on the right (apt, autoremove, confirmed reboot, IPv4/IPv6, VLAN,
+are on the right (apt, autoremove, confirmed reboot, timezone dropdown, IPv4/IPv6, VLAN,
 Wi-Fi, SSH password, Start KeyStone on boot, GitLab Omnibus
 backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
@@ -21,7 +21,7 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, and reboot** if
+   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, timezone, and reboot** if
    you want Apply, Autoremove, leftover Restart, VLAN, Wi-Fi, SSH password, Start KeyStone on boot, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
@@ -46,7 +46,7 @@ It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
 `systemctl --failed`, `timedatectl`, `journalctl -u` for six named
 units, `systemctl reboot`, `systemctl restart` of a leftover or failed
 listed name, netplan or
-`nmcli`, `sshd -T` / a PasswordAuthentication drop-in and `systemctl reload` of `ssh`, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
+`nmcli`, `sshd -T` / a PasswordAuthentication drop-in and `systemctl reload` of `ssh`, `timedatectl set-timezone` of a listed IANA name, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
 unit-name textbox.
 
 ## Updates
@@ -82,6 +82,11 @@ needrestart reports a pending kernel. **Reboot node** is a confirmed
 `systemctl reboot` (manage on). Poweroff is not in this UI. If this node
 is the machine serving the KeyStone UI, the tab warns that the session
 will drop until the server is back.
+
+**Timezone** is a dropdown of `timedatectl list-timezones` (not a
+timezone textbox). The helper re-checks the live list then
+`timedatectl set-timezone`. Confirm + Audit. This cannot lock you out of
+SSH, so it does not ask for an authenticator code.
 
 With the helper on, the tab also shows whether the clock is synchronized
 (`timedatectl`) and follow links for `keystone-agent.service`,
@@ -133,7 +138,7 @@ UI. If 2FA is on, Join uses the same current 6-digit code.
 **SSH password** is a yes/no toggle: allow password logins or keys only (not a user editor).
 It writes `/etc/ssh/sshd_config.d/00-keystone.conf` (`PasswordAuthentication` only) and
 reloads `ssh`. Keep keys or a console — turning passwords off can lock you out.
-`PermitRootLogin`, users, firewall, and timezone stay out of this UI. If 2FA is on,
+`PermitRootLogin`, users, and firewall stay out of this UI. If 2FA is on,
 SSH password uses the same current 6-digit code.
 
 ## GitLab backup and restore

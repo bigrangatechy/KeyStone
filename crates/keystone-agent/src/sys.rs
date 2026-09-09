@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context};
 use keystone_core::sys::{
-    parse_ip_addr_json, parse_ntp_sync, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
+    parse_ip_addr_json, parse_ntp_sync, parse_timezone_name, timedatectl_show_ntp_args,
+    timedatectl_show_timezone_args, SysOp, GITLAB_BACKUP_BIN, SYS_SOCKET_PATH,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -29,9 +30,11 @@ fn call_budget(op: SysOp) -> Duration {
         SysOp::Status => Duration::from_secs(3),
         SysOp::NetSet | SysOp::VlanAdd => Duration::from_secs(20),
         SysOp::WifiScan | SysOp::WifiJoin => Duration::from_secs(30),
-        SysOp::Reboot | SysOp::UnitRestart | SysOp::UnitEnable | SysOp::SshPassword => {
-            Duration::from_secs(15)
-        }
+        SysOp::Reboot
+        | SysOp::UnitRestart
+        | SysOp::UnitEnable
+        | SysOp::SshPassword
+        | SysOp::TimezoneSet => Duration::from_secs(15),
         SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
             Duration::from_secs(120)
         }
@@ -149,22 +152,32 @@ pub async fn local_status() -> Value {
 }
 
 async fn local_ntp() -> Value {
+    let (sync_out, tz_out) = tokio::join!(
+        timedatectl_show(timedatectl_show_ntp_args()),
+        timedatectl_show(timedatectl_show_timezone_args()),
+    );
+    let synchronized = sync_out.as_deref().and_then(parse_ntp_sync);
+    let timezone = tz_out
+        .as_deref()
+        .and_then(parse_timezone_name)
+        .unwrap_or_default();
+    json!({
+        "available": synchronized.is_some() || !timezone.is_empty(),
+        "synchronized": synchronized.unwrap_or(false),
+        "timezone": timezone,
+    })
+}
+
+async fn timedatectl_show(args: Vec<String>) -> Option<String> {
     let output = timeout(
         Duration::from_secs(2),
-        Command::new("timedatectl")
-            .args(["show", "-p", "NTPSynchronized", "--value"])
-            .output(),
+        Command::new("timedatectl").args(&args).output(),
     )
     .await;
     match output {
-        Ok(Ok(o)) if o.status.success() => {
-            if let Some(sync) = parse_ntp_sync(&String::from_utf8_lossy(&o.stdout)) {
-                return json!({ "available": true, "synchronized": sync });
-            }
-        }
-        _ => {}
+        Ok(Ok(o)) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
+        _ => None,
     }
-    json!({ "available": false, "synchronized": false })
 }
 
 async fn local_addrs() -> Value {
@@ -267,6 +280,7 @@ mod tests {
         assert_eq!(call_budget(SysOp::UnitRestart), call_budget(SysOp::Reboot));
         assert_eq!(call_budget(SysOp::UnitEnable), call_budget(SysOp::Reboot));
         assert_eq!(call_budget(SysOp::SshPassword), call_budget(SysOp::Reboot));
+        assert_eq!(call_budget(SysOp::TimezoneSet), call_budget(SysOp::Reboot));
         assert_eq!(
             call_budget(SysOp::GitlabRestore),
             call_budget(SysOp::GitlabBackup)

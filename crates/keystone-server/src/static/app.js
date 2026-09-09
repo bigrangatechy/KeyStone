@@ -1437,6 +1437,9 @@
       ));
       health.appendChild(ntpLine);
     }
+    if (ntp.timezone) {
+      health.appendChild(el("p", "muted", "Timezone " + ntp.timezone));
+    }
     const ssh = data.ssh || {};
     if (ssh.available) {
       const sshLine = document.createElement("p");
@@ -1532,6 +1535,43 @@
       }
     }
     if (manage && helperOn) {
+      const zones = Array.isArray(ntp.zones) ? ntp.zones : [];
+      const tzHead = el("div", "compose-head");
+      tzHead.appendChild(el("h3", null, "Timezone"));
+      actions.appendChild(tzHead);
+      actions.appendChild(el("p", "muted", "Listed names from timedatectl list-timezones. The helper re-checks that list then runs timedatectl set-timezone. Not a timezone textbox."));
+      if (!zones.length) {
+        actions.appendChild(el("p", "muted", "No timezones on this node (timedatectl missing)."));
+      } else {
+        const tzForm = document.createElement("form");
+        tzForm.method = "post";
+        tzForm.action = "/nodes/" + encodeURIComponent(node) + "/sys/timezone_set";
+        tzForm.className = "sys-net";
+        tzForm.addEventListener("submit", (ev) => {
+          const sel = tzForm.querySelector("select[name=\"timezone\"]");
+          const zone = (sel && sel.value) || "";
+          if (!zone) {
+            ev.preventDefault();
+            return;
+          }
+          if (!window.confirm("Set this node's timezone to " + zone + "?")) ev.preventDefault();
+        });
+        const tzSel = document.createElement("select");
+        tzSel.name = "timezone";
+        zones.forEach((z) => {
+          const o = document.createElement("option");
+          o.value = z;
+          o.textContent = z;
+          if (z === ntp.timezone) o.selected = true;
+          tzSel.appendChild(o);
+        });
+        tzForm.appendChild(tzSel);
+        const tzBtn = document.createElement("button");
+        tzBtn.type = "submit";
+        tzBtn.textContent = "Set timezone";
+        tzForm.appendChild(tzBtn);
+        actions.appendChild(tzForm);
+      }
       const rebootHead = el("div", "compose-head");
       rebootHead.appendChild(el("h3", null, "Reboot"));
       actions.appendChild(rebootHead);

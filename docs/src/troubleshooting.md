@@ -158,7 +158,7 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, and reboot**
+- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, timezone, and reboot**
   on and save.
 - `apt-get` failed: read the apply or autoremove stream; the helper only runs
   `upgrade` or `autoremove`,
@@ -198,8 +198,9 @@ token does not.
   `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`,
   `unattended-upgrades`). There is no
   unit-name textbox.
-- Clock not synchronized: `timedatectl` on the node. The System tab does
-  not set the timezone.
+- Clock not synchronized: `timedatectl` on the node. NTP is observe-only.
+- Timezone refused: that name is not on the live list (stale tab — reload),
+  or `timedatectl` is missing. Not a timezone textbox.
 - GitLab dump age missing: no `*_gitlab_backup.tar` under
   `/var/opt/gitlab/backups` yet. Restore needs a listed dump, not a path.
 - Restore refused: dump is gone from that directory (stale tab — reload),

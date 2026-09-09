@@ -782,7 +782,8 @@ async fn handle_sys(
         | SysOp::SshPassword
         | SysOp::Reboot
         | SysOp::UnitRestart
-        | SysOp::UnitEnable => crate::sys::call(op, payload).await,
+        | SysOp::UnitEnable
+        | SysOp::TimezoneSet => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
         SysOp::UpdatesAutoremove => {
             anyhow::bail!("updates_autoremove is streamed from the autoremove page")
@@ -965,23 +966,7 @@ mod tests {
 
     #[test]
     fn sys_ops_are_not_docker_ops() {
-        for op in [
-            SysOp::Status,
-            SysOp::UpdatesList,
-            SysOp::UpdatesApply,
-            SysOp::UpdatesAutoremove,
-            SysOp::NetSet,
-            SysOp::VlanAdd,
-            SysOp::WifiScan,
-            SysOp::WifiJoin,
-            SysOp::SshPassword,
-            SysOp::GitlabBackup,
-            SysOp::GitlabRestore,
-            SysOp::Reboot,
-            SysOp::Journal,
-            SysOp::UnitRestart,
-            SysOp::UnitEnable,
-        ] {
+        for op in SysOp::all() {
             assert!(
                 DockerOp::from_str(op.as_str()).is_err(),
                 "sys op {} must not parse as DockerOp",

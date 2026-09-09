@@ -10,7 +10,7 @@ Host apt and addressing are **not** `DockerOp`. Cookie-authed
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
 `updates_apply`, `updates_autoremove`, `net_set`, `vlan_add`, `wifi_scan`,
 `wifi_join`, `ssh_password`, `gitlab_backup`, `gitlab_restore`, `reboot`, `journal`,
-`unit_restart`, `unit_enable`).
+`unit_restart`, `unit_enable`, `timezone_set`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
@@ -31,13 +31,13 @@ Apply is still `apt-get upgrade`, not `dist-upgrade`, with
 ssh mid-upgrade. Autoremove is streamed `apt-get -y autoremove` (not
 `dist-upgrade`). `status` parses `needrestart -b -r l` and
 `systemctl --failed` (empty if the binary is missing or times out).
-`status` also parses `timedatectl show -p NTPSynchronized` and the newest
+`status` also parses `timedatectl show -p NTPSynchronized`, `timedatectl show -p Timezone`, `timedatectl list-timezones`, and the newest
 `*_gitlab_backup.tar` under `/var/opt/gitlab/backups` (Omnibus only;
 `status` lists dumps for restore). Unattended-upgrades is observe-only: parse
 `/etc/apt/apt.conf.d/20auto-upgrades` (or `systemctl is-enabled
 unattended-upgrades`) and the periodic stamp mtime. There is no config
 editor. `journal` follows `journalctl -u` for a
-hardcoded unit list including `unattended-upgrades.service` (not a textbox). `reboot` is hardcoded
+hardcoded unit list including `unattended-upgrades.service` (not a textbox). `timezone_set` is a listed IANA name from `timedatectl list-timezones` then `timedatectl set-timezone` (not a timezone textbox). Tests must not invoke `timedatectl set-timezone`. `reboot` is hardcoded
 `systemctl reboot` (not poweroff). `unit_restart` is hardcoded
 `systemctl restart -- <unit>` only if that name is on the live leftover
 or failed list from `needrestart` / `systemctl --failed` (not a textbox).
@@ -51,7 +51,7 @@ argv, never audited). `status` also runs `sshd -T` for PasswordAuthentication.
 `ssh_password` writes `/etc/ssh/sshd_config.d/00-keystone.conf` then `sshd -t`
 and `systemctl reload` of `ssh.service` (fallback `sshd.service`). Not a user
 editor. Tests must not run live `apt-get`,
-`apt-get autoremove`, `gitlab-backup`, `gitlab-backup restore`, `journalctl -f`, `systemctl reboot`, `systemctl restart`, `systemctl enable`, `systemctl disable`, `systemctl reload`, `sshd -t`, `netplan apply`, `nmcli`, or `iw`.
+`apt-get autoremove`, `gitlab-backup`, `gitlab-backup restore`, `journalctl -f`, `systemctl reboot`, `systemctl restart`, `systemctl enable`, `systemctl disable`, `systemctl reload`, `sshd -t`, `netplan apply`, `nmcli`, `iw`, or `timedatectl set-timezone`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|
@@ -70,6 +70,7 @@ editor. Tests must not run live `apt-get`,
 | `journal` | no | `sys_view` | Follow `journalctl` for one allowlisted unit (streamed). Not a PTY. Tests must not follow a live journal. |
 | `unit_restart` | yes | `sys_manage` | `systemctl restart` for one leftover or failed unit. `needs_step_up()`. Helper re-checks the live lists. Tests must not invoke it. |
 | `unit_enable` | yes | `sys_manage` | `systemctl enable`/`disable` of packaged KeyStone units for boot. `needs_step_up()`. Not `--now` (running process stays). Not `keystone-sys.socket`. Tests must not invoke it. |
+| `timezone_set` | yes | `sys_manage` | `timedatectl set-timezone` for one listed IANA name. Helper re-checks `timedatectl list-timezones`. Not a timezone textbox. Confirm + Audit; not `needs_step_up()`. Tests must not invoke it. |
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
 token cannot call these routes. `SysOp::needs_step_up()` is `net_set`,

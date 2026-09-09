@@ -8,6 +8,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 01:22:10 10/09/2026 AEST
+
+Set the host timezone from a `timedatectl list-timezones` dropdown. Not a
+textbox. Tests do not run `timedatectl set-timezone`.
+
 ## 01:05:31 10/09/2026 AEST
 
 Follow `unattended-upgrades.service` from the System journals list. Still

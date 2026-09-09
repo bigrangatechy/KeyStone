@@ -2368,6 +2368,7 @@ struct SysForm {
     psk: Option<String>,
     password_auth: Option<String>,
     enabled: Option<String>,
+    timezone: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2462,6 +2463,9 @@ fn sys_form_payload(form: &SysForm) -> String {
         if let Ok(v) = parse_boot_enabled(p) {
             map.insert("enabled".into(), serde_json::json!(v));
         }
+    }
+    if let Some(z) = &form.timezone {
+        map.insert("timezone".into(), serde_json::json!(z.trim()));
     }
     serde_json::Value::Object(map).to_string()
 }
@@ -3722,6 +3726,7 @@ mod tests {
         assert!(js.contains("/sys/wifi_join"));
         assert!(js.contains("/sys/ssh_password"));
         assert!(js.contains("/sys/unit_enable"));
+        assert!(js.contains("/sys/timezone_set"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
@@ -3755,6 +3760,9 @@ mod tests {
         assert!(!SysOp::Reboot.streams());
         assert!(!SysOp::UnitRestart.streams());
         assert!(!SysOp::UnitEnable.streams());
+        assert!(SysOp::TimezoneSet.mutating());
+        assert!(!SysOp::TimezoneSet.streams());
+        assert!(!SysOp::TimezoneSet.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::UnitEnable.needs_step_up());
         assert!(SysOp::Journal.streams());
@@ -4146,6 +4154,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: None,
+            timezone: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -4179,6 +4188,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: None,
+            timezone: None,
             totp: "000000".into(),
             redirect: String::new(),
         };
@@ -4205,6 +4215,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: None,
+            timezone: None,
             totp: "654321".into(),
             redirect: String::new(),
         };
@@ -4231,6 +4242,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: None,
+            timezone: None,
             totp: "111111".into(),
             redirect: String::new(),
         };
@@ -4258,6 +4270,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: None,
+            timezone: None,
             totp: "222222".into(),
             redirect: String::new(),
         };
@@ -4285,6 +4298,7 @@ mod tests {
             psk: Some("testpass1".into()),
             password_auth: None,
             enabled: None,
+            timezone: None,
             totp: "333333".into(),
             redirect: String::new(),
         };
@@ -4315,6 +4329,7 @@ mod tests {
             psk: None,
             password_auth: Some(" no ".into()),
             enabled: None,
+            timezone: None,
             totp: "444444".into(),
             redirect: String::new(),
         };
@@ -4342,6 +4357,7 @@ mod tests {
             psk: None,
             password_auth: Some("yes;rm".into()),
             enabled: None,
+            timezone: None,
             totp: "555555".into(),
             redirect: String::new(),
         };
@@ -4369,6 +4385,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: Some("yes".into()),
+            timezone: None,
             totp: "666666".into(),
             redirect: String::new(),
         };
@@ -4395,6 +4412,7 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: Some("no".into()),
+            timezone: None,
             totp: "777777".into(),
             redirect: String::new(),
         };
@@ -4419,12 +4437,40 @@ mod tests {
             psk: None,
             password_auth: None,
             enabled: Some("yes;rm".into()),
+            timezone: None,
             totp: "888888".into(),
             redirect: String::new(),
         };
         let bj = sys_form_payload(&boot_junk);
         assert!(!bj.contains("enabled"));
         assert!(!bj.contains("yes;rm"));
+        let tz = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: None,
+            psk: None,
+            password_auth: None,
+            enabled: None,
+            timezone: Some(" Australia/Sydney ".into()),
+            totp: "123456".into(),
+            redirect: String::new(),
+        };
+        let t = sys_form_payload(&tz);
+        assert!(t.contains("\"timezone\":\"Australia/Sydney\""));
+        assert!(!t.contains("123456"));
     }
 
     #[test]
@@ -4606,11 +4652,18 @@ mod tests {
             "SSH password must be a yes/no toggle, not a user editor"
         );
         assert!(
+            js.contains("/sys/timezone_set")
+                && js.contains("tzSel.name = \"timezone\"")
+                && js.contains("Not a timezone textbox")
+                && js.contains("timedatectl set-timezone"),
+            "timezone must be a listed dropdown, not a textbox"
+        );
+        assert!(
             !js.contains("PermitRootLogin")
                 && !js.contains("useradd")
                 && !js.contains("/sys/ufw")
-                && !js.contains("/sys/timezone"),
-            "SSH password slice must not grow a user, firewall, or timezone editor"
+                && !js.contains("/sys/hostname"),
+            "SSH password slice must not grow a user, firewall, or hostname editor"
         );
         assert!(
             js.contains("data-totp")

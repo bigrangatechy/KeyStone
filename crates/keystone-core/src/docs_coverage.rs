@@ -357,12 +357,60 @@ fn operator_docs_cover_journal_ntp_gitlab_age() {
         "troubleshooting must cover unknown journal units and clock sync"
     );
     assert!(
+        system.contains("timedatectl set-timezone") && system.contains("timezone textbox"),
+        "System chapter must document timezone as a dropdown, not a textbox"
+    );
+    assert!(
         http.contains("/sys/journal/"),
         "HTTP API must list journal follow routes"
     );
     assert!(
         dev.contains("`journal`"),
         "developer system.md must list the journal op"
+    );
+}
+
+#[test]
+fn operator_docs_cover_timezone_set() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let feat = include_str!("../../../docs/src/features.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        system.contains("timedatectl set-timezone") && system.contains("timezone textbox"),
+        "System chapter must document timezone as a dropdown, not a textbox"
+    );
+    assert!(
+        using.contains("timezone") && using.contains("dropdown"),
+        "using.md must mention timezone from a dropdown"
+    );
+    assert!(
+        trouble.contains("Timezone refused") && trouble.contains("live list"),
+        "troubleshooting must cover a stale timezone dropdown"
+    );
+    assert!(
+        audit.contains("timezone"),
+        "Audit must list timezone as a System mutation"
+    );
+    assert!(
+        http.contains("`timezone_set`") && http.contains("`timezone`"),
+        "HTTP API must mention timezone_set and the timezone form field"
+    );
+    assert!(
+        dev.contains("`timezone_set`") && dev.contains("timedatectl set-timezone"),
+        "developer system.md must list timezone_set and say tests must not invoke it"
+    );
+    assert!(
+        arch.contains("timezone_set") && arch.contains("timezone textbox"),
+        "architecture.md must say timezone dropdown is in and a textbox stays out"
+    );
+    assert!(
+        feat.contains("timezone dropdown") && !feat.contains("Timezone from a dropdown"),
+        "features.md Current must list timezone; Later must drop the timezone slice"
     );
 }
 
@@ -978,6 +1026,7 @@ fn user_guide_sysop_needle(op: SysOp) -> &'static str {
         SysOp::Journal => "journals",
         SysOp::UnitRestart => "leftover restart",
         SysOp::UnitEnable => "Start KeyStone on boot",
+        SysOp::TimezoneSet => "timezone",
     }
 }
 
