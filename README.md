@@ -69,8 +69,8 @@ Example configs: [examples/server.toml](examples/server.toml),
 
 ```
 mkdir -p .smoke/tmp .smoke/agent-buffer
-TMPDIR=.smoke/tmp KEYSTONE_ADMIN_PASSWORD=changeme cargo run -p keystone-server -- serve --config examples/server.toml
-TMPDIR=.smoke/tmp cargo run -p keystone-agent -- --config examples/agent.toml
+TMPDIR="$PWD/.smoke/tmp" KEYSTONE_ADMIN_PASSWORD=changeme cargo run -p keystone-server -- serve --config examples/server.toml
+TMPDIR="$PWD/.smoke/tmp" cargo run -p keystone-agent -- --config examples/agent.toml
 ```
 
 First UI login is `admin` / `changeme` unless you set
