@@ -41,7 +41,10 @@ Observe is off. The agent gates still apply.
 
 `DockerOp::streams()` is `container_logs` and `compose_logs`. The agent
 sends `StreamChunk` (`data`, then `eof`) followed by `CommandResult`.
-`op == "cancel"` with `{"request_id":"..."}` aborts the task.
+`op == "cancel"` with `{"request_id":"..."}` aborts the task. The server may
+also send `StreamChunk` on that `request_id` (stdin, or `cols`/`rows` for a
+later TTY). Logs drain and ignore those bytes. Interactive exec is not in
+the UI.
 
 Non-streaming Docker and System RPCs (`container_list`, `status`, …) are
 also spawned off the ingest `select!` loop. Awaiting them there meant the

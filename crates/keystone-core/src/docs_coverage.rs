@@ -88,6 +88,33 @@ fn developer_widgets_doc_lists_kinds() {
 }
 
 #[test]
+fn developer_ingest_doc_covers_stdin_stream() {
+    let ingest = include_str!("../../../docs/dev/src/ingest.md");
+    let docker = include_str!("../../../docs/dev/src/docker.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    let feat = include_str!("../../../docs/src/features.md");
+    assert!(
+        ingest.contains("chunk")
+            && ingest.contains("stdin")
+            && ingest.contains("cols")
+            && ingest.contains("not `cancel`"),
+        "ingest.md must document server→agent StreamChunk as stdin, not cancel"
+    );
+    assert!(
+        docker.contains("stdin") && docker.contains("Interactive exec is not in"),
+        "developer docker.md must say logs ignore stdin and exec stays out of the UI"
+    );
+    assert!(
+        arch.contains("server → agent as stdin") && arch.contains("Interactive exec is not in"),
+        "architecture.md must say stdin is on ingest and exec is not in the UI"
+    );
+    assert!(
+        feat.contains("Bidirectional `StreamChunk`") && feat.contains("exec checkbox"),
+        "features.md Later must say the protocol is in and the UI is not"
+    );
+}
+
+#[test]
 fn operator_dashboard_documents_page_and_widget_styles() {
     let dash = include_str!("../../../docs/src/dashboard.md");
     for needle in [

@@ -43,8 +43,8 @@ One slice at a time. Not mixed into the current tree:
 
 - `unattended-upgrades.service` on the journal allowlist (still five units).
 - Timezone from a dropdown; unattended-upgrades enable/disable; Fedora `dnf`.
-- Interactive `docker exec` after a streaming protocol exists. The Settings
-  exec checkbox stays reserved.
+- Interactive `docker exec` in the UI. Bidirectional `StreamChunk` on ingest
+  is in; the Settings exec checkbox stays reserved.
 
 ## Not this product
 

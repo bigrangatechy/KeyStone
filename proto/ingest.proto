@@ -56,6 +56,9 @@ message StreamChunk {
   string request_id = 1;
   bytes data = 2;
   bool eof = 3;
+  // TTY resize for a later exec slice. Zero means this chunk is not a resize.
+  uint32 cols = 4;
+  uint32 rows = 5;
 }
 
 message AgentToServer {
@@ -70,6 +73,7 @@ message ServerToAgent {
   oneof body {
     Ack ack = 1;
     Command command = 2;
+    StreamChunk chunk = 3;
   }
 }
 

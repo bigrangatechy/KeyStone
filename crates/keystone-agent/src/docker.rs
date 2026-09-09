@@ -1189,6 +1189,10 @@ mod tests {
         assert!(!DockerOp::ContainerList.streams());
         assert!(!DockerOp::ComposeUp.streams());
         assert!(!DockerOp::ComposeUpdate.streams());
+        assert!(
+            !DockerOp::ContainerExec.streams(),
+            "exec stays off the log stream until a later UI slice"
+        );
     }
 
     #[test]

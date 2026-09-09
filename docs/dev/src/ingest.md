@@ -65,6 +65,10 @@ A new `node_id` on a good push is enrolled automatically.
 
 - `ack` — `ok` / `error` for a push
 - `command` — `request_id`, `op`, `payload_json`
+- `chunk` — `StreamChunk` toward the agent (`request_id`, `data`, `eof`,
+  optional `cols` / `rows`). This is stdin (or a TTY resize) for an
+  in-flight stream. `eof` closes stdin; it is not `cancel`. Logs and apt
+  follow drain and ignore these bytes. Interactive exec is not in the UI.
 
 `op` is either a `DockerOp` string, a `SysOp` string, `set_runtime` /
 `set_interval`, or `cancel`. `cancel` payload is `{"request_id":"<id>"}`

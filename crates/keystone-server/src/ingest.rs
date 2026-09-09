@@ -70,10 +70,8 @@ impl Ingest for IngestSvc {
                     _ = &mut writer_dead_rx => break,
                     cmd = cmd_rx.recv() => {
                         match cmd {
-                            Some(command) => {
-                                if !queue_to_agent(&to_agent_tx, ServerToAgent {
-                                    body: Some(server_to_agent::Body::Command(command)),
-                                }) {
+                            Some(msg) => {
+                                if !queue_to_agent(&to_agent_tx, msg) {
                                     break;
                                 }
                             }
@@ -112,10 +110,8 @@ impl Ingest for IngestSvc {
                                         if !queue_to_agent(&to_agent_tx, ack(true, String::new())) {
                                             break;
                                         }
-                                        while let Ok(command) = cmd_rx.try_recv() {
-                                            if !queue_to_agent(&to_agent_tx, ServerToAgent {
-                                                body: Some(server_to_agent::Body::Command(command)),
-                                            }) {
+                                        while let Ok(msg) = cmd_rx.try_recv() {
+                                            if !queue_to_agent(&to_agent_tx, msg) {
                                                 break;
                                             }
                                         }
@@ -470,6 +466,10 @@ mod tests {
             src.contains("persist_tx") && src.contains("spawn_blocking"),
             "series writes must not block reading CommandResults on the ingest select"
         );
+        assert!(
+            src.contains("queue_to_agent(&to_agent_tx, msg)"),
+            "stdin StreamChunks must share the Command outbound queue, not a second gRPC write"
+        );
     }
 
     #[tokio::test]
@@ -560,6 +560,92 @@ mod tests {
         }
         let result = wait.await.expect("join").expect("oneshot");
         assert!(result.ok, "{}", result.error);
+        drop(tx);
+        server.abort();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn grpc_session_sends_stdin_on_an_in_flight_stream() {
+        let (dir, state) = scratch("lab-token");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming = TcpListenerStream::new(listener);
+        let serve_state = state.clone();
+        let server = tokio::spawn(async move {
+            Server::builder()
+                .add_service(service(serve_state))
+                .serve_with_incoming(incoming)
+                .await
+        });
+        let mut client = None;
+        for _ in 0..50 {
+            if let Ok(c) = IngestClient::connect(format!("http://{addr}")).await {
+                client = Some(c);
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        let mut client = client.expect("dial ingest");
+        let (tx, rx) = mpsc::channel(8);
+        let mut inbound = client
+            .session(ReceiverStream::new(rx))
+            .await
+            .expect("session")
+            .into_inner();
+        tx.send(AgentToServer {
+            body: Some(agent_to_server::Body::Push(push(
+                "grpc-stdin",
+                "lab-token",
+                vec![cpu_sample()],
+            ))),
+        })
+        .await
+        .unwrap();
+        let ack = inbound.next().await.expect("ack").expect("ok status");
+        match ack.body {
+            Some(server_to_agent::Body::Ack(ack)) => assert!(ack.ok, "{}", ack.error),
+            other => panic!("expected ack, got {other:?}"),
+        }
+        let (rid, _out) = state
+            .agents
+            .stream("grpc-stdin", "container_logs", "{}".into())
+            .expect("open stream");
+        state
+            .agents
+            .send_stdin("grpc-stdin", &rid, b"hello".to_vec(), false)
+            .expect("stdin");
+        let started = std::time::Instant::now();
+        let mut saw_logs = false;
+        let mut saw_stdin = false;
+        loop {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "stdin chunk must reach the agent well inside the page wait"
+            );
+            let msg = tokio::time::timeout(Duration::from_secs(2), inbound.next())
+                .await
+                .expect("message within 2s")
+                .expect("stream")
+                .expect("ok status");
+            match msg.body {
+                Some(server_to_agent::Body::Command(cmd)) if cmd.op == "container_logs" => {
+                    assert_eq!(cmd.request_id, rid);
+                    saw_logs = true;
+                }
+                Some(server_to_agent::Body::Chunk(chunk)) => {
+                    assert_eq!(chunk.request_id, rid);
+                    assert_eq!(chunk.data, b"hello");
+                    assert!(!chunk.eof);
+                    saw_stdin = true;
+                }
+                Some(server_to_agent::Body::Command(_)) | Some(server_to_agent::Body::Ack(_)) => {}
+                other => panic!("unexpected {other:?}"),
+            }
+            if saw_logs && saw_stdin {
+                break;
+            }
+        }
         drop(tx);
         server.abort();
         let _ = std::fs::remove_dir_all(dir);

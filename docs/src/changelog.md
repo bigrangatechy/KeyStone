@@ -8,6 +8,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 00:31:52 10/09/2026 AEST
+
+Ingest can send stdin (or a TTY size) to an in-flight agent stream. Logs
+still ignore those bytes. Interactive exec is not in the UI.
+
 ## 00:09:40 10/09/2026 AEST
 
 Show Volumes and Networks as glance cards. Click loads summarized inspect

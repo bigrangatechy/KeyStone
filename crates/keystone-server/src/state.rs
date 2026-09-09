@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use keystone_core::config::ServerConfig;
 use keystone_core::{AlertSnapshot, NodeSettings, ServerSettings};
-use keystone_proto::{Command, StreamChunk};
+use keystone_proto::{Command, ServerToAgent, StreamChunk};
 use keystone_store::Stores;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::auth;
 
-pub type CommandTx = mpsc::Sender<Command>;
+pub type CommandTx = mpsc::Sender<ServerToAgent>;
 
 /// Wait budget for Docker/System tables when rendering a node page.
 /// Pull/compose mutate still use 180s via [`AgentRegistry::call`].
@@ -54,7 +54,7 @@ impl AgentRegistry {
         let (pending, streams) = match inner.remove(&node_id) {
             Some(old) => {
                 for p in old.pending.values() {
-                    let _ = cmd_tx.try_send(p.cmd.clone());
+                    let _ = cmd_tx.try_send(outbound_command(p.cmd.clone()));
                 }
                 (old.pending, old.streams)
             }
@@ -96,7 +96,7 @@ impl AgentRegistry {
             payload_json,
         };
         if let Some(agent) = self.inner.lock().get_mut(node_id) {
-            let _ = agent.cmd_tx.try_send(cmd);
+            let _ = agent.cmd_tx.try_send(outbound_command(cmd));
         }
     }
 
@@ -136,8 +136,45 @@ impl AgentRegistry {
                 op: "cancel".into(),
                 payload_json: serde_json::json!({ "request_id": request_id }).to_string(),
             };
-            let _ = agent.cmd_tx.try_send(cmd);
+            let _ = agent.cmd_tx.try_send(outbound_command(cmd));
         }
+    }
+
+    /// Stdin (or a TTY resize) for an in-flight stream. Logs drain this and
+    /// ignore it. Interactive exec is not in the UI yet. Dropped if the
+    /// outbound queue is full so a busy terminal cannot starve Commands.
+    pub fn send_stdin(
+        &self,
+        node_id: &str,
+        request_id: &str,
+        data: Vec<u8>,
+        eof: bool,
+    ) -> anyhow::Result<()> {
+        self.send_chunk(
+            node_id,
+            StreamChunk {
+                request_id: request_id.to_string(),
+                data,
+                eof,
+                cols: 0,
+                rows: 0,
+            },
+        )
+    }
+
+    pub fn send_chunk(&self, node_id: &str, chunk: StreamChunk) -> anyhow::Result<()> {
+        let inner = self.inner.lock();
+        let agent = inner
+            .get(node_id)
+            .ok_or_else(|| anyhow::anyhow!("agent {node_id} is not connected"))?;
+        if !agent.streams.contains_key(&chunk.request_id) {
+            anyhow::bail!("no in-flight stream");
+        }
+        agent
+            .cmd_tx
+            .try_send(outbound_chunk(chunk))
+            .map_err(|_| anyhow::anyhow!("agent command queue full"))?;
+        Ok(())
     }
 
     /// Follow-style ops: chunks arrive on the returned receiver until eof or cancel.
@@ -162,7 +199,7 @@ impl AgentRegistry {
             agent.streams.insert(request_id.clone(), tx);
             agent
                 .cmd_tx
-                .try_send(cmd)
+                .try_send(outbound_command(cmd))
                 .map_err(|_| anyhow::anyhow!("agent command queue full"))?;
         }
         Ok((request_id, rx))
@@ -206,7 +243,7 @@ impl AgentRegistry {
                     tx,
                 },
             );
-            if agent.cmd_tx.try_send(cmd).is_err() {
+            if agent.cmd_tx.try_send(outbound_command(cmd)).is_err() {
                 agent.pending.remove(&request_id);
                 anyhow::bail!("agent command queue full");
             }
@@ -224,9 +261,28 @@ impl AgentRegistry {
     }
 }
 
+fn outbound_command(cmd: Command) -> ServerToAgent {
+    ServerToAgent {
+        body: Some(keystone_proto::server_to_agent::Body::Command(cmd)),
+    }
+}
+
+fn outbound_chunk(chunk: StreamChunk) -> ServerToAgent {
+    ServerToAgent {
+        body: Some(keystone_proto::server_to_agent::Body::Chunk(chunk)),
+    }
+}
+
 #[cfg(test)]
 mod registry_tests {
     use super::*;
+
+    fn take_command(msg: ServerToAgent) -> Command {
+        match msg.body {
+            Some(keystone_proto::server_to_agent::Body::Command(cmd)) => cmd,
+            other => panic!("expected command, got {other:?}"),
+        }
+    }
 
     #[test]
     fn stale_disconnect_does_not_drop_the_live_session() {
@@ -272,7 +328,7 @@ mod registry_tests {
                     .await
             }
         });
-        let cmd = rx.recv().await.expect("command queued");
+        let cmd = take_command(rx.recv().await.expect("command queued"));
         registry.connect("ranga".into(), tx.clone());
         registry.complete(
             "ranga",
@@ -309,9 +365,9 @@ mod registry_tests {
                     .await
             }
         });
-        let first = rx_old.recv().await.expect("queued on old session");
+        let first = take_command(rx_old.recv().await.expect("queued on old session"));
         registry.connect("ranga".into(), tx_new);
-        let replayed = rx_new.recv().await.expect("replayed on new session");
+        let replayed = take_command(rx_new.recv().await.expect("replayed on new session"));
         assert_eq!(replayed.request_id, first.request_id);
         registry.complete(
             "ranga",
@@ -355,6 +411,38 @@ mod registry_tests {
             PAGE_LIST_TIMEOUT <= Duration::from_secs(15),
             "node page must not use the 180s pull budget"
         );
+    }
+
+    #[tokio::test]
+    async fn stdin_chunk_reaches_an_in_flight_stream() {
+        let registry = AgentRegistry::default();
+        let (tx, mut rx) = mpsc::channel(8);
+        registry.connect("ranga".into(), tx);
+        let (rid, _out) = registry
+            .stream("ranga", "container_logs", "{}".into())
+            .unwrap();
+        let cmd = take_command(rx.recv().await.expect("logs command"));
+        assert_eq!(cmd.op, "container_logs");
+        assert_eq!(cmd.request_id, rid);
+        registry
+            .send_stdin("ranga", &rid, b"hello".to_vec(), false)
+            .unwrap();
+        let msg = rx.recv().await.expect("stdin");
+        match msg.body {
+            Some(keystone_proto::server_to_agent::Body::Chunk(chunk)) => {
+                assert_eq!(chunk.request_id, rid);
+                assert_eq!(chunk.data, b"hello");
+                assert!(!chunk.eof);
+                assert_eq!(chunk.cols, 0);
+                assert_eq!(chunk.rows, 0);
+            }
+            other => panic!("expected stdin chunk, got {other:?}"),
+        }
+        let err = registry
+            .send_stdin("ranga", "missing", Vec::new(), true)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no in-flight stream"), "{err}");
     }
 }
 

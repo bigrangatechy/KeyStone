@@ -65,6 +65,8 @@ not advertise mDNS.
    The agent runs `DockerOp` and returns `CommandResult`. Logs use
    `StreamChunk` then a result; the HTML logs page is an EventSource onto
    that stream. `cancel` aborts a follow when the browser disconnects.
+   The same `StreamChunk` type can travel server → agent as stdin (or a TTY
+   resize) for that `request_id`. Logs drain it. Interactive exec is not in the UI.
    Image pull is still that path. Docker Hub search is a separate
    cookie-authed GET: the server talks to `hub.docker.com` over HTTPS and
    returns names/tags for Images **cards** that fill Pull; it never pulls

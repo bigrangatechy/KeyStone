@@ -224,6 +224,8 @@ async fn connect_session(
     let node_id_owned = node_id.to_string();
     let cancels: Arc<std::sync::Mutex<HashMap<String, AbortHandle>>> =
         Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let stdin_txs: Arc<std::sync::Mutex<HashMap<String, mpsc::Sender<StreamChunk>>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
     let pushing = Arc::new(AtomicBool::new(false));
 
     let mut interval = tokio::time::interval(Duration::from_secs(cfg.interval_secs.max(1)));
@@ -263,6 +265,10 @@ async fn connect_session(
                     Ok(Some(ServerToAgent { body: Some(server_to_agent::Body::Command(cmd)) })) => {
                         if cmd.op == "cancel" {
                             let target = cancel_target(&cmd.payload_json);
+                            stdin_txs
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .remove(&target);
                             if let Some(handle) = cancels
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
@@ -321,6 +327,7 @@ async fn connect_session(
                                 runtime.clone(),
                                 tx.clone(),
                                 cancels.clone(),
+                                stdin_txs.clone(),
                                 cmd.request_id,
                                 cmd.op,
                                 cmd.payload_json,
@@ -334,6 +341,15 @@ async fn connect_session(
                             cmd.op,
                             cmd.payload_json,
                         );
+                    }
+                    Ok(Some(ServerToAgent { body: Some(server_to_agent::Body::Chunk(chunk)) })) => {
+                        if let Some(tx) = stdin_txs
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .get(&chunk.request_id)
+                        {
+                            let _ = tx.try_send(chunk);
+                        }
                     }
                     Ok(Some(other)) => {
                         warn!("ignored server message: {:?}", other.body);
@@ -464,14 +480,29 @@ fn spawn_streaming_command(
     runtime: Arc<AgentRuntimeState>,
     tx: mpsc::Sender<AgentToServer>,
     cancels: Arc<std::sync::Mutex<HashMap<String, AbortHandle>>>,
+    stdin_txs: Arc<std::sync::Mutex<HashMap<String, mpsc::Sender<StreamChunk>>>>,
     request_id: String,
     op: String,
     payload_json: String,
 ) {
     let rid = request_id.clone();
+    let (stdin_tx, stdin_rx) = mpsc::channel(64);
+    stdin_txs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(rid.clone(), stdin_tx);
     let cancels_done = cancels.clone();
+    let stdin_done = stdin_txs.clone();
     let handle = tokio::spawn(async move {
-        let result = run_streaming(&runtime, &op, &payload_json, tx.clone(), &request_id).await;
+        let result = run_streaming(
+            &runtime,
+            &op,
+            &payload_json,
+            tx.clone(),
+            &request_id,
+            stdin_rx,
+        )
+        .await;
         let body = match result {
             Ok(payload) => CommandResult {
                 request_id: request_id.clone(),
@@ -490,6 +521,10 @@ fn spawn_streaming_command(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&request_id);
+        stdin_done
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&request_id);
     });
     cancels
         .lock()
@@ -503,12 +538,17 @@ async fn run_streaming(
     payload_json: &str,
     tx: mpsc::Sender<AgentToServer>,
     request_id: &str,
+    mut stdin_rx: mpsc::Receiver<StreamChunk>,
 ) -> anyhow::Result<serde_json::Value> {
     let payload = if payload_json.is_empty() {
         serde_json::json!({})
     } else {
         serde_json::from_str(payload_json).context("payload json")?
     };
+    // Logs and apt follow have no stdin. Drain so a later exec slice can
+    // send bytes without filling the ingest queue. Interactive exec is
+    // not wired here yet.
+    let drain_stdin = tokio::spawn(async move { while stdin_rx.recv().await.is_some() {} });
     let (chunk_tx, mut chunk_rx) = mpsc::channel::<Vec<u8>>(128);
     let tx_chunks = tx.clone();
     let rid = request_id.to_string();
@@ -520,6 +560,7 @@ async fn run_streaming(
                         request_id: rid.clone(),
                         data,
                         eof: false,
+                        ..Default::default()
                     })),
                 })
                 .await
@@ -543,12 +584,14 @@ async fn run_streaming(
         docker.execute_streaming(docker_op, payload, chunk_tx).await
     };
     let _ = forward.await;
+    drain_stdin.abort();
     let _ = tx
         .send(AgentToServer {
             body: Some(agent_to_server::Body::Chunk(StreamChunk {
                 request_id: request_id.to_string(),
                 data: Vec::new(),
                 eof: true,
+                ..Default::default()
             })),
         })
         .await;
@@ -1008,6 +1051,14 @@ mod tests {
         assert!(
             !loop_src.contains("Ok(Some(_)) | Ok(None) => break"),
             "an empty ServerToAgent must not tear down the ingest session"
+        );
+        assert!(
+            loop_src.contains("Body::Chunk") && src.contains("stdin_txs"),
+            "server stdin chunks must route to an in-flight stream, not be ignored"
+        );
+        assert!(
+            src.contains("drain_stdin") || src.contains("while stdin_rx.recv()"),
+            "current log streams must drain stdin until exec is wired"
         );
     }
 
