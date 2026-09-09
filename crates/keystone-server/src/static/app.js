@@ -1029,61 +1029,253 @@
 
   const volumes = document.getElementById("volumes");
   if (volumes && !dockerBlocked(volumes)) {
+    // Volume glance cards then summarized inspect — not Labels.
     const data = parse(volumes);
     const node = volumes.getAttribute("data-node");
-    const table = document.createElement("table");
-    table.appendChild(thead(["Name", "Driver", "Mountpoint", ""]));
-    const body = document.createElement("tbody");
+    const board = el("div", "volume-board");
+    const grid = el("div", "volume-grid");
+    const detail = el("div", "volume-detail");
+    detail.hidden = true;
+    let selectedName = "";
+
+    function kvRow(label, value) {
+      if (value == null || value === "") return null;
+      const row = el("p", "detail-kv");
+      row.appendChild(el("span", "muted", label));
+      row.appendChild(document.createTextNode(" " + value));
+      return row;
+    }
+
+    function applyVolumeInspect(host, info) {
+      host.replaceChildren();
+      if (!info || typeof info !== "object") {
+        host.appendChild(el("p", "muted", "Could not inspect this volume."));
+        return;
+      }
+      if (info.error) {
+        host.appendChild(el("p", "error", String(info.error)));
+      }
+      [
+        kvRow("Mountpoint", info.mountpoint || ""),
+        kvRow("Created", info.created || ""),
+        kvRow("Scope", info.scope || ""),
+        kvRow("Size", info.size == null ? "" : (formatBytes(info.size) || "")),
+        kvRow("In use", info.ref_count == null ? "" : String(info.ref_count))
+      ].forEach((n) => { if (n) host.appendChild(n); });
+    }
+
+    async function loadVolumeInspect(name, host) {
+      try {
+        const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/volumes/" + encodeURIComponent(name));
+        const body = await r.json().catch(() => ({}));
+        if (selectedName !== name) return;
+        if (!r.ok) {
+          host.replaceChildren(el("p", "muted", body.error || "Could not inspect this volume."));
+          return;
+        }
+        applyVolumeInspect(host, body);
+      } catch (e) {
+        if (selectedName !== name) return;
+        host.replaceChildren(el("p", "muted", "Could not inspect this volume."));
+      }
+    }
+
+    function showVolumeDetail(v) {
+      const name = v.name || "";
+      detail.hidden = false;
+      board.classList.add("has-detail");
+      detail.replaceChildren();
+      detail.appendChild(el("h3", null, name || "Volume"));
+      const driverRow = kvRow("Driver", v.driver || "");
+      if (driverRow) detail.appendChild(driverRow);
+      const inspectHost = el("div", "inspect-extra");
+      inspectHost.appendChild(el("p", "muted", "Loading details…"));
+      detail.appendChild(inspectHost);
+      const acts = el("div", "actions");
+      if (manageOn(volumes) && name) {
+        acts.appendChild(actionForm(node, "volume_remove", { name: name }));
+      }
+      detail.appendChild(acts);
+      return inspectHost;
+    }
+
+    function selectVolume(v) {
+      const name = v.name || "";
+      if (!name) return;
+      if (selectedName === name) {
+        selectedName = "";
+        detail.hidden = true;
+        board.classList.remove("has-detail");
+        grid.querySelectorAll(".volume-card").forEach((card) => card.classList.remove("is-open"));
+        return;
+      }
+      selectedName = name;
+      grid.querySelectorAll(".volume-card").forEach((card) => {
+        card.classList.toggle("is-open", card.getAttribute("data-name") === name);
+      });
+      const extra = showVolumeDetail(v);
+      loadVolumeInspect(name, extra);
+    }
+
     const list = Array.isArray(data) ? data : ((data && data.volumes) || []);
     if (!list.length) {
-      body.appendChild(emptyRow(4, "No volumes."));
+      board.appendChild(el("p", "muted", "No volumes."));
     } else {
       list.forEach((v) => {
-        const tr = document.createElement("tr");
         const name = v.name || "";
-        tr.appendChild(tdText(name));
-        tr.appendChild(tdText(v.driver || ""));
-        tr.appendChild(tdCode(v.mountpoint || ""));
-        const acts = [];
-        if (manageOn(volumes)) {
-          acts.push(actionForm(node, "volume_remove", { name: name }));
-        }
-        tr.appendChild(actionsCell(acts));
-        body.appendChild(tr);
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "volume-card";
+        if (name) card.setAttribute("data-name", name);
+        card.appendChild(el("h3", null, name || "<none>"));
+        card.appendChild(el("span", "muted", v.mountpoint || ""));
+        const metrics = el("div", "container-metrics");
+        metrics.appendChild(el("span", null, v.driver || "—"));
+        card.appendChild(metrics);
+        card.addEventListener("click", () => selectVolume(v));
+        grid.appendChild(card);
       });
+      board.appendChild(grid);
+      board.appendChild(detail);
     }
-    table.appendChild(body);
-    volumes.replaceChildren(table);
+    volumes.replaceChildren(board);
   }
 
   const networks = document.getElementById("networks");
   if (networks && !dockerBlocked(networks)) {
+    // Network glance cards then summarized inspect — not Labels.
     const data = parse(networks);
     const node = networks.getAttribute("data-node");
-    const table = document.createElement("table");
-    table.appendChild(thead(["Name", "ID", "Driver", "Scope", ""]));
-    const body = document.createElement("tbody");
-    const rows = Array.isArray(data) ? data : [];
-    if (!rows.length) {
-      body.appendChild(emptyRow(5, "No networks."));
-    } else {
-      rows.forEach((n) => {
-        const tr = document.createElement("tr");
-        const id = n.id || "";
-        tr.appendChild(tdText(n.name || ""));
-        tr.appendChild(tdCode(n.id_short || id.slice(0, 12)));
-        tr.appendChild(tdText(n.driver || ""));
-        tr.appendChild(tdText(n.scope || ""));
-        const acts = [];
-        if (manageOn(networks)) {
-          acts.push(actionForm(node, "network_remove", { id: id }));
-        }
-        tr.appendChild(actionsCell(acts));
-        body.appendChild(tr);
+    const board = el("div", "network-board");
+    const grid = el("div", "network-grid");
+    const detail = el("div", "network-detail");
+    detail.hidden = true;
+    let selectedId = "";
+
+    function kvRow(label, value) {
+      if (value == null || value === "") return null;
+      const row = el("p", "detail-kv");
+      row.appendChild(el("span", "muted", label));
+      row.appendChild(document.createTextNode(" " + value));
+      return row;
+    }
+
+    function applyNetworkInspect(host, info) {
+      host.replaceChildren();
+      if (!info || typeof info !== "object") {
+        host.appendChild(el("p", "muted", "Could not inspect this network."));
+        return;
+      }
+      if (info.error) {
+        host.appendChild(el("p", "error", String(info.error)));
+      }
+      [
+        kvRow("Created", info.created || ""),
+        kvRow("Internal", info.internal ? "yes" : ""),
+        kvRow("Attachable", info.attachable ? "yes" : ""),
+        kvRow("Ingress", info.ingress ? "yes" : ""),
+        kvRow("IPv6", info.ipv6 ? "yes" : "")
+      ].forEach((n) => { if (n) host.appendChild(n); });
+      const subnets = Array.isArray(info.subnets) ? info.subnets : [];
+      subnets.forEach((s) => {
+        const bits = [];
+        if (s && s.subnet) bits.push(s.subnet);
+        if (s && s.gateway) bits.push("via " + s.gateway);
+        const row = kvRow("Subnet", bits.join(" "));
+        if (row) host.appendChild(row);
+      });
+      const attached = Array.isArray(info.containers) ? info.containers : [];
+      attached.forEach((c) => {
+        const bits = [];
+        if (c && c.name) bits.push(c.name);
+        if (c && c.ipv4) bits.push(c.ipv4);
+        if (c && c.ipv6) bits.push(c.ipv6);
+        const row = kvRow("Container", bits.join(" · "));
+        if (row) host.appendChild(row);
       });
     }
-    table.appendChild(body);
-    networks.replaceChildren(table);
+
+    async function loadNetworkInspect(id, host) {
+      try {
+        const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/networks/" + encodeURIComponent(id));
+        const body = await r.json().catch(() => ({}));
+        if (selectedId !== id) return;
+        if (!r.ok) {
+          host.replaceChildren(el("p", "muted", body.error || "Could not inspect this network."));
+          return;
+        }
+        applyNetworkInspect(host, body);
+      } catch (e) {
+        if (selectedId !== id) return;
+        host.replaceChildren(el("p", "muted", "Could not inspect this network."));
+      }
+    }
+
+    function showNetworkDetail(n) {
+      const name = n.name || "";
+      const id = n.id || "";
+      detail.hidden = false;
+      board.classList.add("has-detail");
+      detail.replaceChildren();
+      detail.appendChild(el("h3", null, name || "Network"));
+      const idRow = kvRow("Id", n.id_short || id);
+      if (idRow) detail.appendChild(idRow);
+      const driverRow = kvRow("Driver", n.driver || "");
+      if (driverRow) detail.appendChild(driverRow);
+      const scopeRow = kvRow("Scope", n.scope || "");
+      if (scopeRow) detail.appendChild(scopeRow);
+      const inspectHost = el("div", "inspect-extra");
+      inspectHost.appendChild(el("p", "muted", "Loading details…"));
+      detail.appendChild(inspectHost);
+      const acts = el("div", "actions");
+      if (manageOn(networks) && id) {
+        acts.appendChild(actionForm(node, "network_remove", { id: id }));
+      }
+      detail.appendChild(acts);
+      return inspectHost;
+    }
+
+    function selectNetwork(n) {
+      const id = n.id || "";
+      if (!id) return;
+      if (selectedId === id) {
+        selectedId = "";
+        detail.hidden = true;
+        board.classList.remove("has-detail");
+        grid.querySelectorAll(".network-card").forEach((card) => card.classList.remove("is-open"));
+        return;
+      }
+      selectedId = id;
+      grid.querySelectorAll(".network-card").forEach((card) => {
+        card.classList.toggle("is-open", card.getAttribute("data-id") === id);
+      });
+      const extra = showNetworkDetail(n);
+      loadNetworkInspect(id, extra);
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      board.appendChild(el("p", "muted", "No networks."));
+    } else {
+      rows.forEach((n) => {
+        const id = n.id || "";
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "network-card";
+        if (id) card.setAttribute("data-id", id);
+        card.appendChild(el("h3", null, n.name || "<none>"));
+        card.appendChild(el("span", "muted", n.id_short || id.slice(0, 12) || ""));
+        const metrics = el("div", "container-metrics");
+        const bits = [n.driver, n.scope].filter(Boolean);
+        metrics.appendChild(el("span", null, bits.join(" · ") || "—"));
+        card.appendChild(metrics);
+        card.addEventListener("click", () => selectNetwork(n));
+        grid.appendChild(card);
+      });
+      board.appendChild(grid);
+      board.appendChild(detail);
+    }
+    networks.replaceChildren(board);
   }
 
   const system = document.getElementById("system");

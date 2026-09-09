@@ -1048,6 +1048,10 @@ mod tests {
             !is_page_list_op("system_df"),
             "Engine df must not steal the node page 8s list budget"
         );
+        assert!(
+            !is_page_list_op("volume_inspect") && !is_page_list_op("network_inspect"),
+            "volume/network inspect must load after click, not on the 8s page list"
+        );
         let src = include_str!("session.rs");
         assert!(
             src.contains("list_inflight"),

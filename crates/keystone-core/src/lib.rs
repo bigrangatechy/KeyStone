@@ -34,7 +34,8 @@ pub use config::{
 };
 pub use docker::{
     container_usage_by_id, docker_ref_ok, merge_container_usage, summarize_container_inspect,
-    summarize_image_inspect, summarize_system_df, ContainerUsage, DockerOp,
+    summarize_image_inspect, summarize_network_inspect, summarize_system_df,
+    summarize_volume_inspect, ContainerUsage, DockerOp,
 };
 pub use dockerhub::{parse_search, parse_tags, pull_ref, search_url, tags_url, HubRepo, HubTag};
 pub use fleet::{fleet_chips, FleetChip};

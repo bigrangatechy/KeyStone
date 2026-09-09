@@ -73,6 +73,9 @@ not advertise mDNS.
    shop. Clicking a local image loads summarized `image_inspect` and drops `Env`.
    Images then load summarized `system_df` (counts/sizes, no layer ids) and can
    prune unused build cache (`build_cache_prune`, confirm-only).
+   Clicking a volume loads summarized `volume_inspect` and drops Labels.
+   Clicking a network loads summarized `network_inspect` (name plus addresses
+   for attached containers) and drops Labels.
    A CasaOS-style app shop is not this path.
    Host System POSTs are the same gRPC path with `SysOp`; the agent talks
    to `/run/keystone/sys.sock` only if `keystone-sys.socket` is enabled.

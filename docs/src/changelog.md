@@ -8,6 +8,12 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 00:09:40 10/09/2026 AEST
+
+Show Volumes and Networks as glance cards. Click loads summarized inspect
+(no Labels). Create and prune unused stay on the toolbar; Remove is on the
+card.
+
 ## 23:00:52 09/09/2026 AEST
 
 Show Engine disk use on Images and prune unused build cache. Tests hide

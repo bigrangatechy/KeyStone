@@ -548,8 +548,8 @@ fn decode_std_base64(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Hex / name token the UI may put in a container or image inspect URL.
-/// `sha256:…` is ok; `ghcr.io/org/app:tag` is not (`/` would be a path segment).
+/// Hex / name token the UI may put in a container, image, volume, or network
+/// inspect URL. `sha256:…` is ok; a Hub tag with `/` is not (path segment).
 pub fn docker_ref_ok(id: &str) -> bool {
     let t = id.trim();
     !t.is_empty()
@@ -750,6 +750,132 @@ pub fn summarize_image_inspect(raw: &serde_json::Value) -> serde_json::Value {
     let ports = json_port_list(&config);
     if !ports.is_empty() {
         out.insert("exposed_ports".into(), serde_json::json!(ports));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// Map Engine volume inspect JSON to what the Volumes detail pane may show.
+/// Drops Labels, Options, and driver Status.
+pub fn summarize_volume_inspect(raw: &serde_json::Value) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    if let Some(name) = json_str(raw, &["Name", "name"]) {
+        out.insert("name".into(), serde_json::json!(name));
+    }
+    if let Some(driver) = json_str(raw, &["Driver", "driver"]) {
+        out.insert("driver".into(), serde_json::json!(driver));
+    }
+    if let Some(mp) = json_str(raw, &["Mountpoint", "mountpoint"]) {
+        out.insert("mountpoint".into(), serde_json::json!(mp));
+    }
+    if let Some(created) = json_str(raw, &["CreatedAt", "created_at", "Created", "created"]) {
+        out.insert("created".into(), serde_json::json!(created));
+    }
+    if let Some(scope) = json_str(raw, &["Scope", "scope"]) {
+        out.insert("scope".into(), serde_json::json!(scope));
+    }
+    let usage = json_field(raw, &["UsageData", "usage_data"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if let Some(sz) = json_field(&usage, &["Size", "size"]).and_then(value_i64) {
+        if sz >= 0 {
+            out.insert("size".into(), serde_json::json!(sz));
+        }
+    }
+    if let Some(n) = json_field(&usage, &["RefCount", "ref_count"]).and_then(value_i64) {
+        out.insert("ref_count".into(), serde_json::json!(n.max(0)));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// Map Engine network inspect JSON to what the Networks detail pane may show.
+/// Drops Labels and Options. Attached containers are name plus addresses only.
+pub fn summarize_network_inspect(raw: &serde_json::Value) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    if let Some(name) = json_str(raw, &["Name", "name"]) {
+        out.insert("name".into(), serde_json::json!(name));
+    }
+    if let Some(id) = json_str(raw, &["Id", "id"]) {
+        out.insert("id".into(), serde_json::json!(id));
+    }
+    if let Some(driver) = json_str(raw, &["Driver", "driver"]) {
+        out.insert("driver".into(), serde_json::json!(driver));
+    }
+    if let Some(scope) = json_str(raw, &["Scope", "scope"]) {
+        out.insert("scope".into(), serde_json::json!(scope));
+    }
+    if let Some(created) = json_str(raw, &["Created", "created"]) {
+        out.insert("created".into(), serde_json::json!(created));
+    }
+    if json_bool(raw, &["Internal", "internal"]).unwrap_or(false) {
+        out.insert("internal".into(), serde_json::json!(true));
+    }
+    if json_bool(raw, &["Attachable", "attachable"]).unwrap_or(false) {
+        out.insert("attachable".into(), serde_json::json!(true));
+    }
+    if json_bool(raw, &["Ingress", "ingress"]).unwrap_or(false) {
+        out.insert("ingress".into(), serde_json::json!(true));
+    }
+    if json_bool(raw, &["EnableIPv6", "enable_ipv6"]).unwrap_or(false) {
+        out.insert("ipv6".into(), serde_json::json!(true));
+    }
+    let ipam = json_field(raw, &["IPAM", "ipam"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let subnets = json_field(&ipam, &["Config", "config"])
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|cfg| {
+                    let subnet = json_str(cfg, &["Subnet", "subnet"]).unwrap_or_default();
+                    let gateway = json_str(cfg, &["Gateway", "gateway"]).unwrap_or_default();
+                    if subnet.is_empty() && gateway.is_empty() {
+                        return None;
+                    }
+                    let mut row = serde_json::Map::new();
+                    if !subnet.is_empty() {
+                        row.insert("subnet".into(), serde_json::json!(subnet));
+                    }
+                    if !gateway.is_empty() {
+                        row.insert("gateway".into(), serde_json::json!(gateway));
+                    }
+                    Some(serde_json::Value::Object(row))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !subnets.is_empty() {
+        out.insert("subnets".into(), serde_json::json!(subnets));
+    }
+    let mut containers = Vec::new();
+    if let Some(map) = json_field(raw, &["Containers", "containers"]).and_then(|c| c.as_object()) {
+        for c in map.values() {
+            let name = json_str(c, &["Name", "name"]).unwrap_or_default();
+            let ipv4 = json_str(c, &["IPv4Address", "ipv4_address"]).unwrap_or_default();
+            let ipv6 = json_str(c, &["IPv6Address", "ipv6_address"]).unwrap_or_default();
+            if name.is_empty() && ipv4.is_empty() && ipv6.is_empty() {
+                continue;
+            }
+            let mut row = serde_json::Map::new();
+            if !name.is_empty() {
+                row.insert("name".into(), serde_json::json!(name));
+            }
+            if !ipv4.is_empty() {
+                row.insert("ipv4".into(), serde_json::json!(ipv4));
+            }
+            if !ipv6.is_empty() {
+                row.insert("ipv6".into(), serde_json::json!(ipv6));
+            }
+            containers.push(serde_json::Value::Object(row));
+        }
+        containers.sort_by(|a, b| {
+            a.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .cmp(b.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+        });
+    }
+    if !containers.is_empty() {
+        out.insert("containers".into(), serde_json::json!(containers));
     }
     serde_json::Value::Object(out)
 }
@@ -1045,6 +1171,92 @@ mod tests {
         assert_eq!(out["size"], 42100000);
         assert_eq!(out["exposed_ports"][0], "443/tcp");
         assert_eq!(out["exposed_ports"][1], "80/tcp");
+    }
+
+    #[test]
+    fn summarize_volume_inspect_drops_labels_and_options() {
+        let raw = serde_json::json!({
+            "Name": "gitlab-data",
+            "Driver": "local",
+            "Mountpoint": "/var/lib/docker/volumes/gitlab-data/_data",
+            "CreatedAt": "2026-01-01T00:00:00Z",
+            "Scope": "local",
+            "Labels": { "password": "hunter2" },
+            "Options": { "device": "secret-device" },
+            "Status": { "Mounted": { } },
+            "UsageData": { "Size": 80, "RefCount": 2 }
+        });
+        let out = summarize_volume_inspect(&raw);
+        let dumped = out.to_string();
+        assert!(
+            !dumped.contains("hunter2")
+                && !dumped.contains("secret-device")
+                && !dumped.contains("Labels")
+                && !dumped.contains("Options")
+                && !dumped.contains("Status"),
+            "volume labels and options must not reach the UI JSON: {dumped}"
+        );
+        assert_eq!(out["name"], "gitlab-data");
+        assert_eq!(out["driver"], "local");
+        assert_eq!(
+            out["mountpoint"],
+            "/var/lib/docker/volumes/gitlab-data/_data"
+        );
+        assert_eq!(out["scope"], "local");
+        assert_eq!(out["size"], 80);
+        assert_eq!(out["ref_count"], 2);
+    }
+
+    #[test]
+    fn summarize_network_inspect_drops_labels_and_options() {
+        let raw = serde_json::json!({
+            "Name": "bridge",
+            "Id": "abc123deadbeef",
+            "Driver": "bridge",
+            "Scope": "local",
+            "Internal": true,
+            "Attachable": true,
+            "Ingress": true,
+            "EnableIPv6": true,
+            "Labels": { "password": "hunter2" },
+            "Options": { "com.docker.network.bridge.name": "docker0" },
+            "IPAM": {
+                "Driver": "default",
+                "Options": { "secret": "hunter2" },
+                "Config": [{ "Subnet": "172.17.0.0/16", "Gateway": "172.17.0.1" }]
+            },
+            "Containers": {
+                "deadbeef": {
+                    "Name": "gitlab",
+                    "IPv4Address": "172.17.0.2/16",
+                    "IPv6Address": "fd00::2/64",
+                    "EndpointID": "endpointsecret",
+                    "MacAddress": "02:42:ac:11:00:02"
+                }
+            }
+        });
+        let out = summarize_network_inspect(&raw);
+        let dumped = out.to_string();
+        assert!(
+            !dumped.contains("hunter2")
+                && !dumped.contains("docker0")
+                && !dumped.contains("endpointsecret")
+                && !dumped.contains("02:42:ac")
+                && !dumped.contains("Labels")
+                && !dumped.contains("Options"),
+            "network labels, options, and endpoint ids must not reach the UI JSON: {dumped}"
+        );
+        assert_eq!(out["name"], "bridge");
+        assert_eq!(out["driver"], "bridge");
+        assert_eq!(out["internal"], true);
+        assert_eq!(out["attachable"], true);
+        assert_eq!(out["ingress"], true);
+        assert_eq!(out["ipv6"], true);
+        assert_eq!(out["subnets"][0]["subnet"], "172.17.0.0/16");
+        assert_eq!(out["subnets"][0]["gateway"], "172.17.0.1");
+        assert_eq!(out["containers"][0]["name"], "gitlab");
+        assert_eq!(out["containers"][0]["ipv4"], "172.17.0.2/16");
+        assert_eq!(out["containers"][0]["ipv6"], "fd00::2/64");
     }
 
     #[test]

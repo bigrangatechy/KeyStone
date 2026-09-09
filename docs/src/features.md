@@ -21,8 +21,8 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
 - **Docker** — Containers and Compose as cards; local Images as cards (inspect
   drops `Env`); Hub search cards that fill Pull; Hub/GHCR login on that node;
   Engine disk use (images, containers, volumes, build cache) and prune unused
-  build cache; Volumes and Networks as tables; live logs. Manage is opt-in.
-  Exec is not in the UI. See [Docker](docker.md).
+  build cache; Volumes and Networks as cards (inspect drops Labels); live logs.
+  Manage is opt-in. Exec is not in the UI. See [Docker](docker.md).
 - **System** — Ubuntu / Debian / Raspberry Pi OS when the root helper is on
   (`keystone-sys.socket` plus Settings). Health vs actions: apt, autoremove,
   leftover/failed unit restart, journals, NTP, unattended-upgrades glance,
@@ -41,7 +41,6 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
 
 One slice at a time. Not mixed into the current tree:
 
-- Volumes and Networks glance cards (tables stay until that slice).
 - `unattended-upgrades.service` on the journal allowlist (still five units).
 - Timezone from a dropdown; unattended-upgrades enable/disable; Fedora `dnf`.
 - Interactive `docker exec` after a streaming protocol exists. The Settings

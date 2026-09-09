@@ -19,7 +19,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
 use keystone_core::docker::{
     audit_docker_target, docker_ref_ok, summarize_container_inspect, summarize_image_inspect,
-    summarize_system_df, DockerOp,
+    summarize_network_inspect, summarize_system_df, summarize_volume_inspect, DockerOp,
 };
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
@@ -170,6 +170,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/nodes/{id}/images/{iid}", get(image_inspect_api))
         .route("/api/v1/nodes/{id}/system-df", get(system_df_api))
+        .route(
+            "/api/v1/nodes/{id}/volumes/{vname}",
+            get(volume_inspect_api),
+        )
+        .route(
+            "/api/v1/nodes/{id}/networks/{nid}",
+            get(network_inspect_api),
+        )
         .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
@@ -2092,6 +2100,58 @@ async fn system_df_api(State(state): State<AppState>, Path(id): Path<String>) ->
     }
 }
 
+async fn volume_inspect_api(
+    State(state): State<AppState>,
+    Path((id, vname)): Path<(String, String)>,
+) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    // Inspect by volume name. A name with `/` is 400, not a missing volume.
+    if !docker_ref_ok(&vname) {
+        return (StatusCode::BAD_REQUEST, "unknown volume").into_response();
+    }
+    let payload = serde_json::json!({ "name": vname }).to_string();
+    match call_json_op(&state, &id, DockerOp::VolumeInspect.as_str(), &payload).await {
+        Ok(body) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            Json(summarize_volume_inspect(&raw)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn network_inspect_api(
+    State(state): State<AppState>,
+    Path((id, nid)): Path<(String, String)>,
+) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    // Inspect by `n.id`. A name with `/` is 400, not a missing network.
+    if !docker_ref_ok(&nid) {
+        return (StatusCode::BAD_REQUEST, "unknown network").into_response();
+    }
+    let payload = serde_json::json!({ "id": nid }).to_string();
+    match call_json_op(&state, &id, DockerOp::NetworkInspect.as_str(), &payload).await {
+        Ok(body) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            Json(summarize_network_inspect(&raw)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn call_json_op(
     state: &AppState,
     node_id: &str,
@@ -3907,6 +3967,42 @@ mod tests {
     }
 
     #[test]
+    fn volumes_ui_is_cards_then_inspect() {
+        let js = include_str!("static/app.js");
+        let css = include_str!("static/app.css");
+        assert!(
+            js.contains("volume-card")
+                && js.contains("volume-detail")
+                && js.contains("/volumes/")
+                && js.contains("Mountpoint"),
+            "Volumes tab must be glance cards that load summarized inspect"
+        );
+        assert!(
+            js.contains("volume_remove") && js.contains("not Labels"),
+            "Volumes detail must keep Remove and must not paint Labels"
+        );
+        assert!(css.contains(".volume-card") && css.contains(".volume-grid"));
+    }
+
+    #[test]
+    fn networks_ui_is_cards_then_inspect() {
+        let js = include_str!("static/app.js");
+        let css = include_str!("static/app.css");
+        assert!(
+            js.contains("network-card")
+                && js.contains("network-detail")
+                && js.contains("/networks/")
+                && js.contains("Subnet"),
+            "Networks tab must be glance cards that load summarized inspect"
+        );
+        assert!(
+            js.contains("network_remove") && js.contains("not Labels"),
+            "Networks detail must keep Remove and must not paint Labels"
+        );
+        assert!(css.contains(".network-card") && css.contains(".network-grid"));
+    }
+
+    #[test]
     fn dockerhub_api_is_behind_the_session_cookie() {
         let src = include_str!("http.rs");
         let head = src.split("#[cfg(test)]").next().expect("router source");
@@ -3951,6 +4047,20 @@ mod tests {
         assert!(
             system_df < authed_end,
             "system df must require a UI session"
+        );
+        let volume_inspect = head
+            .find("/api/v1/nodes/{id}/volumes/{vname}")
+            .expect("volume inspect API");
+        assert!(
+            volume_inspect < authed_end,
+            "volume inspect must require a UI session"
+        );
+        let network_inspect = head
+            .find("/api/v1/nodes/{id}/networks/{nid}")
+            .expect("network inspect API");
+        assert!(
+            network_inspect < authed_end,
+            "network inspect must require a UI session"
         );
         let docker_post = head
             .find("/nodes/{id}/docker/{op}")
@@ -4570,6 +4680,14 @@ mod tests {
             inspect.contains("summarize_system_df") && inspect.contains("SystemDf"),
             "system df API must summarize Engine JSON and stay off the page bundle"
         );
+        assert!(
+            inspect.contains("summarize_volume_inspect") && inspect.contains("unknown volume"),
+            "volume inspect API must strip Engine JSON and reject junk ids"
+        );
+        assert!(
+            inspect.contains("summarize_network_inspect") && inspect.contains("unknown network"),
+            "network inspect API must strip Engine JSON and reject junk ids"
+        );
         let css = include_str!("static/app.css");
         assert!(
             css.contains("select"),
@@ -4614,8 +4732,10 @@ mod tests {
             "container_list must not share docker.sock with images/volumes on page load"
         );
         assert!(
-            !fn_src.contains("SystemDf"),
-            "system_df must load after paint, not on the 8s page bundle"
+            !fn_src.contains("SystemDf")
+                && !fn_src.contains("VolumeInspect")
+                && !fn_src.contains("NetworkInspect"),
+            "system_df and volume/network inspect must load after paint, not on the 8s page bundle"
         );
     }
 

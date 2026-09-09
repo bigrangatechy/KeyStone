@@ -770,8 +770,8 @@ fn operator_docs_cover_compose_cards() {
         "operator Docker doc must describe Compose glance cards, not a shop"
     );
     assert!(
-        using.contains("Compose are cards") && using.contains("Volumes and Networks are tables"),
-        "using.md must mention Compose cards and keep Volumes/Networks as tables"
+        using.contains("Compose are cards") && using.contains("Volumes and Networks are cards"),
+        "using.md must mention Compose cards and Volumes/Networks as cards"
     );
     assert!(
         dev.contains("glance cards") && dev.contains("No extra inspect"),
@@ -811,6 +811,44 @@ fn operator_docs_cover_image_inspect() {
     assert!(
         arch.contains("image_inspect") && arch.contains("Env"),
         "architecture.md must say image inspect drops Env"
+    );
+}
+
+#[test]
+fn operator_docs_cover_volume_network_inspect() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        docker.contains("one card per volume")
+            && docker.contains("one card per network")
+            && docker.contains("Labels"),
+        "operator Docker doc must describe volume/network cards and that Labels are not shown"
+    );
+    assert!(
+        using.contains("Volumes and Networks are cards") && using.contains("Labels"),
+        "using.md must mention volume/network cards without Labels"
+    );
+    assert!(
+        http.contains("/api/v1/nodes/{id}/volumes/{vname}")
+            && http.contains("volume_inspect")
+            && http.contains("/api/v1/nodes/{id}/networks/{nid}")
+            && http.contains("network_inspect"),
+        "HTTP API must list summarized volume and network inspect"
+    );
+    assert!(
+        dev.contains("`volume_inspect`")
+            && dev.contains("`network_inspect`")
+            && dev.contains("drops Labels"),
+        "developer docker.md must say volume/network inspect is summarized without Labels"
+    );
+    assert!(
+        arch.contains("volume_inspect")
+            && arch.contains("network_inspect")
+            && arch.contains("Labels"),
+        "architecture.md must say volume/network inspect drops Labels"
     );
 }
 

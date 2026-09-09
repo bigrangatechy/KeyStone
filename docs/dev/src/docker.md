@@ -100,7 +100,13 @@ List payloads the UI expects:
   `GET /api/v1/nodes/{id}/images/{iid}`. That summary drops `Env`.
   Inspect uses the image id, not a tag with `/`.)
 - volumes: `[{name, driver, mountpoint}]`
+  (cards; click loads summarized `volume_inspect` via
+  `GET /api/v1/nodes/{id}/volumes/{name}`. That summary drops Labels and Options.
+  Inspect uses the volume name; a name with `/` is 400.)
 - networks: `[{id, id_short, name, driver, scope}]`
+  (cards; click loads summarized `network_inspect` via
+  `GET /api/v1/nodes/{id}/networks/{nid}`. That summary drops Labels and Options.
+  Attached containers are name plus IPv4/IPv6. Inspect uses the network id.)
 
 ## Operations
 
@@ -137,12 +143,12 @@ List payloads the UI expects:
 | `system_df` | no | `docker_view` | Engine disk use. Agent summarizes to counts/sizes (no image ids). Loaded after the Images tab paints; not a node-page list RPC. Tests use fixtures, not a live Engine df. |
 | `build_cache_prune` | yes | `docker_manage` | `docker builder prune -a -f` on the agent (bollard 0.18 has df but not `/build/prune`). Confirm-only. Tests must not invoke it. |
 | `volume_list` | no | `docker_view` | List volumes |
-| `volume_inspect` | no | `docker_view` | Inspect a volume |
+| `volume_inspect` | no | `docker_view` | Inspect a volume; HTTP drops Labels |
 | `volume_create` | yes | `docker_manage` | Create a volume |
 | `volume_remove` | yes | `docker_manage` | Remove a volume |
 | `volume_prune` | yes | `docker_manage` | Prune unused volumes |
 | `network_list` | no | `docker_view` | List networks |
-| `network_inspect` | no | `docker_view` | Inspect a network |
+| `network_inspect` | no | `docker_view` | Inspect a network; HTTP drops Labels |
 | `network_create` | yes | `docker_manage` | Create a network |
 | `network_remove` | yes | `docker_manage` | Remove a network |
 | `network_prune` | yes | `docker_manage` | Prune unused networks |

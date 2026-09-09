@@ -44,8 +44,8 @@ add `keystone` to `docker` and restart the agent.
 
 ## What the tabs do
 
-With Observe on and a live session, Volumes / Networks are tables (not a
-JSON dump). **Containers**, **Compose**, and local **Images** are cards.
+With Observe on and a live session, **Containers**, **Compose**, local
+**Images**, **Volumes**, and **Networks** are cards (not a JSON dump).
 Container cards show name, state, CPU, and memory; click for image, ports,
 mounts, networks, and Manage actions. Inspect JSON is summarized and does
 **not** include container `Env`. If the agent is offline or Observe is off,
@@ -83,8 +83,13 @@ pull/create toolbars are hidden when mutations are off.
   shows Engine disk use (images, containers, volumes, build cache) as
   counts and sizes, not layer ids. With Manage: pull by name, search Docker
   Hub as cards that fill that name, prune unused, prune build cache, remove.
-- **Volumes** and **Networks** — list; create/remove and prune unused with
-  Manage.
+- **Volumes** — one card per volume (name, driver, mountpoint). Click opens
+  created, scope, and size. Inspect JSON is summarized and does **not** include
+  Labels. With Manage: create, prune unused, remove (from the card).
+- **Networks** — one card per network (name, driver, scope, short id). Click
+  opens subnets and attached containers. Inspect JSON is summarized and does
+  **not** include Labels. With Manage: create, prune unused, remove (from the
+  card).
 
 Mutations require a **logged-in UI session**. The ingest token used by
 agents cannot call these actions. Every mutation is written to

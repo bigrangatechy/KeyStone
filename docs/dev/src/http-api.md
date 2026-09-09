@@ -84,6 +84,8 @@ is deleted and a new session id is issued.
 | GET | `/api/v1/nodes/{id}/containers/{cid}` | Summarized `container_inspect` (name, image, mounts, networks, compose labels). Drops `Env`. Cookie session. 400 if `{cid}` is not a docker id/name token. |
 | GET | `/api/v1/nodes/{id}/images/{iid}` | Summarized `image_inspect` (created, size, entrypoint, exposed ports). Drops `Env`. Cookie session. 400 if `{iid}` is not a docker id token. |
 | GET | `/api/v1/nodes/{id}/system-df` | Summarized `system_df` (images/containers/volumes/build cache counts, size, reclaimable). No layer ids. Cookie session. |
+| GET | `/api/v1/nodes/{id}/volumes/{vname}` | Summarized `volume_inspect` (driver, mountpoint, size). Drops Labels. Cookie session. 400 if `{vname}` is not a docker name token. |
+| GET | `/api/v1/nodes/{id}/networks/{nid}` | Summarized `network_inspect` (subnets, attached containers). Drops Labels. Cookie session. 400 if `{nid}` is not a docker id token. |
 | GET | `/api/v1/nodes/{id}/dashboard` | `{ source, layout, widgets }` — hydrated for the grid. 404 if unknown node. |
 | PUT | `/api/v1/nodes/{id}/dashboard` | JSON `Dashboard`; `normalize()` then `validate()`; 204. |
 | DELETE | `/api/v1/nodes/{id}/dashboard` | Clear custom layout; 204. |
@@ -96,7 +98,10 @@ Containers tab polls `container-usage` at the same interval while that
 panel is visible. Clicking a container card loads summarized inspect from
 `GET /api/v1/nodes/{id}/containers/{cid}` (no `Env`). Clicking a local
 image card loads summarized inspect from
-`GET /api/v1/nodes/{id}/images/{iid}` (no `Env`). The Images tab also loads
+`GET /api/v1/nodes/{id}/images/{iid}` (no `Env`). Clicking a volume card loads
+summarized inspect from `GET /api/v1/nodes/{id}/volumes/{vname}` (no Labels).
+Clicking a network card loads summarized inspect from
+`GET /api/v1/nodes/{id}/networks/{nid}` (no Labels). The Images tab also loads
 Engine disk use from `GET /api/v1/nodes/{id}/system-df` after paint.
 
 There is no generated OpenAPI dump. Keep this chapter in sync when you add
