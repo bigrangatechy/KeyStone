@@ -37,7 +37,7 @@ ssh mid-upgrade. Autoremove is streamed `apt-get -y autoremove` (not
 `/etc/apt/apt.conf.d/20auto-upgrades` (or `systemctl is-enabled
 unattended-upgrades`) and the periodic stamp mtime. There is no config
 editor. `journal` follows `journalctl -u` for a
-hardcoded unit list (not a textbox). `reboot` is hardcoded
+hardcoded unit list including `unattended-upgrades.service` (not a textbox). `reboot` is hardcoded
 `systemctl reboot` (not poweroff). `unit_restart` is hardcoded
 `systemctl restart -- <unit>` only if that name is on the live leftover
 or failed list from `needrestart` / `systemctl --failed` (not a textbox).

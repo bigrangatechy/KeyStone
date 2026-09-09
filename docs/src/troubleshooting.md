@@ -195,7 +195,8 @@ token does not.
   (`sshd -T` still shows the old PasswordAuthentication), or reload of
   `ssh.service` failed. Not a user editor. Keep keys or a console.
 - Journal page 400: that unit is not on the allowlist (`keystone-agent`,
-  `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`). There is no
+  `keystone-server`, `docker`, `ssh`, `gitlab-runsvdir`,
+  `unattended-upgrades`). There is no
   unit-name textbox.
 - Clock not synchronized: `timedatectl` on the node. The System tab does
   not set the timezone.

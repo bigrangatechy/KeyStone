@@ -1500,7 +1500,8 @@
         "keystone-server.service",
         "docker.service",
         "ssh.service",
-        "gitlab-runsvdir.service"
+        "gitlab-runsvdir.service",
+        "unattended-upgrades.service"
       ].forEach((unit) => {
         const li = document.createElement("li");
         const a = document.createElement("a");

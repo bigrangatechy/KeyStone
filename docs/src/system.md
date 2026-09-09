@@ -43,7 +43,7 @@ points at Settings (the socket unit alone does not turn the tab on). The
 helper listens on `/run/keystone/sys.sock` (`root:keystone` mode `0660`).
 It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
 `apt list --upgradable`, simulated `dist-upgrade`, `needrestart -b`,
-`systemctl --failed`, `timedatectl`, `journalctl -u` for five named
+`systemctl --failed`, `timedatectl`, `journalctl -u` for six named
 units, `systemctl reboot`, `systemctl restart` of a leftover or failed
 listed name, netplan or
 `nmcli`, `sshd -T` / a PasswordAuthentication drop-in and `systemctl reload` of `ssh`, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
@@ -85,8 +85,8 @@ will drop until the server is back.
 
 With the helper on, the tab also shows whether the clock is synchronized
 (`timedatectl`) and follow links for `keystone-agent.service`,
-`keystone-server.service`, `docker.service`, `ssh.service`, and
-`gitlab-runsvdir.service`. Same idea as Compose logs: last 200 lines, live
+`keystone-server.service`, `docker.service`, `ssh.service`,
+`gitlab-runsvdir.service`, and `unattended-upgrades.service`. Same idea as Compose logs: last 200 lines, live
 follow, leave the page to stop. Not a PTY and not a unit-name textbox.
 
 If `/usr/bin/unattended-upgrade` is on the node, the tab shows whether

@@ -337,6 +337,10 @@ fn operator_docs_cover_journal_ntp_gitlab_age() {
         "System chapter must name the allowlisted units"
     );
     assert!(
+        system.contains("unattended-upgrades.service"),
+        "System chapter must list unattended-upgrades.service on the journal allowlist"
+    );
+    assert!(
         system.contains("unit-name textbox"),
         "System chapter must say journal is not a unit-name textbox"
     );

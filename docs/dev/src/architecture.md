@@ -99,7 +99,8 @@ thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, System shutdown from the UI, hostname /
 timezone / users / firewall / sshd_config editors, Wi-Fi hotspot / 802.1X, Fedora /
 Arch host updates, unattended-upgrades config editor, Watchtower,
-Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
+Docker GitLab backup. Allowlisted `journalctl` follow (six units, including
+`unattended-upgrades.service`) is in
 this slice; a unit-name textbox is not. Leftover/failed **unit restart** from
 those listed names is in (`systemctl restart`, step-up when TOTP is on).
 **Start KeyStone on boot** (`unit_enable`, `systemctl enable`/`disable`

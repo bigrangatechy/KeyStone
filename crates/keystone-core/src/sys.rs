@@ -31,14 +31,14 @@ pub const GITLAB_BACKUP_DIR: &str = "/var/opt/gitlab/backups";
 pub const GITLAB_RESTORE_LIST_CAP: usize = 50;
 
 /// Units the System tab may follow. Not a textbox — stolen cookie reads
-/// these journals only. `unattended-upgrades.service` is still out (observe
-/// the stamp on Health; do not grow this list without a slice).
+/// these journals only. Do not grow this list without a slice.
 pub const JOURNAL_UNITS: &[&str] = &[
     "keystone-agent.service",
     "keystone-server.service",
     "docker.service",
     "ssh.service",
     "gitlab-runsvdir.service",
+    "unattended-upgrades.service",
 ];
 
 /// Binary that means the unattended-upgrades package is installed.
@@ -1476,7 +1476,11 @@ mod tests {
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
         assert_eq!(GITLAB_CTL_BIN, "/opt/gitlab/bin/gitlab-ctl");
         assert_eq!(GITLAB_RESTORE_LIST_CAP, 50);
-        assert_eq!(JOURNAL_UNITS.len(), 5);
+        assert_eq!(JOURNAL_UNITS.len(), 6);
+        assert_eq!(
+            journal_unit("unattended-upgrades.service").unwrap(),
+            "unattended-upgrades.service"
+        );
         assert_eq!(SysOp::VlanAdd.as_str(), "vlan_add");
         assert_eq!(SysOp::WifiScan.as_str(), "wifi_scan");
         assert_eq!(SysOp::WifiJoin.as_str(), "wifi_join");
