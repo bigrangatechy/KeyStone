@@ -440,6 +440,10 @@ fn operator_docs_cover_autoremove_and_unattended() {
         "System chapter must say unattended-upgrades is not an editor"
     );
     assert!(
+        system.contains("99-keystone-unattended") && system.contains("enable/disable"),
+        "System chapter must document the unattended-upgrades toggle drop-in"
+    );
+    assert!(
         using.contains("unattended-upgrades") && using.contains("autoremove"),
         "using.md must mention unattended-upgrades and autoremove on the System tab"
     );
@@ -467,6 +471,22 @@ fn operator_docs_cover_autoremove_and_unattended() {
         arch.contains("unattended-upgrades config editor")
             && arch.contains("editing `20auto-upgrades` is not"),
         "architecture.md must keep the unattended config editor out"
+    );
+    assert!(
+        http.contains("`unattended_set`") && dev.contains("`unattended_set`"),
+        "HTTP API and developer system.md must list unattended_set"
+    );
+    assert!(
+        arch.contains("unattended_set") && using.contains("unattended-upgrades enable"),
+        "architecture and using.md must mention the unattended-upgrades toggle"
+    );
+    assert!(
+        audit.contains("unattended-upgrades enable"),
+        "Audit must list unattended-upgrades enable/disable as a mutation"
+    );
+    assert!(
+        trouble.contains("Unattended refused"),
+        "troubleshooting must cover a refused unattended-upgrades toggle"
     );
 }
 
@@ -1027,6 +1047,7 @@ fn user_guide_sysop_needle(op: SysOp) -> &'static str {
         SysOp::UnitRestart => "leftover restart",
         SysOp::UnitEnable => "Start KeyStone on boot",
         SysOp::TimezoneSet => "timezone",
+        SysOp::UnattendedSet => "unattended-upgrades",
     }
 }
 

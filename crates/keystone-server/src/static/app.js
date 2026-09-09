@@ -1529,7 +1529,7 @@
         } else {
           health.appendChild(el("p", "muted", "No unattended run on disk"));
         }
-        health.appendChild(el("p", "muted", "Glance only. This tab does not edit unattended-upgrades or turn it on."));
+        health.appendChild(el("p", "muted", "Last-run age only. Enable/disable is an action when Manage is on. not a config editor."));
       } else {
         health.appendChild(el("p", "muted", "unattended-upgrades is not installed on this node."));
       }
@@ -1571,6 +1571,40 @@
         tzBtn.textContent = "Set timezone";
         tzForm.appendChild(tzBtn);
         actions.appendChild(tzForm);
+      }
+      const unattendedAct = data.unattended || {};
+      if (unattendedAct.available) {
+        const unHead = el("div", "compose-head");
+        unHead.appendChild(el("h3", null, "Unattended upgrades"));
+        actions.appendChild(unHead);
+        actions.appendChild(el("p", "muted", "Turns apt periodic unattended-upgrades on or off (KeyStone drop-in plus systemctl enable/disable, not --now). not a config editor."));
+        const uform = document.createElement("form");
+        uform.method = "post";
+        uform.action = "/nodes/" + encodeURIComponent(node) + "/sys/unattended_set";
+        uform.className = "sys-net";
+        uform.addEventListener("submit", (ev) => {
+          const sel = uform.querySelector("select[name=\"enabled\"]");
+          const want = (sel && sel.value) || "";
+          const msg = want === "no"
+            ? "Disable unattended-upgrades on this host? Apt will not auto-install upgrades until you turn it back on."
+            : "Enable unattended-upgrades on this host?";
+          if (!window.confirm(msg)) ev.preventDefault();
+        });
+        const unSel = document.createElement("select");
+        unSel.name = "enabled";
+        [["yes", "Enable"], ["no", "Disable"]].forEach((pair) => {
+          const o = document.createElement("option");
+          o.value = pair[0];
+          o.textContent = pair[1];
+          unSel.appendChild(o);
+        });
+        unSel.value = unattendedAct.enabled ? "yes" : "no";
+        uform.appendChild(unSel);
+        const unBtn = document.createElement("button");
+        unBtn.type = "submit";
+        unBtn.textContent = "Apply";
+        uform.appendChild(unBtn);
+        actions.appendChild(uform);
       }
       const rebootHead = el("div", "compose-head");
       rebootHead.appendChild(el("h3", null, "Reboot"));

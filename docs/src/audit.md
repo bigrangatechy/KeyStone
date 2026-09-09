@@ -22,7 +22,7 @@ prune audit rows.
 - Docker Manage: start, stop, restart, pause/resume, kill, remove, prune
   stopped; Compose up / start / stop / restart / down / pull / Update;
   image pull / remove / prune; Hub/GHCR login (password omitted); prune unused build cache; volume and network create / remove / prune.
-- System Manage: apt apply, apt autoremove, IPv4/IPv6 DHCP vs static, VLAN create, Wi-Fi join, SSH password, leftover/failed unit restart, Start KeyStone on boot, timezone, GitLab Omnibus backup,
+- System Manage: apt apply, apt autoremove, IPv4/IPv6 DHCP vs static, VLAN create, Wi-Fi join, SSH password, leftover/failed unit restart, Start KeyStone on boot, timezone, unattended-upgrades enable/disable, GitLab Omnibus backup,
   GitLab Omnibus restore, confirmed reboot. A refused IPv4, VLAN, Wi-Fi, SSH password, unit-restart, boot enable, or
   restore change (missing or bad authenticator code) is still a row (`ok` false).
   Wi-Fi join rows omit the PSK.

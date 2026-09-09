@@ -25,8 +25,9 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
   Manage is opt-in. Exec is not in the UI. See [Docker](docker.md).
 - **System** — Ubuntu / Debian / Raspberry Pi OS when the root helper is on
   (`keystone-sys.socket` plus Settings). Health vs actions: apt, autoremove,
-  leftover/failed unit restart, journals (including
-  `unattended-upgrades.service`), NTP, timezone dropdown, unattended-upgrades glance,
+    leftover/failed unit restart, journals (including
+  `unattended-upgrades.service`), NTP, timezone dropdown,
+  unattended-upgrades enable/disable,
   GitLab Omnibus backup/restore, IPv4/IPv6, VLAN create, Wi-Fi join, SSH
   password yes/no, Start KeyStone on boot, confirmed reboot. A laptop without
   the helper still shows addresses and NTP; mutations stay hidden. Appliance
@@ -42,7 +43,7 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
 
 One slice at a time. Not mixed into the current tree:
 
-- unattended-upgrades enable/disable; Fedora `dnf`.
+- Fedora `dnf`.
 - Interactive `docker exec` in the UI. Bidirectional `StreamChunk` on ingest
   is in; the Settings exec checkbox stays reserved.
 - LAN-only LLM Agent API (Unix socket, off by default, never on the internet).

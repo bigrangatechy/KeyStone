@@ -158,7 +158,7 @@ token does not.
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
 - Agent not control-connected (same session as metrics).
-- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, timezone, and reboot**
+- Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, timezone, unattended-upgrades, and reboot**
   on and save.
 - `apt-get` failed: read the apply or autoremove stream; the helper only runs
   `upgrade` or `autoremove`,
@@ -173,7 +173,10 @@ token does not.
   not a backup code.
 - Unattended-upgrades also running: the tab shows enabled / last run. It
   does not edit `/etc/apt/apt.conf.d/20auto-upgrades`. Two updaters is a
-  glance, not a fix.
+  glance, not a fix. Enable/disable writes a KeyStone drop-in instead.
+- Unattended refused: unattended-upgrades is not installed on that node, or
+  `systemctl enable`/`disable` of `unattended-upgrades.service` failed. Not
+  a config editor.
 - Reboot dropped the UI: you rebooted the node that serves KeyStone. Wait
   for `keystone-server` to come back, then sign in again. Poweroff is not
   in this UI.

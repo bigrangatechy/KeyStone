@@ -4,8 +4,8 @@
 //! Host system-admin ops (apt, leftover services, failed units, unit
 //! restart from those lists, KeyStone boot enable, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
 //! create, Wi-Fi join from a scan list, SSH password-auth toggle, timezone
-//! from a dropdown, GitLab
-//! Omnibus backup/restore, unattended-upgrades observe). No I/O — the helper
+//! from a dropdown, unattended-upgrades enable/disable, GitLab
+//! Omnibus backup/restore). No I/O — the helper
 //! and agent run them. Keep `docs/dev/src/system.md` in sync.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -47,6 +47,12 @@ pub const UNATTENDED_UPGRADE_BIN: &str = "/usr/bin/unattended-upgrade";
 
 /// Debian/Ubuntu apt periodic file. Observe only — not an editor.
 pub const UNATTENDED_AUTO_UPGRADES: &str = "/etc/apt/apt.conf.d/20auto-upgrades";
+
+/// KeyStone drop-in so the toggle wins over `20auto-upgrades`. One key only.
+pub const UNATTENDED_KEYSTONE_DROPIN: &str = "/etc/apt/apt.conf.d/99-keystone-unattended";
+
+/// systemd unit the toggle may enable/disable. Not a unit-name textbox.
+pub const UNATTENDED_UNIT: &str = "unattended-upgrades.service";
 
 /// Stamp written when apt periodic finishes an unattended run.
 pub const UNATTENDED_STAMP: &str = "/var/lib/apt/periodic/unattended-upgrades-stamp";
@@ -94,6 +100,8 @@ pub enum SysOp {
     UnitEnable,
     /// Listed IANA name from `timedatectl list-timezones`. Not a textbox.
     TimezoneSet,
+    /// Enable/disable unattended-upgrades. Not a `20auto-upgrades` editor.
+    UnattendedSet,
 }
 
 impl SysOp {
@@ -135,6 +143,9 @@ impl SysOp {
             Self::TimezoneSet => {
                 "Set the host timezone from a listed IANA name (timedatectl set-timezone)"
             }
+            Self::UnattendedSet => {
+                "Enable or disable unattended-upgrades (KeyStone apt drop-in, not 20auto-upgrades)"
+            }
         }
     }
 
@@ -153,6 +164,7 @@ impl SysOp {
                 | Self::UnitRestart
                 | Self::UnitEnable
                 | Self::TimezoneSet
+                | Self::UnattendedSet
         )
     }
 
@@ -450,6 +462,37 @@ impl UnitEnable {
         let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
         Ok(v)
     }
+}
+
+/// Enable or disable unattended-upgrades. Not `--now`. Not a config editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnattendedSet {
+    pub enabled: bool,
+}
+
+impl UnattendedSet {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
+        Ok(v)
+    }
+}
+
+/// `APT::Periodic::Unattended-Upgrade` only. Not a 20auto-upgrades editor.
+pub fn unattended_keystone_dropin(enabled: bool) -> String {
+    let v = if enabled { "1" } else { "0" };
+    format!(
+        "# Managed by KeyStone. APT::Periodic::Unattended-Upgrade only.\nAPT::Periodic::Unattended-Upgrade \"{v}\";\n"
+    )
+}
+
+pub fn systemctl_unattended_is_enabled_args() -> Vec<String> {
+    vec!["is-enabled".into(), "--".into(), UNATTENDED_UNIT.into()]
+}
+
+/// `enable` / `disable` only. Never `--now`.
+pub fn systemctl_unattended_boot_args(enabled: bool) -> Vec<String> {
+    let verb = if enabled { "enable" } else { "disable" };
+    vec![verb.into(), "--".into(), UNATTENDED_UNIT.into()]
 }
 
 /// Same `yes` / `no` as SSH password. Missing/junk is not a silent disable.
@@ -1489,7 +1532,7 @@ pub fn gitlab_backups_for_restore(entries: &[(String, i64)]) -> Vec<(String, i64
 }
 
 /// Last `APT::Periodic::Unattended-Upgrade` assignment in an apt conf snippet.
-/// Comments are skipped. Not an editor — observe only.
+/// Comments are skipped. Not an editor.
 pub fn parse_unattended_periodic(conf: &str) -> Option<bool> {
     const KEY: &str = "APT::Periodic::Unattended-Upgrade";
     let mut found = None;
@@ -1506,6 +1549,11 @@ pub fn parse_unattended_periodic(conf: &str) -> Option<bool> {
         }
     }
     found
+}
+
+/// KeyStone drop-in wins over `20auto-upgrades` when it has an assignment.
+pub fn parse_unattended_enabled(keystone: &str, auto_upgrades: &str) -> Option<bool> {
+    parse_unattended_periodic(keystone).or_else(|| parse_unattended_periodic(auto_upgrades))
 }
 
 fn apt_conf_bool(rest: &str) -> Option<bool> {
@@ -1550,6 +1598,7 @@ mod tests {
         assert!(SysOp::UnitRestart.mutating());
         assert!(SysOp::UnitEnable.mutating());
         assert!(SysOp::TimezoneSet.mutating());
+        assert!(SysOp::UnattendedSet.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::VlanAdd.permission(), Permission::SysManage);
@@ -1560,6 +1609,7 @@ mod tests {
         assert_eq!(SysOp::UnitRestart.permission(), Permission::SysManage);
         assert_eq!(SysOp::UnitEnable.permission(), Permission::SysManage);
         assert_eq!(SysOp::TimezoneSet.permission(), Permission::SysManage);
+        assert_eq!(SysOp::UnattendedSet.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
         assert!(SysOp::GitlabBackup.streams());
@@ -1569,11 +1619,13 @@ mod tests {
         assert!(!SysOp::UnitRestart.streams());
         assert!(!SysOp::UnitEnable.streams());
         assert!(!SysOp::TimezoneSet.streams());
+        assert!(!SysOp::UnattendedSet.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
         assert_eq!(SysOp::GitlabRestore.as_str(), "gitlab_restore");
         assert_eq!(SysOp::UnitRestart.as_str(), "unit_restart");
         assert_eq!(SysOp::UnitEnable.as_str(), "unit_enable");
         assert_eq!(SysOp::TimezoneSet.as_str(), "timezone_set");
+        assert_eq!(SysOp::UnattendedSet.as_str(), "unattended_set");
         assert!(!SysOp::Journal.mutating());
         assert_eq!(SysOp::Journal.permission(), Permission::SysView);
         assert!(SysOp::Journal.streams());
@@ -1583,6 +1635,11 @@ mod tests {
             UNATTENDED_AUTO_UPGRADES,
             "/etc/apt/apt.conf.d/20auto-upgrades"
         );
+        assert_eq!(
+            UNATTENDED_KEYSTONE_DROPIN,
+            "/etc/apt/apt.conf.d/99-keystone-unattended"
+        );
+        assert_eq!(UNATTENDED_UNIT, "unattended-upgrades.service");
         assert_eq!(GITLAB_BACKUP_DIR, "/var/opt/gitlab/backups");
         assert_eq!(GITLAB_BACKUP_BIN, "/opt/gitlab/bin/gitlab-backup");
         assert_eq!(GITLAB_CTL_BIN, "/opt/gitlab/bin/gitlab-ctl");
@@ -1609,6 +1666,7 @@ mod tests {
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::UnitEnable.needs_step_up());
         assert!(!SysOp::TimezoneSet.needs_step_up());
+        assert!(!SysOp::UnattendedSet.needs_step_up());
         assert!(SysOp::GitlabRestore.needs_step_up());
         assert!(!SysOp::GitlabBackup.needs_step_up());
         for op in SysOp::iter() {
@@ -1640,6 +1698,7 @@ mod tests {
             SysOp::UnitRestart => Some("/sys/unit_restart"),
             SysOp::UnitEnable => Some("/sys/unit_enable"),
             SysOp::TimezoneSet => Some("/sys/timezone_set"),
+            SysOp::UnattendedSet => Some("/sys/unattended_set"),
             SysOp::Status | SysOp::UpdatesList | SysOp::Journal | SysOp::WifiScan => None,
         }
     }
@@ -2305,6 +2364,10 @@ mod tests {
         assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
         assert_eq!("unit_enable".parse::<SysOp>().unwrap(), SysOp::UnitEnable);
         assert_eq!("timezone_set".parse::<SysOp>().unwrap(), SysOp::TimezoneSet);
+        assert_eq!(
+            "unattended_set".parse::<SysOp>().unwrap(),
+            SysOp::UnattendedSet
+        );
         assert_eq!("vlan_add".parse::<SysOp>().unwrap(), SysOp::VlanAdd);
         assert_eq!("wifi_scan".parse::<SysOp>().unwrap(), SysOp::WifiScan);
         assert_eq!("wifi_join".parse::<SysOp>().unwrap(), SysOp::WifiJoin);
@@ -2583,5 +2646,36 @@ mod tests {
             parse_unattended_periodic("APT::Periodic::Unattended-Upgrade \"yes, later\";\n"),
             None
         );
+        assert_eq!(
+            parse_unattended_enabled(
+                "APT::Periodic::Unattended-Upgrade \"0\";\n",
+                "APT::Periodic::Unattended-Upgrade \"1\";\n"
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            parse_unattended_enabled("", "APT::Periodic::Unattended-Upgrade \"1\";\n"),
+            Some(true)
+        );
+        let on = unattended_keystone_dropin(true);
+        assert!(!on.contains("99-keystone"));
+        assert_eq!(parse_unattended_periodic(&on), Some(true));
+        assert!(!on.contains("20auto-upgrades"));
+        assert!(unattended_keystone_dropin(true).contains("Unattended-Upgrade \"1\""));
+        assert!(unattended_keystone_dropin(false).contains("Unattended-Upgrade \"0\""));
+        assert!(!systemctl_unattended_boot_args(true)
+            .iter()
+            .any(|a| a == "--now"));
+        assert_eq!(
+            systemctl_unattended_boot_args(false),
+            vec!["disable", "--", "unattended-upgrades.service"]
+        );
+        assert_eq!(
+            UnattendedSet::parse_json(r#"{"enabled":true}"#)
+                .unwrap()
+                .enabled,
+            true
+        );
+        assert!(UnattendedSet::parse_json(r#"{"enabled":"yes;rm"}"#).is_err());
     }
 }

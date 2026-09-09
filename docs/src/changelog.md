@@ -8,6 +8,12 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 02:06:39 10/09/2026 AEST
+
+Enable or disable unattended-upgrades from the System tab. Writes a KeyStone
+drop-in, not `/etc/apt/apt.conf.d/20auto-upgrades`. Tests do not run
+`systemctl enable`/`disable`.
+
 ## 01:22:10 10/09/2026 AEST
 
 Set the host timezone from a `timedatectl list-timezones` dropdown. Not a

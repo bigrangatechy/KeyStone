@@ -34,7 +34,8 @@ fn call_budget(op: SysOp) -> Duration {
         | SysOp::UnitRestart
         | SysOp::UnitEnable
         | SysOp::SshPassword
-        | SysOp::TimezoneSet => Duration::from_secs(15),
+        | SysOp::TimezoneSet
+        | SysOp::UnattendedSet => Duration::from_secs(15),
         SysOp::UpdatesList | SysOp::UpdatesApply | SysOp::UpdatesAutoremove => {
             Duration::from_secs(120)
         }
@@ -281,6 +282,10 @@ mod tests {
         assert_eq!(call_budget(SysOp::UnitEnable), call_budget(SysOp::Reboot));
         assert_eq!(call_budget(SysOp::SshPassword), call_budget(SysOp::Reboot));
         assert_eq!(call_budget(SysOp::TimezoneSet), call_budget(SysOp::Reboot));
+        assert_eq!(
+            call_budget(SysOp::UnattendedSet),
+            call_budget(SysOp::Reboot)
+        );
         assert_eq!(
             call_budget(SysOp::GitlabRestore),
             call_budget(SysOp::GitlabBackup)

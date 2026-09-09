@@ -10,7 +10,7 @@ Host apt and addressing are **not** `DockerOp`. Cookie-authed
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
 `updates_apply`, `updates_autoremove`, `net_set`, `vlan_add`, `wifi_scan`,
 `wifi_join`, `ssh_password`, `gitlab_backup`, `gitlab_restore`, `reboot`, `journal`,
-`unit_restart`, `unit_enable`, `timezone_set`).
+`unit_restart`, `unit_enable`, `timezone_set`, `unattended_set`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
@@ -33,10 +33,13 @@ ssh mid-upgrade. Autoremove is streamed `apt-get -y autoremove` (not
 `systemctl --failed` (empty if the binary is missing or times out).
 `status` also parses `timedatectl show -p NTPSynchronized`, `timedatectl show -p Timezone`, `timedatectl list-timezones`, and the newest
 `*_gitlab_backup.tar` under `/var/opt/gitlab/backups` (Omnibus only;
-`status` lists dumps for restore). Unattended-upgrades is observe-only: parse
+`status` lists dumps for restore). Unattended-upgrades observe parses
+`/etc/apt/apt.conf.d/99-keystone-unattended` then
 `/etc/apt/apt.conf.d/20auto-upgrades` (or `systemctl is-enabled
 unattended-upgrades`) and the periodic stamp mtime. There is no config
-editor. `journal` follows `journalctl -u` for a
+editor. `unattended_set` writes the KeyStone drop-in and
+`systemctl enable`/`disable` of `unattended-upgrades.service` without `--now`.
+Tests must not invoke it. `journal` follows `journalctl -u` for a
 hardcoded unit list including `unattended-upgrades.service` (not a textbox). `timezone_set` is a listed IANA name from `timedatectl list-timezones` then `timedatectl set-timezone` (not a timezone textbox). Tests must not invoke `timedatectl set-timezone`. `reboot` is hardcoded
 `systemctl reboot` (not poweroff). `unit_restart` is hardcoded
 `systemctl restart -- <unit>` only if that name is on the live leftover
@@ -71,6 +74,7 @@ editor. Tests must not run live `apt-get`,
 | `unit_restart` | yes | `sys_manage` | `systemctl restart` for one leftover or failed unit. `needs_step_up()`. Helper re-checks the live lists. Tests must not invoke it. |
 | `unit_enable` | yes | `sys_manage` | `systemctl enable`/`disable` of packaged KeyStone units for boot. `needs_step_up()`. Not `--now` (running process stays). Not `keystone-sys.socket`. Tests must not invoke it. |
 | `timezone_set` | yes | `sys_manage` | `timedatectl set-timezone` for one listed IANA name. Helper re-checks `timedatectl list-timezones`. Not a timezone textbox. Confirm + Audit; not `needs_step_up()`. Tests must not invoke it. |
+| `unattended_set` | yes | `sys_manage` | Enable or disable unattended-upgrades. Writes `/etc/apt/apt.conf.d/99-keystone-unattended` (`APT::Periodic::Unattended-Upgrade` only) and `systemctl enable`/`disable` without `--now`. Not a `20auto-upgrades` editor. Confirm + Audit; not `needs_step_up()`. Tests must not invoke it. |
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
 token cannot call these routes. `SysOp::needs_step_up()` is `net_set`,

@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
 Pi OS** boxes. Health is on the left (leftover services, failed units,
 allowlisted journals, NTP, unattended-upgrades glance, addresses). Actions
-are on the right (apt, autoremove, confirmed reboot, timezone dropdown, IPv4/IPv6, VLAN,
+are on the right (apt, autoremove, confirmed reboot, timezone dropdown, unattended-upgrades enable/disable, IPv4/IPv6, VLAN,
 Wi-Fi, SSH password, Start KeyStone on boot, GitLab Omnibus
 backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
@@ -21,7 +21,7 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, timezone, and reboot** if
+   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, timezone, unattended-upgrades, and reboot** if
    you want Apply, Autoremove, leftover Restart, VLAN, Wi-Fi, SSH password, Start KeyStone on boot, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
@@ -46,7 +46,7 @@ It only runs allowlisted ops (`apt-get update` / `upgrade` / `autoremove`,
 `systemctl --failed`, `timedatectl`, `journalctl -u` for six named
 units, `systemctl reboot`, `systemctl restart` of a leftover or failed
 listed name, netplan or
-`nmcli`, `sshd -T` / a PasswordAuthentication drop-in and `systemctl reload` of `ssh`, `timedatectl set-timezone` of a listed IANA name, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
+`nmcli`, `sshd -T` / a PasswordAuthentication drop-in and `systemctl reload` of `ssh`, `timedatectl set-timezone` of a listed IANA name, KeyStone unattended-upgrades drop-in plus `systemctl enable`/`disable` of `unattended-upgrades.service`, Omnibus `gitlab-backup create` / `restore`). There is no shell string and no
 unit-name textbox.
 
 ## Updates
@@ -96,11 +96,14 @@ follow, leave the page to stop. Not a PTY and not a unit-name textbox.
 
 If `/usr/bin/unattended-upgrade` is on the node, the tab shows whether
 unattended-upgrades is enabled (`APT::Periodic::Unattended-Upgrade` in
+`/etc/apt/apt.conf.d/99-keystone-unattended` when KeyStone wrote it, else
 `/etc/apt/apt.conf.d/20auto-upgrades`, or `systemctl is-enabled
-unattended-upgrades` when that file has no assignment) and the age of the
+unattended-upgrades` when those files have no assignment) and the age of the
 last run (stamp `/var/lib/apt/periodic/unattended-upgrades-stamp`, else
-the log). That is a glance so you can see two updaters fighting. There is
-no config editor and no enable toggle.
+the log). **Enable/disable** writes the KeyStone drop-in and
+`systemctl enable`/`disable` of `unattended-upgrades.service` without
+`--now`. Confirm + Audit. There is no config editor and this does not edit
+`20auto-upgrades`.
 
 Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
 are enabled for boot (`WantedBy=multi-user.target`). After a kernel or

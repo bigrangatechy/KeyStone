@@ -5,8 +5,7 @@
 //! failed units, unit restart from those lists, KeyStone boot enable,
 //! reboot, journal follow,
 //! IPv4/IPv6, 802.1Q VLAN create, Wi-Fi join from a scan list, SSH password
-//! toggle, timezone from a dropdown, GitLab Omnibus backup/restore, and
-//! unattended-upgrades observe.
+//! toggle, timezone from a dropdown, unattended-upgrades enable/disable, GitLab Omnibus backup/restore.
 //! No `sh -c`. Started by systemd socket.
 
 use std::os::fd::FromRawFd;
@@ -24,15 +23,17 @@ use keystone_core::sys::{
     nmcli_wifi_rescan_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
     parse_iw_scan, parse_needrestart_batch, parse_nmcli_wifi_list, parse_ntp_sync,
     parse_restart_unit, parse_restore_backup, parse_sshd_t, parse_systemctl_failed,
-    parse_systemctl_is_enabled, parse_timezone_list, parse_timezone_name,
-    parse_unattended_periodic, ssh_reload_args, sshd_keystone_dropin, sshd_t_args, sshd_test_args,
-    ssid_listed, systemctl_boot_args, systemctl_is_enabled_args, timedatectl_list_timezones_args,
+    parse_systemctl_is_enabled, parse_timezone_list, parse_timezone_name, parse_unattended_enabled,
+    ssh_reload_args, sshd_keystone_dropin, sshd_t_args, sshd_test_args, ssid_listed,
+    systemctl_boot_args, systemctl_is_enabled_args, systemctl_unattended_boot_args,
+    systemctl_unattended_is_enabled_args, timedatectl_list_timezones_args,
     timedatectl_set_timezone_args, timedatectl_show_ntp_args, timedatectl_show_timezone_args,
-    timezone_listed, unit_listed_for_restart, KeystoneBootUnit, NeedrestartBatch, NetSet,
-    SshPassword, SysOp, TimezoneSet, UnitEnable, VlanAdd, WifiIface, WifiJoin, GITLAB_BACKUP_BIN,
-    GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, KEYSTONE_BOOT_UNITS, SSHD_BIN, SSHD_KEYSTONE_DROPIN,
-    SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP,
-    UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
+    timezone_listed, unattended_keystone_dropin, unit_listed_for_restart, KeystoneBootUnit,
+    NeedrestartBatch, NetSet, SshPassword, SysOp, TimezoneSet, UnattendedSet, UnitEnable, VlanAdd,
+    WifiIface, WifiJoin, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, KEYSTONE_BOOT_UNITS,
+    SSHD_BIN, SSHD_KEYSTONE_DROPIN, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES,
+    UNATTENDED_KEYSTONE_DROPIN, UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN,
+    UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -193,6 +194,12 @@ async fn dispatch(
             timezone_set(&req).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
+        SysOp::UnattendedSet => {
+            let raw = payload.to_string();
+            let req = UnattendedSet::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            unattended_set(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
     }
 }
 
@@ -291,7 +298,8 @@ async fn unattended_status() -> Value {
         return json!({ "available": false, "enabled": false });
     }
     let conf = std::fs::read_to_string(UNATTENDED_AUTO_UPGRADES).unwrap_or_default();
-    let enabled = match parse_unattended_periodic(&conf) {
+    let keystone = std::fs::read_to_string(UNATTENDED_KEYSTONE_DROPIN).unwrap_or_default();
+    let enabled = match parse_unattended_enabled(&keystone, &conf) {
         Some(v) => v,
         None => unattended_unit_enabled().await,
     };
@@ -306,16 +314,17 @@ async fn unattended_status() -> Value {
 }
 
 async fn unattended_unit_enabled() -> bool {
+    let args = systemctl_unattended_is_enabled_args();
     let output = timeout(
         Duration::from_secs(2),
         Command::new("systemctl")
-            .args(["is-enabled", "unattended-upgrades"])
+            .args(&args)
             .stdin(Stdio::null())
             .output(),
     )
     .await;
     match output {
-        Ok(Ok(o)) => String::from_utf8_lossy(&o.stdout).trim() == "enabled",
+        Ok(Ok(o)) => parse_systemctl_is_enabled(&String::from_utf8_lossy(&o.stdout)) == Some(true),
         _ => false,
     }
 }
@@ -1237,6 +1246,29 @@ async fn timezone_list_live() -> Vec<String> {
         .unwrap_or_default()
 }
 
+async fn unattended_set(req: &UnattendedSet) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("unattended set is not invoked in tests");
+    }
+    if !Path::new(UNATTENDED_UPGRADE_BIN).is_file() {
+        anyhow::bail!("unattended-upgrades is not installed on this node");
+    }
+    let dropin = unattended_keystone_dropin(req.enabled);
+    tokio::fs::write(UNATTENDED_KEYSTONE_DROPIN, dropin)
+        .await
+        .with_context(|| format!("write {UNATTENDED_KEYSTONE_DROPIN}"))?;
+    let args = systemctl_unattended_boot_args(req.enabled);
+    let st = Command::new("systemctl")
+        .args(&args)
+        .status()
+        .await
+        .context("systemctl enable/disable unattended-upgrades")?;
+    if !st.success() {
+        anyhow::bail!("systemctl enable/disable unattended-upgrades failed");
+    }
+    Ok(())
+}
+
 async fn journal_follow(
     payload: &Value,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -1769,8 +1801,11 @@ mod tests {
             .next()
             .expect("unattended observe body");
         assert!(body.contains("UNATTENDED_AUTO_UPGRADES"));
-        assert!(body.contains("is-enabled"));
-        assert!(body.contains("unattended-upgrades"));
+        assert!(body.contains("UNATTENDED_KEYSTONE_DROPIN"));
+        assert!(
+            body.contains("is-enabled") || body.contains("systemctl_unattended_is_enabled_args")
+        );
+        assert!(body.contains("UNATTENDED_STAMP") || body.contains("unattended-upgrades"));
         assert!(!body.contains("\"enable\""));
         assert!(!body.contains("\"start\""));
         assert!(!body.contains("\"stop\""));
@@ -2032,6 +2067,80 @@ mod tests {
         let mut client = UnixStream::connect(&path).await.expect("connect");
         client
             .write_all(br#"{"op":"timezone_set","payload":{"timezone":"UTC;rm"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before spawn: {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn unattended_set_is_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn unattended_set")
+            .nth(1)
+            .expect("unattended_set")
+            .split("async fn journal_follow")
+            .next()
+            .expect("unattended_set body");
+        assert!(body.contains("unattended_keystone_dropin"));
+        assert!(body.contains("UNATTENDED_KEYSTONE_DROPIN"));
+        assert!(body.contains("systemctl_unattended_boot_args"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("UNATTENDED_AUTO_UPGRADES"));
+        assert!(!body.contains("--now"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("poweroff"));
+    }
+
+    #[tokio::test]
+    async fn helper_unattended_set_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"unattended_set","payload":{"enabled":true}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "unattended_set must not write apt conf or systemctl enable in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_unattended_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"unattended_set","payload":{"enabled":"yes;rm"}}"#)
             .await
             .unwrap();
         client.write_all(b"\n").await.unwrap();
@@ -2589,6 +2698,7 @@ mod tests {
             SysOp::UnitRestart => Some("unit_restart"),
             SysOp::UnitEnable => Some("unit_enable"),
             SysOp::TimezoneSet => Some("timezone_set"),
+            SysOp::UnattendedSet => Some("unattended_set"),
         }
     }
 

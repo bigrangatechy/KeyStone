@@ -783,7 +783,8 @@ async fn handle_sys(
         | SysOp::Reboot
         | SysOp::UnitRestart
         | SysOp::UnitEnable
-        | SysOp::TimezoneSet => crate::sys::call(op, payload).await,
+        | SysOp::TimezoneSet
+        | SysOp::UnattendedSet => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
         SysOp::UpdatesAutoremove => {
             anyhow::bail!("updates_autoremove is streamed from the autoremove page")

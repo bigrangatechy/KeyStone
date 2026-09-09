@@ -3727,6 +3727,7 @@ mod tests {
         assert!(js.contains("/sys/ssh_password"));
         assert!(js.contains("/sys/unit_enable"));
         assert!(js.contains("/sys/timezone_set"));
+        assert!(js.contains("/sys/unattended_set"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
@@ -3763,6 +3764,9 @@ mod tests {
         assert!(SysOp::TimezoneSet.mutating());
         assert!(!SysOp::TimezoneSet.streams());
         assert!(!SysOp::TimezoneSet.needs_step_up());
+        assert!(SysOp::UnattendedSet.mutating());
+        assert!(!SysOp::UnattendedSet.streams());
+        assert!(!SysOp::UnattendedSet.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
         assert!(SysOp::UnitEnable.needs_step_up());
         assert!(SysOp::Journal.streams());
@@ -4500,8 +4504,11 @@ mod tests {
             "System tab must show unattended last-run age"
         );
         assert!(
-            !js.contains("unattended-enable") && !js.contains("20auto-upgrades"),
-            "UI must not edit unattended-upgrades config"
+            js.contains("/sys/unattended_set")
+                && js.contains("not a config editor")
+                && !js.contains("unattended-enable")
+                && !js.contains("20auto-upgrades"),
+            "unattended-upgrades toggle must not edit 20auto-upgrades"
         );
         assert!(
             js.contains("Ubuntu will not auto-restart docker or ssh"),
