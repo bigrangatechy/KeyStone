@@ -95,8 +95,9 @@ systemctl is-enabled keystone-server
 
 `is-enabled` must print `enabled`. The package turns the unit on for boot;
 `systemctl start` without `enable` does **not** come back after a reboot.
-Units use `Restart=always` so a crash or a boot race with the network does
-not leave the UI down.
+After the UI is up, **Start KeyStone on boot** on that node's Settings does
+the same `enable` without `--now`. Units use `Restart=always` so a crash
+or a boot race with the network does not leave the UI down.
 
 Open `http://<that-host>:8080` (not `https://` unless you enabled `[tls]`).
 First sign-in is **`admin` / `changeme`**. The UI then requires a new

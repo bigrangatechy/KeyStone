@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Host system-admin ops (apt, leftover services, failed units, unit
-//! restart from those lists, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
+//! restart from those lists, KeyStone boot enable, reboot, journal follow, IPv4/IPv6, 802.1Q VLAN
 //! create, Wi-Fi join from a scan list, SSH password-auth toggle, GitLab
 //! Omnibus backup/restore, unattended-upgrades observe). No I/O — the helper
 //! and agent run them. Keep `docs/dev/src/system.md` in sync.
@@ -89,6 +89,8 @@ pub enum SysOp {
     Journal,
     /// Restart a name already on leftover/failed. Not a unit-name textbox.
     UnitRestart,
+    /// `systemctl enable`/`disable` of packaged KeyStone units. Not `--now`.
+    UnitEnable,
 }
 
 impl SysOp {
@@ -118,6 +120,9 @@ impl SysOp {
             Self::UnitRestart => {
                 "Restart one leftover or failed unit (systemctl restart, listed names only)"
             }
+            Self::UnitEnable => {
+                "Enable or disable packaged KeyStone units for boot (not --now, not keystone-sys)"
+            }
         }
     }
 
@@ -134,6 +139,7 @@ impl SysOp {
                 | Self::GitlabRestore
                 | Self::Reboot
                 | Self::UnitRestart
+                | Self::UnitEnable
         )
     }
 
@@ -160,7 +166,8 @@ impl SysOp {
     /// the agent; restarting leftover docker/ssh/keystone-server can too;
     /// GitLab restore replaces application data; joining Wi-Fi can drop the
     /// session if that is how you reach the node; turning off SSH passwords
-    /// can lock you out of the box.
+    /// can lock you out of the box; disabling KeyStone on boot leaves the UI
+    /// down after the next reboot.
     pub fn needs_step_up(self) -> bool {
         matches!(
             self,
@@ -169,6 +176,7 @@ impl SysOp {
                 | Self::WifiJoin
                 | Self::SshPassword
                 | Self::UnitRestart
+                | Self::UnitEnable
                 | Self::GitlabRestore
         )
     }
@@ -409,6 +417,69 @@ pub fn parse_password_auth(raw: &str) -> Result<bool, SysError> {
         "no" => Ok(false),
         _ => Err(SysError::Op),
     }
+}
+
+/// Packaged KeyStone units the boot checkbox may enable/disable. Not
+/// `keystone-sys.socket` (that stays an SSH opt-in) and not Docker/ssh.
+pub const KEYSTONE_BOOT_UNITS: &[&str] = &["keystone-agent.service", "keystone-server.service"];
+
+/// Enable or disable packaged KeyStone units for the next reboot. Not
+/// `--now` (the running process stays up). Not a unit-name textbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitEnable {
+    pub enabled: bool,
+}
+
+impl UnitEnable {
+    pub fn parse_json(raw: &str) -> Result<Self, SysError> {
+        let v: Self = serde_json::from_str(raw).map_err(|_| SysError::Op)?;
+        Ok(v)
+    }
+}
+
+/// Same `yes` / `no` as SSH password. Missing/junk is not a silent disable.
+pub fn parse_boot_enabled(raw: &str) -> Result<bool, SysError> {
+    parse_password_auth(raw)
+}
+
+/// `systemctl is-enabled` stdout. `not-found` means the unit is not installed.
+/// Only `enabled` counts as start-on-boot (`enabled-runtime` does not survive
+/// a reboot).
+pub fn parse_systemctl_is_enabled(stdout: &str) -> Option<bool> {
+    match stdout.trim() {
+        "not-found" | "" => None,
+        "enabled" => Some(true),
+        _ => Some(false),
+    }
+}
+
+/// True when every installed KeyStone unit is enabled for boot.
+pub fn keystone_boot_enabled(units: &[KeystoneBootUnit]) -> bool {
+    let present: Vec<&KeystoneBootUnit> = units.iter().filter(|u| u.present).collect();
+    !present.is_empty() && present.iter().all(|u| u.enabled)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeystoneBootUnit {
+    pub unit: String,
+    pub present: bool,
+    pub enabled: bool,
+}
+
+pub fn systemctl_is_enabled_args(unit: &str) -> Result<Vec<String>, SysError> {
+    if !KEYSTONE_BOOT_UNITS.iter().any(|u| *u == unit) {
+        return Err(SysError::Unit);
+    }
+    Ok(vec!["is-enabled".into(), "--".into(), unit.into()])
+}
+
+/// `enable` / `disable` only. Never `--now` (that would start/stop now).
+pub fn systemctl_boot_args(enabled: bool, unit: &str) -> Result<Vec<String>, SysError> {
+    if !KEYSTONE_BOOT_UNITS.iter().any(|u| *u == unit) {
+        return Err(SysError::Unit);
+    }
+    let verb = if enabled { "enable" } else { "disable" };
+    Ok(vec![verb.into(), "--".into(), unit.into()])
 }
 
 /// Drop-in so KeyStone wins first-match over `50-cloud-init.conf`.
@@ -1364,6 +1435,7 @@ mod tests {
         assert!(SysOp::GitlabRestore.mutating());
         assert!(SysOp::Reboot.mutating());
         assert!(SysOp::UnitRestart.mutating());
+        assert!(SysOp::UnitEnable.mutating());
         assert_eq!(SysOp::Status.permission(), Permission::SysView);
         assert_eq!(SysOp::NetSet.permission(), Permission::SysManage);
         assert_eq!(SysOp::VlanAdd.permission(), Permission::SysManage);
@@ -1372,6 +1444,7 @@ mod tests {
         assert_eq!(SysOp::UpdatesAutoremove.permission(), Permission::SysManage);
         assert_eq!(SysOp::Reboot.permission(), Permission::SysManage);
         assert_eq!(SysOp::UnitRestart.permission(), Permission::SysManage);
+        assert_eq!(SysOp::UnitEnable.permission(), Permission::SysManage);
         assert!(SysOp::UpdatesApply.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
         assert!(SysOp::GitlabBackup.streams());
@@ -1379,9 +1452,11 @@ mod tests {
         assert!(!SysOp::Status.streams());
         assert!(!SysOp::Reboot.streams());
         assert!(!SysOp::UnitRestart.streams());
+        assert!(!SysOp::UnitEnable.streams());
         assert_eq!(SysOp::GitlabBackup.as_str(), "gitlab_backup");
         assert_eq!(SysOp::GitlabRestore.as_str(), "gitlab_restore");
         assert_eq!(SysOp::UnitRestart.as_str(), "unit_restart");
+        assert_eq!(SysOp::UnitEnable.as_str(), "unit_enable");
         assert!(!SysOp::Journal.mutating());
         assert_eq!(SysOp::Journal.permission(), Permission::SysView);
         assert!(SysOp::Journal.streams());
@@ -1411,6 +1486,7 @@ mod tests {
         assert!(SysOp::SshPassword.needs_step_up());
         assert!(!SysOp::WifiScan.needs_step_up());
         assert!(SysOp::UnitRestart.needs_step_up());
+        assert!(SysOp::UnitEnable.needs_step_up());
         assert!(SysOp::GitlabRestore.needs_step_up());
         assert!(!SysOp::GitlabBackup.needs_step_up());
         for op in SysOp::iter() {
@@ -1421,6 +1497,7 @@ mod tests {
                     | SysOp::WifiJoin
                     | SysOp::SshPassword
                     | SysOp::UnitRestart
+                    | SysOp::UnitEnable
                     | SysOp::GitlabRestore
             );
             assert_eq!(op.needs_step_up(), want, "{} step-up", op.as_str());
@@ -1445,6 +1522,7 @@ mod tests {
                 SysOp::GitlabRestore => "/sys/gitlab_restore",
                 SysOp::Reboot => "/sys/reboot",
                 SysOp::UnitRestart => "/sys/unit_restart",
+                SysOp::UnitEnable => "/sys/unit_enable",
                 SysOp::Status | SysOp::UpdatesList | SysOp::Journal | SysOp::WifiScan => {
                     unreachable!("not mutating")
                 }
@@ -1874,6 +1952,74 @@ mod tests {
     }
 
     #[test]
+    fn keystone_boot_enable_is_allowlisted_and_not_now() {
+        assert_eq!(parse_boot_enabled("yes"), Ok(true));
+        assert_eq!(parse_boot_enabled("no"), Ok(false));
+        assert_eq!(parse_boot_enabled("true"), Err(SysError::Op));
+        assert_eq!(
+            UnitEnable::parse_json(r#"{"enabled":true}"#).unwrap(),
+            UnitEnable { enabled: true }
+        );
+        assert_eq!(
+            UnitEnable::parse_json(r#"{"enabled":"yes"}"#),
+            Err(SysError::Op)
+        );
+        assert_eq!(parse_systemctl_is_enabled("enabled\n"), Some(true));
+        assert_eq!(parse_systemctl_is_enabled("disabled\n"), Some(false));
+        assert_eq!(parse_systemctl_is_enabled("enabled-runtime\n"), Some(false));
+        assert_eq!(parse_systemctl_is_enabled("not-found\n"), None);
+        assert_eq!(parse_systemctl_is_enabled(""), None);
+        assert_eq!(
+            systemctl_is_enabled_args("keystone-agent.service").unwrap(),
+            vec!["is-enabled", "--", "keystone-agent.service"]
+        );
+        let on = systemctl_boot_args(true, "keystone-server.service").unwrap();
+        assert_eq!(on, vec!["enable", "--", "keystone-server.service"]);
+        assert!(!on.iter().any(|a| a == "--now"));
+        let off = systemctl_boot_args(false, "keystone-agent.service").unwrap();
+        assert_eq!(off, vec!["disable", "--", "keystone-agent.service"]);
+        assert!(!off.iter().any(|a| a == "--now"));
+        assert_eq!(
+            systemctl_boot_args(true, "docker.service"),
+            Err(SysError::Unit)
+        );
+        assert_eq!(
+            systemctl_boot_args(true, "keystone-sys.socket"),
+            Err(SysError::Unit)
+        );
+        assert!(!KEYSTONE_BOOT_UNITS
+            .iter()
+            .any(|u| u.contains("keystone-sys") || u.contains("docker")));
+        let both = [
+            KeystoneBootUnit {
+                unit: "keystone-agent.service".into(),
+                present: true,
+                enabled: true,
+            },
+            KeystoneBootUnit {
+                unit: "keystone-server.service".into(),
+                present: false,
+                enabled: false,
+            },
+        ];
+        assert!(keystone_boot_enabled(&both));
+        let mixed = [
+            KeystoneBootUnit {
+                unit: "keystone-agent.service".into(),
+                present: true,
+                enabled: true,
+            },
+            KeystoneBootUnit {
+                unit: "keystone-server.service".into(),
+                present: true,
+                enabled: false,
+            },
+        ];
+        assert!(!keystone_boot_enabled(&mixed));
+        assert!(!keystone_boot_enabled(&[]));
+    }
+
+    #[test]
     fn parse_apt_inst_lines() {
         let pkgs = parse_apt_simulate(
             "NOTE: This is only a simulation!\nInst git [1:2.34.1-1] (1:2.34.1-2 Ubuntu:22.04 [amd64])\nConf git (1:2.34.1-2 Ubuntu:22.04 [amd64])\n",
@@ -1962,6 +2108,7 @@ mod tests {
         assert_eq!("reboot".parse::<SysOp>().unwrap(), SysOp::Reboot);
         assert_eq!("journal".parse::<SysOp>().unwrap(), SysOp::Journal);
         assert_eq!("unit_restart".parse::<SysOp>().unwrap(), SysOp::UnitRestart);
+        assert_eq!("unit_enable".parse::<SysOp>().unwrap(), SysOp::UnitEnable);
         assert_eq!("vlan_add".parse::<SysOp>().unwrap(), SysOp::VlanAdd);
         assert_eq!("wifi_scan".parse::<SysOp>().unwrap(), SysOp::WifiScan);
         assert_eq!("wifi_join".parse::<SysOp>().unwrap(), SysOp::WifiJoin);

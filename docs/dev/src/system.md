@@ -10,7 +10,7 @@ Host apt and addressing are **not** `DockerOp`. Cookie-authed
 gRPC `Command`s with `SysOp::as_str()` (`status`, `updates_list`,
 `updates_apply`, `updates_autoremove`, `net_set`, `vlan_add`, `wifi_scan`,
 `wifi_join`, `ssh_password`, `gitlab_backup`, `gitlab_restore`, `reboot`, `journal`,
-`unit_restart`).
+`unit_restart`, `unit_enable`).
 
 The packaged agent stays `NoNewPrivileges=true` / `ProtectSystem=strict`.
 It talks to `/run/keystone/sys.sock` (`0660 root:keystone`) only if the
@@ -41,6 +41,9 @@ hardcoded unit list (not a textbox). `reboot` is hardcoded
 `systemctl reboot` (not poweroff). `unit_restart` is hardcoded
 `systemctl restart -- <unit>` only if that name is on the live leftover
 or failed list from `needrestart` / `systemctl --failed` (not a textbox).
+`unit_enable` is hardcoded `systemctl enable`/`disable` of
+`keystone-agent.service` and `keystone-server.service` without `--now`
+(not `keystone-sys`, not a unit-name textbox). Tests must not invoke it.
 `vlan_add` is a listed Ethernet parent plus id 1–4094 (not a name textbox);
 the helper re-checks the live address list. `wifi_scan` lists nearby SSIDs
 (`nmcli` or `iw`); `wifi_join` re-checks that list then connects (PSK is
@@ -48,8 +51,7 @@ argv, never audited). `status` also runs `sshd -T` for PasswordAuthentication.
 `ssh_password` writes `/etc/ssh/sshd_config.d/00-keystone.conf` then `sshd -t`
 and `systemctl reload` of `ssh.service` (fallback `sshd.service`). Not a user
 editor. Tests must not run live `apt-get`,
-`apt-get autoremove`, `gitlab-backup`, `gitlab-backup restore`, `journalctl -f`, `systemctl reboot`,
-`systemctl restart`, `systemctl reload`, `sshd -t`, `netplan apply`, `nmcli`, or `iw`.
+`apt-get autoremove`, `gitlab-backup`, `gitlab-backup restore`, `journalctl -f`, `systemctl reboot`, `systemctl restart`, `systemctl enable`, `systemctl disable`, `systemctl reload`, `sshd -t`, `netplan apply`, `nmcli`, or `iw`.
 
 | Operation | Mutating | Permission | Description |
 |---|---|---|---|
@@ -67,10 +69,11 @@ editor. Tests must not run live `apt-get`,
 | `reboot` | yes | `sys_manage` | Hardcoded `systemctl reboot`. Not streamed. Tests must not invoke it. Poweroff is not an op. |
 | `journal` | no | `sys_view` | Follow `journalctl` for one allowlisted unit (streamed). Not a PTY. Tests must not follow a live journal. |
 | `unit_restart` | yes | `sys_manage` | `systemctl restart` for one leftover or failed unit. `needs_step_up()`. Helper re-checks the live lists. Tests must not invoke it. |
+| `unit_enable` | yes | `sys_manage` | `systemctl enable`/`disable` of packaged KeyStone units for boot. `needs_step_up()`. Not `--now` (running process stays). Not `keystone-sys.socket`. Tests must not invoke it. |
 
 Mutating ops are written to SQLite `audit` (header `GET /audit`). The ingest
 token cannot call these routes. `SysOp::needs_step_up()` is `net_set`,
-`vlan_add`, `wifi_join`, `ssh_password`, `unit_restart`, and `gitlab_restore`. The same `consume_step_up` helper as Docker POSTs enforces
+`vlan_add`, `wifi_join`, `ssh_password`, `unit_restart`, `unit_enable`, and `gitlab_restore`. The same `consume_step_up` helper as Docker POSTs enforces
 form field `totp`. Failed step-up is still an audit row (`ok` false) and does
 not call the agent. Streaming restore must not start SSE until that code is
 accepted (in-memory ticket, 120s, one-shot).

@@ -4,7 +4,7 @@
 {% block title %}Settings — KeyStone{% endblock %}
 {% block content %}
 <h1>Settings</h1>
-<p class="muted">These apply to this server. Listen addresses, data directory, and the admin username stay in the config file (development / bootstrap). After first start this page is the source of truth for retention, the ingest token, scrape jobs, and the optional alert webhook.</p>
+<p class="muted">These apply to this server. Listen addresses, data directory, and the admin username stay in the config file (development / bootstrap). After first start this page is the source of truth for retention, the ingest token, scrape jobs, and the optional alert webhook. Start KeyStone on boot is a checkbox on each node's Settings, not this page. An upgrade of the package does not tick or untick that box.</p>
 {% if saved %}<p>Saved.</p>{% endif %}
 {% if rotated %}<p>New ingest token generated. Update each agent’s <code>ingest_token</code> and restart it.</p>{% endif %}
 {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}

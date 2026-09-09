@@ -186,8 +186,10 @@ the session if that radio is how you reach the node. The PSK is not written to
 Audit. **SSH password** (allow vs keys only) can lock you out of the box if you
 turn passwords off without keys or a console. Restarting a leftover `docker` or `ssh` unit can do the same.
 GitLab **Restore** replaces application data on that node.
+**Start KeyStone on boot** (`enable`/`disable` without `--now`) decides whether
+the UI and agent come back after the next reboot; it does not restart now.
 When authenticator 2FA is on, Apply IPv4, leftover/failed **Restart**, GitLab
-**Restore**, **Add VLAN**, **Join Wi-Fi**, and **SSH password** need a **current 6-digit code** from the app (not a backup code — those
+**Restore**, **Add VLAN**, **Join Wi-Fi**, **SSH password**, and **Start KeyStone on boot** need a **current 6-digit code** from the app (not a backup code — those
 are for sign-in). A used window cannot be reused. Failed codes share the
 same eight-tries / 15-minute gate as login. If 2FA is off, confirm-only.
 Other System and Docker mutations stay confirm plus the two-hour idle cookie.

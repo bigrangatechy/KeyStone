@@ -109,10 +109,10 @@ allow mutations. See [Docker](docker.md).
 The System tab is health vs actions on **this** Ubuntu or Debian server:
 health on the left (leftovers, failed units, journals, NTP,
 unattended-upgrades, addresses) and actions on the right (apt, autoremove,
-reboot, GitLab backup, GitLab restore, leftover restart, IPv4/IPv6, VLAN,
+reboot, GitLab backup, GitLab restore, leftover restart, Start KeyStone on boot, IPv4/IPv6, VLAN,
 Wi-Fi, SSH password). Off until you enable the root helper and Settings flags.
 
-If 2FA is on, changing IPv4 or IPv6, adding a VLAN, joining Wi-Fi, leftover restart, GitLab restore, or SSH password also asks for a current authenticator code. Proxmox, TrueNAS, and other appliance OSes stay on Observe. See [System](system.md).
+If 2FA is on, changing IPv4 or IPv6, adding a VLAN, joining Wi-Fi, leftover restart, Start KeyStone on boot, GitLab restore, or SSH password also asks for a current authenticator code. Proxmox, TrueNAS, and other appliance OSes stay on Observe. See [System](system.md).
 
 ### Node Settings
 

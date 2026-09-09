@@ -9,7 +9,7 @@ The **System** tab is host admin for **headless Ubuntu / Debian / Raspberry
 Pi OS** boxes. Health is on the left (leftover services, failed units,
 allowlisted journals, NTP, unattended-upgrades glance, addresses). Actions
 are on the right (apt, autoremove, confirmed reboot, IPv4/IPv6, VLAN,
-Wi-Fi, SSH password, GitLab Omnibus
+Wi-Fi, SSH password, Start KeyStone on boot, GitLab Omnibus
 backup). It is not a TrueNAS,
 Proxmox, OMV, or Unraid control plane — those already have a GUI. Put an
 agent on them for **Overview metrics** (and Docker Observe if they run
@@ -21,8 +21,8 @@ Cloudflare Tunnel and other containers stay on **Compose** (use **Update**
 This is **off until you enable it**, twice:
 
 1. On the node **Settings** tab: **Observe host updates and addressing**,
-   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, and reboot** if
-   you want Apply, Autoremove, leftover Restart, VLAN, Wi-Fi, SSH password, or Reboot. That Manage checkbox is behind a
+   and **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, and reboot** if
+   you want Apply, Autoremove, leftover Restart, VLAN, Wi-Fi, SSH password, Start KeyStone on boot, or Reboot. That Manage checkbox is behind a
    warning: signed-in admin plus the root helper can change this host.
 2. On the node, start the root helper socket (the metrics agent is **not**
    root):
@@ -99,8 +99,11 @@ no config editor and no enable toggle.
 
 Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
 are enabled for boot (`WantedBy=multi-user.target`). After a kernel or
-`apt upgrade` reboot they should come back on their own. Confirm with
-`systemctl is-enabled keystone-server keystone-agent` (must print
+`apt upgrade` reboot they should come back on their own. The node's
+Settings tab has a **Start KeyStone on boot** checkbox (live
+`systemctl is-enabled`, then `enable`/`disable` without `--now`). That does
+not restart the running process and does not change on a package upgrade.
+Confirm with `systemctl is-enabled keystone-server keystone-agent` (must print
 `enabled`) — `systemctl start` alone does not survive a reboot. See
 [Troubleshooting](troubleshooting.md).
 
@@ -114,7 +117,7 @@ exists, otherwise NetworkManager.
 
 Changing the address can drop the agent session (and SSH). Keep a console.
 If you enabled an authenticator, Apply IPv4, leftover **Restart**, GitLab
-**Restore**, **Add VLAN**, **Join Wi-Fi**, and **SSH password** also ask for a **current 6-digit code** (not a backup
+**Restore**, **Add VLAN**, **Join Wi-Fi**, **SSH password**, and **Start KeyStone on boot** also ask for a **current 6-digit code** (not a backup
 code). IPv6 uses that same step-up. **Add VLAN** creates `eth0.10` from a listed
 Ethernet parent and id 1–4094 (not a name textbox). The helper re-checks that
 the parent is on the live address list and that the VLAN iface is not already

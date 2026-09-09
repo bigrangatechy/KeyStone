@@ -1051,18 +1051,122 @@
     paintSystem(system);
   }
 
+  function paintKeystoneBoot(opts) {
+    const parent = document.createElement("div");
+    const data = opts.data || {};
+    const node = opts.node || "";
+    const manage = !!opts.manage;
+    const totpOn = !!opts.totpOn;
+    const uiHost = !!opts.uiHost;
+    const helperOn = !!opts.helperOn;
+    const head = el("div", "compose-head");
+    head.appendChild(el("h3", null, "Start KeyStone on boot"));
+    parent.appendChild(head);
+    parent.appendChild(el("p", "muted", "If this box is checked, packaged keystone-agent and keystone-server come back after a reboot (systemctl enable, not a unit-name textbox). This does not restart the running process now and does not use --now. An apt upgrade of KeyStone does not tick or untick this box. keystone-sys.socket stays off until you enable it yourself."));
+    const boot = data.keystone_boot || {};
+    const units = Array.isArray(boot.units) ? boot.units : [];
+    const present = units.filter((u) => u.present);
+    if (!helperOn) {
+      parent.appendChild(el("p", "muted", "Turn the System helper on to change this from the UI."));
+      return parent;
+    }
+    if (!present.length) {
+      parent.appendChild(el("p", "muted", "No packaged KeyStone unit on this host."));
+      return parent;
+    }
+    if (!manage) {
+      parent.appendChild(el(
+        "span",
+        boot.enabled ? "chip tone-ok" : "chip tone-warn",
+        boot.enabled ? "Starts on boot" : "Will not start on boot"
+      ));
+      parent.appendChild(el("p", "muted", "System Manage is off. This is observe only."));
+      return parent;
+    }
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = "/nodes/" + encodeURIComponent(node) + "/sys/unit_enable";
+    form.className = "sys-net";
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.name = "enabled";
+    hidden.value = boot.enabled ? "yes" : "no";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!boot.enabled;
+    box.addEventListener("change", function () {
+      hidden.value = box.checked ? "yes" : "no";
+    });
+    const lab = document.createElement("label");
+    lab.className = "check span-2";
+    lab.appendChild(box);
+    lab.appendChild(document.createTextNode(" Start KeyStone automatically when this machine boots"));
+    form.appendChild(hidden);
+    form.appendChild(lab);
+    form.addEventListener("submit", (ev) => {
+      const want = hidden.value === "yes";
+      let msg = want
+        ? "Start KeyStone on boot on this machine? After a reboot the agent (and server, if installed) will come back without a manual start. This does not restart the running process now."
+        : "Stop KeyStone coming back after a reboot? The running process stays up until you stop it or reboot. After the next reboot this node will be missing until you enable the unit from a console.";
+      if (!want && uiHost) {
+        msg = "This node is serving the KeyStone UI. After a reboot you will need a console to start it. Continue?";
+      }
+      if (!window.confirm(msg)) {
+        ev.preventDefault();
+        return;
+      }
+      if (totpOn) {
+        const field = form.querySelector('input[name="totp"]');
+        const digits = ((field && field.value) || "").replace(/\D/g, "");
+        if (digits.length !== 6) {
+          ev.preventDefault();
+        }
+      }
+    });
+    if (totpOn) {
+      const totp = document.createElement("input");
+      totp.name = "totp";
+      totp.inputMode = "numeric";
+      totp.autocomplete = "one-time-code";
+      totp.maxLength = 6;
+      totp.required = true;
+      totp.placeholder = "000000";
+      const totpLab = document.createElement("label");
+      totpLab.className = "span-2";
+      totpLab.appendChild(document.createTextNode("Authenticator code"));
+      totpLab.appendChild(totp);
+      totpLab.appendChild(el("span", "muted", "Current 6-digit code. Backup codes are for sign-in only."));
+      form.appendChild(totpLab);
+    }
+    const apply = document.createElement("button");
+    apply.type = "submit";
+    apply.className = "span-2";
+    apply.textContent = "Apply start on boot";
+    form.appendChild(apply);
+    parent.appendChild(form);
+    return parent;
+  }
+
   function paintSystem(host) {
     const reason = host.getAttribute("data-reason") || "";
     const node = host.getAttribute("data-node") || "";
     const manage = host.getAttribute("data-manage") === "1";
     const totpOn = host.getAttribute("data-totp") === "1";
+    const uiHost = host.getAttribute("data-ui-host") === "1";
+    const settingsSlot = document.getElementById("keystone-boot-settings");
     const stepUpErr = new URLSearchParams(location.search).get("err");
     if (reason === "offline") {
       host.replaceChildren(el("p", "muted", "Agent is not connected. System commands need a live session."));
+      if (settingsSlot) {
+        settingsSlot.replaceChildren(el("p", "muted", "Agent is not connected. Start KeyStone on boot needs a live session."));
+      }
       return;
     }
     if (reason === "disabled") {
       host.replaceChildren(el("p", "muted", "System observe is off. On this node's Settings tab, enable Observe host updates and addressing. Enabling keystone-sys.socket alone is not enough."));
+      if (settingsSlot) {
+        settingsSlot.replaceChildren(el("p", "muted", "Turn on Observe host updates on this Settings tab first. Start KeyStone on boot uses the System helper."));
+      }
       return;
     }
     const data = parse(host) || {};
@@ -1111,7 +1215,16 @@
       ));
       health.appendChild(sshLine);
     }
-    const uiHost = host.getAttribute("data-ui-host") === "1";
+    const boot = data.keystone_boot || {};
+    if (Array.isArray(boot.units) && boot.units.some((u) => u.present)) {
+      const bootLine = document.createElement("p");
+      bootLine.appendChild(el(
+        "span",
+        boot.enabled ? "chip tone-ok" : "chip tone-warn",
+        boot.enabled ? "Starts on boot" : "Will not start on boot"
+      ));
+      health.appendChild(bootLine);
+    }
     if (data.reboot_required) {
       wrap.appendChild(el("p", "error", data.kernel_pending
         ? "Kernel update pending. Reboot this node when you are ready."
@@ -1803,6 +1916,18 @@
         sform.appendChild(applySsh);
         actions.appendChild(sform);
       }
+    }
+    const bootOpts = {
+      data: data,
+      node: node,
+      manage: manage,
+      totpOn: totpOn,
+      uiHost: uiHost,
+      helperOn: helperOn
+    };
+    actions.appendChild(paintKeystoneBoot(bootOpts));
+    if (settingsSlot) {
+      settingsSlot.replaceChildren(paintKeystoneBoot(bootOpts));
     }
     split.appendChild(health);
     split.appendChild(actions);

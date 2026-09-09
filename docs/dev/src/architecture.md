@@ -95,6 +95,10 @@ Arch host updates, unattended-upgrades config editor, Watchtower,
 Docker GitLab backup. Allowlisted `journalctl` follow (five units) is in
 this slice; a unit-name textbox is not. Leftover/failed **unit restart** from
 those listed names is in (`systemctl restart`, step-up when TOTP is on).
+**Start KeyStone on boot** (`unit_enable`, `systemctl enable`/`disable`
+without `--now`, step-up) is in; rewriting unit files and enabling
+`keystone-sys.socket` from the UI are not. An apt upgrade does not tick that
+checkbox.
 Omnibus **GitLab restore** from listed dumps is in (`gitlab-backup restore`,
 step-up, one-shot ticket before SSE). Ethernet **IPv6** (automatic or static)
 is in on the same `net_set` as IPv4 (step-up when TOTP is on). **VLAN create**

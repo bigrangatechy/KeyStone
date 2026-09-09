@@ -52,7 +52,7 @@ off).
 | `network_devices` | NIC allowlist for network widgets; empty = automatic. |
 | `poll_secs` | 1–60, agent push + Overview poll. |
 | `docker_enabled`, `docker_manage`, `docker_allow_exec` | Agent policy. |
-| `sys_enabled`, `sys_manage` | Host system-admin observe / apply (opt-in `keystone-sys` socket). Default off. |
+| `sys_enabled`, `sys_manage` | Host system-admin observe / apply (opt-in `keystone-sys` socket). Default off. Start on boot is not a JSON field; it is live `systemctl is-enabled` via `unit_enable`. |
 | `compose_paths` | Extra `-f` files; used for Up after Down. |
 | `labels` | Heartbeat labels; replace TOML labels once connected. |
 

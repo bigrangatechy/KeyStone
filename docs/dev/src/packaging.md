@@ -38,6 +38,12 @@ Docker’s data root or `/`. Invariants (enforced by
   service user must read toml; `0750` `root:root` hides the file). Own
   that inode only — never `chown -R`.
 - `prerm` / `#DEBHELPER#` stop `keystone-*` only.
+- `cargo-deb` `enable = true, start = false`: install turns the unit on for
+  boot; `postinst` does not start the daemon during configure or upgrade.
+  Custom maintainer scripts never `systemctl enable`/`start`/`restart`.
+  The UI **Start KeyStone on boot** checkbox is live `is-enabled` then
+  `enable`/`disable` without `--now` — it does not run during a `.deb`
+  upgrade.
 - `postrm purge` deletes named KeyStone files (`keystone.sqlite`,
   `series.redb`) or `/var/lib/keystone/agent-buffer`. Never
   `rm -rf /var/lib/keystone` (the other package may still own files there)

@@ -738,7 +738,8 @@ async fn handle_sys(
         | SysOp::WifiJoin
         | SysOp::SshPassword
         | SysOp::Reboot
-        | SysOp::UnitRestart => crate::sys::call(op, payload).await,
+        | SysOp::UnitRestart
+        | SysOp::UnitEnable => crate::sys::call(op, payload).await,
         SysOp::UpdatesApply => anyhow::bail!("updates_apply is streamed from the apply page"),
         SysOp::UpdatesAutoremove => {
             anyhow::bail!("updates_autoremove is streamed from the autoremove page")
@@ -936,6 +937,7 @@ mod tests {
             SysOp::Reboot,
             SysOp::Journal,
             SysOp::UnitRestart,
+            SysOp::UnitEnable,
         ] {
             assert!(
                 DockerOp::from_str(op.as_str()).is_err(),

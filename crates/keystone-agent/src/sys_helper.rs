@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Root helper: allowlisted apt (upgrade / autoremove), leftover services,
-//! failed units, unit restart from those lists, reboot, journal follow,
+//! failed units, unit restart from those lists, KeyStone boot enable,
+//! reboot, journal follow,
 //! IPv4/IPv6, 802.1Q VLAN create, Wi-Fi join from a scan list, SSH password
 //! toggle, GitLab Omnibus backup/restore, and unattended-upgrades observe.
 //! No `sh -c`. Started by systemd socket.
@@ -16,17 +17,18 @@ use std::process::Stdio;
 use anyhow::{anyhow, Context};
 use keystone_core::sys::{
     gitlab_backup_id, gitlab_backup_name_ok, gitlab_backups_for_restore, gitlab_restore_listed,
-    iw_scan_args, journal_unit, merge_upgradable, netplan_fragment_path, netplan_vlan_yaml,
-    netplan_wifi_path, netplan_wifi_yaml, netplan_yaml, newest_gitlab_backup, nmcli_modify_args,
-    nmcli_vlan_add_args, nmcli_wifi_join_args, nmcli_wifi_list_args, nmcli_wifi_rescan_args,
-    parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json, parse_iw_scan,
-    parse_needrestart_batch, parse_nmcli_wifi_list, parse_ntp_sync, parse_restart_unit,
-    parse_restore_backup, parse_sshd_t, parse_systemctl_failed, parse_unattended_periodic,
-    ssh_reload_args, sshd_keystone_dropin, sshd_t_args, sshd_test_args, ssid_listed,
-    unit_listed_for_restart, NeedrestartBatch, NetSet, SshPassword, SysOp, VlanAdd, WifiIface,
-    WifiJoin, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN, SSHD_BIN, SSHD_KEYSTONE_DROPIN,
-    SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES, UNATTENDED_LOG, UNATTENDED_STAMP,
-    UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
+    iw_scan_args, journal_unit, keystone_boot_enabled, merge_upgradable, netplan_fragment_path,
+    netplan_vlan_yaml, netplan_wifi_path, netplan_wifi_yaml, netplan_yaml, newest_gitlab_backup,
+    nmcli_modify_args, nmcli_vlan_add_args, nmcli_wifi_join_args, nmcli_wifi_list_args,
+    nmcli_wifi_rescan_args, parse_apt_list_upgradable, parse_apt_simulate, parse_ip_addr_json,
+    parse_iw_scan, parse_needrestart_batch, parse_nmcli_wifi_list, parse_ntp_sync,
+    parse_restart_unit, parse_restore_backup, parse_sshd_t, parse_systemctl_failed,
+    parse_systemctl_is_enabled, parse_unattended_periodic, ssh_reload_args, sshd_keystone_dropin,
+    sshd_t_args, sshd_test_args, ssid_listed, systemctl_boot_args, systemctl_is_enabled_args,
+    unit_listed_for_restart, KeystoneBootUnit, NeedrestartBatch, NetSet, SshPassword, SysOp,
+    UnitEnable, VlanAdd, WifiIface, WifiJoin, GITLAB_BACKUP_BIN, GITLAB_BACKUP_DIR, GITLAB_CTL_BIN,
+    KEYSTONE_BOOT_UNITS, SSHD_BIN, SSHD_KEYSTONE_DROPIN, SYS_SOCKET_PATH, UNATTENDED_AUTO_UPGRADES,
+    UNATTENDED_LOG, UNATTENDED_STAMP, UNATTENDED_UPGRADE_BIN, UPDATES_LIST_CAP,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -175,18 +177,25 @@ async fn dispatch(
             unit_restart(&payload).await?;
             write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
         }
+        SysOp::UnitEnable => {
+            let raw = payload.to_string();
+            let req = UnitEnable::parse_json(&raw).map_err(|e| anyhow!("{e}"))?;
+            unit_enable(&req).await?;
+            write_json(writer, &json!({"ok": true, "payload": {"ok": true}})).await
+        }
     }
 }
 
 async fn status() -> anyhow::Result<Value> {
     let backend = detect_backend();
-    let (interfaces, leftovers, failed, ntp, unattended, ssh) = tokio::join!(
+    let (interfaces, leftovers, failed, ntp, unattended, ssh, keystone_boot) = tokio::join!(
         ip_addrs(),
         leftover_services(),
         failed_units(),
         ntp_sync(),
         unattended_status(),
-        ssh_status()
+        ssh_status(),
+        keystone_boot_status()
     );
     Ok(json!({
         "helper": true,
@@ -199,6 +208,7 @@ async fn status() -> anyhow::Result<Value> {
         "ssh": ssh,
         "unattended": unattended,
         "gitlab": gitlab_status(),
+        "keystone_boot": keystone_boot,
         "restart_services": leftovers.services,
         "failed_units": failed,
     }))
@@ -422,6 +432,29 @@ async fn ssh_status() -> Value {
         _ => {}
     }
     json!({ "available": false, "password_auth": false })
+}
+
+/// Observe `is-enabled` only. Do not enable/disable here.
+async fn keystone_boot_status() -> Value {
+    let mut units = Vec::new();
+    for unit in KEYSTONE_BOOT_UNITS {
+        let enabled = unit_is_enabled(unit).await;
+        units.push(KeystoneBootUnit {
+            unit: (*unit).to_string(),
+            present: enabled.is_some(),
+            enabled: enabled.unwrap_or(false),
+        });
+    }
+    json!({
+        "units": units,
+        "enabled": keystone_boot_enabled(&units),
+    })
+}
+
+async fn unit_is_enabled(unit: &str) -> Option<bool> {
+    let args = systemctl_is_enabled_args(unit).ok()?;
+    let o = Command::new("systemctl").args(&args).output().await.ok()?;
+    parse_systemctl_is_enabled(&String::from_utf8_lossy(&o.stdout))
 }
 
 fn net_snapshot(backend: &str, interfaces: &Value) -> Value {
@@ -1114,6 +1147,32 @@ async fn unit_restart(payload: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn unit_enable(req: &UnitEnable) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("unit enable is not invoked in tests");
+    }
+    let mut any = false;
+    for unit in KEYSTONE_BOOT_UNITS {
+        if unit_is_enabled(unit).await.is_none() {
+            continue;
+        }
+        any = true;
+        let args = systemctl_boot_args(req.enabled, unit).map_err(|e| anyhow!("{e}"))?;
+        let st = Command::new("systemctl")
+            .args(&args)
+            .status()
+            .await
+            .context("systemctl enable/disable")?;
+        if !st.success() {
+            anyhow::bail!("systemctl enable/disable failed");
+        }
+    }
+    if !any {
+        anyhow::bail!("no KeyStone unit on this host");
+    }
+    Ok(())
+}
+
 async fn journal_follow(
     payload: &Value,
     writer: &mut tokio::net::unix::OwnedWriteHalf,
@@ -1309,6 +1368,22 @@ mod tests {
                 .and_then(|v| v.as_bool())
                 .is_some(),
             "status unattended.enabled must be a bool, got {line}"
+        );
+        assert!(
+            payload
+                .get("keystone_boot")
+                .and_then(|n| n.get("units"))
+                .and_then(|x| x.as_array())
+                .is_some(),
+            "status must include keystone_boot.units, got {line}"
+        );
+        assert!(
+            payload
+                .get("keystone_boot")
+                .and_then(|n| n.get("enabled"))
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "status keystone_boot.enabled must be a bool, got {line}"
         );
         server.await.unwrap();
     }
@@ -1643,7 +1718,7 @@ mod tests {
             .split("async fn unit_restart")
             .nth(1)
             .expect("unit_restart")
-            .split("async fn journal_follow")
+            .split("async fn unit_enable")
             .next()
             .expect("unit_restart body");
         assert!(body.contains("systemctl"));
@@ -1710,6 +1785,104 @@ mod tests {
         assert!(
             err.contains("not invoked in tests"),
             "unit restart must not spawn systemctl in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn keystone_boot_observe_does_not_enable() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn keystone_boot_status")
+            .nth(1)
+            .expect("keystone_boot_status")
+            .split("async fn unit_is_enabled")
+            .next()
+            .expect("keystone_boot_status body");
+        assert!(body.contains("KEYSTONE_BOOT_UNITS"));
+        assert!(!body.contains("\"enable\""));
+        assert!(!body.contains("\"disable\""));
+        assert!(!body.contains("--now"));
+        let is_en = src
+            .split("async fn unit_is_enabled")
+            .nth(1)
+            .expect("unit_is_enabled")
+            .split("fn detect_backend")
+            .next()
+            .unwrap_or("");
+        assert!(is_en.contains("is-enabled") || src.contains("systemctl_is_enabled_args"));
+    }
+
+    #[test]
+    fn unit_enable_is_systemctl_argv_not_shell() {
+        let src = include_str!("sys_helper.rs");
+        let body = src
+            .split("async fn unit_enable")
+            .nth(1)
+            .expect("unit_enable")
+            .split("async fn journal_follow")
+            .next()
+            .expect("unit_enable body");
+        assert!(body.contains("systemctl"));
+        assert!(body.contains("systemctl_boot_args"));
+        assert!(body.contains("KEYSTONE_BOOT_UNITS"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("--now"));
+        assert!(!body.contains("keystone-sys"));
+        assert!(!body.contains("docker.service"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+    }
+
+    #[tokio::test]
+    async fn helper_unit_enable_bails_in_tests() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"unit_enable","payload":{"enabled":true}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            err.contains("not invoked in tests"),
+            "unit enable must not spawn systemctl enable in CI, got {err}"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn helper_rejects_shell_unit_enable_over_socket() {
+        let (path, _guard) = scratch_sock();
+        let listener = UnixListener::bind(&path).expect("bind");
+        let server = tokio::spawn(async move {
+            let (s, _) = listener.accept().await.expect("accept");
+            handle_conn(s).await.expect("handle");
+        });
+        let mut client = UnixStream::connect(&path).await.expect("connect");
+        client
+            .write_all(br#"{"op":"unit_enable","payload":{"enabled":"yes;rm"}}"#)
+            .await
+            .unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+        let mut lines = BufReader::new(client).lines();
+        let line = lines.next_line().await.unwrap().expect("reply");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(false), "{line}");
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("");
+        assert!(
+            !err.contains("not invoked"),
+            "must reject before spawn: {err}"
         );
         server.await.unwrap();
     }

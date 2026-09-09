@@ -224,6 +224,43 @@ fn sys_helper_is_opt_in_root_socket() {
 }
 
 #[test]
+fn cargo_deb_enables_boot_without_starting_on_upgrade() {
+    for (name, cargo) in [("agent", AGENT_CARGO), ("server", SERVER_CARGO)] {
+        let line = cargo
+            .lines()
+            .find(|l| l.contains("systemd-units"))
+            .unwrap_or_else(|| panic!("{name} systemd-units"));
+        assert!(
+            line.contains("enable = true"),
+            "{name} package enables the unit for boot on install"
+        );
+        assert!(
+            line.contains("start = false"),
+            "{name} postinst must not start the daemon during configure/upgrade"
+        );
+    }
+    for s in scripts() {
+        let active = active_shell(s);
+        assert!(
+            !active.contains("systemctl enable"),
+            "custom maintainer script must not enable units (deb-systemd-helper does)"
+        );
+        assert!(
+            !active.contains("systemctl start"),
+            "custom maintainer script must not start KeyStone during upgrade"
+        );
+        assert!(
+            !active.contains("systemctl restart"),
+            "custom maintainer script must not restart KeyStone or Docker"
+        );
+        assert!(
+            !active.contains("systemctl disable"),
+            "upgrade must not disable a unit the operator enabled"
+        );
+    }
+}
+
+#[test]
 fn cargo_run_defaults_to_metrics_agent() {
     assert!(
         AGENT_CARGO.contains("default-run = \"keystone-agent\""),

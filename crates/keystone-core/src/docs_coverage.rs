@@ -429,8 +429,9 @@ fn operator_docs_cover_ipv4_step_up() {
             && dev.contains("`wifi_join`")
             && dev.contains("`ssh_password`")
             && dev.contains("`unit_restart`")
+            && dev.contains("`unit_enable`")
             && dev.contains("`gitlab_restore`"),
-        "developer system.md must say net_set, vlan_add, wifi_join, ssh_password, unit_restart, and gitlab_restore need step-up"
+        "developer system.md must say net_set, vlan_add, wifi_join, ssh_password, unit_restart, unit_enable, and gitlab_restore need step-up"
     );
     assert!(
         docker.contains("needs_step_up()") && docker.contains("confirm"),
@@ -829,6 +830,7 @@ fn user_guide_sysop_needle(op: SysOp) -> &'static str {
         SysOp::Reboot => "reboot",
         SysOp::Journal => "journals",
         SysOp::UnitRestart => "leftover restart",
+        SysOp::UnitEnable => "Start KeyStone on boot",
     }
 }
 
@@ -846,4 +848,55 @@ fn operator_user_guide_covers_every_sysop() {
             "docs/src/using.md must mention {needle:?} for SysOp {op:?}"
         );
     }
+}
+
+#[test]
+fn operator_docs_cover_keystone_boot_enable() {
+    let system = include_str!("../../../docs/src/system.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let security = include_str!("../../../docs/src/security.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/system.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    let packaging = include_str!("../../../docs/dev/src/packaging.md");
+    assert!(
+        system.contains("Start KeyStone on boot")
+            && system.contains("systemctl is-enabled")
+            && system.contains("without `--now`"),
+        "System chapter must document the boot checkbox as enable, not --now"
+    );
+    assert!(
+        using.contains("Start KeyStone on boot") && using.contains("current authenticator code"),
+        "using.md must mention Start KeyStone on boot and step-up"
+    );
+    assert!(
+        trouble.contains("Start KeyStone on boot") && trouble.contains("without `--now`"),
+        "troubleshooting must cover the Settings boot checkbox"
+    );
+    assert!(
+        security.contains("Start KeyStone on boot") && security.contains("reboot"),
+        "security.md must treat boot enable like leftover restart for step-up"
+    );
+    assert!(
+        audit.contains("Start KeyStone on boot"),
+        "Audit must list boot enable as a mutation"
+    );
+    assert!(
+        http.contains("`unit_enable`") && http.contains("`enabled`"),
+        "HTTP API must mention unit_enable and enabled"
+    );
+    assert!(
+        dev.contains("`unit_enable`") && dev.contains("`--now`"),
+        "developer system.md must say unit_enable is not --now"
+    );
+    assert!(
+        arch.contains("unit_enable") && arch.contains("`--now`"),
+        "architecture.md must say boot enable is in and --now stays out of that op"
+    );
+    assert!(
+        packaging.contains("start = false") && packaging.contains("without `--now`"),
+        "packaging.md must say upgrades do not start the daemon and the UI checkbox is not --now"
+    );
 }

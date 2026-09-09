@@ -213,6 +213,11 @@ systemctl is-enabled keystone-server keystone-agent
 sudo systemctl enable --now keystone-server keystone-agent
 ```
 
+Or tick **Start KeyStone on boot** on that node's Settings (System helper
+and Manage on). That is `systemctl enable` without `--now`: it does not
+restart the running process. An apt upgrade of KeyStone does not tick or
+untick the box.
+
 `is-enabled` should print `enabled`. Current packages use `Restart=always`
 and disable the start-limit so a boot race with Docker or the network does
 not leave the service `failed`. Then:

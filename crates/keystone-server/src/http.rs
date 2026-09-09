@@ -24,8 +24,8 @@ use keystone_core::docker::{
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
 use keystone_core::sys::{
-    audit_sys_target, journal_unit, parse_password_auth, parse_restore_backup, validate_wifi_iface,
-    SysOp,
+    audit_sys_target, journal_unit, parse_boot_enabled, parse_password_auth, parse_restore_backup,
+    validate_wifi_iface, SysOp,
 };
 use keystone_core::widgets::{hydrate, presets_for_samples, Dashboard, WidgetKind};
 use keystone_core::{NodeSettings, ServerSettings};
@@ -2277,6 +2277,7 @@ struct SysForm {
     ssid: Option<String>,
     psk: Option<String>,
     password_auth: Option<String>,
+    enabled: Option<String>,
     #[serde(default)]
     totp: String,
     #[serde(default)]
@@ -2365,6 +2366,11 @@ fn sys_form_payload(form: &SysForm) -> String {
     if let Some(p) = &form.password_auth {
         if let Ok(v) = parse_password_auth(p) {
             map.insert("password_auth".into(), serde_json::json!(v));
+        }
+    }
+    if let Some(p) = &form.enabled {
+        if let Ok(v) = parse_boot_enabled(p) {
+            map.insert("enabled".into(), serde_json::json!(v));
         }
     }
     serde_json::Value::Object(map).to_string()
@@ -3622,6 +3628,7 @@ mod tests {
         assert!(js.contains("/sys/vlan_add"));
         assert!(js.contains("/sys/wifi_join"));
         assert!(js.contains("/sys/ssh_password"));
+        assert!(js.contains("/sys/unit_enable"));
         assert!(js.contains("/sys/updates"));
         assert!(js.contains("/sys/autoremove"));
         assert!(js.contains("/sys/gitlab-backup"));
@@ -3648,12 +3655,15 @@ mod tests {
         assert!(!SysOp::GitlabBackup.needs_step_up());
         assert!(SysOp::Reboot.mutating());
         assert!(SysOp::UnitRestart.mutating());
+        assert!(SysOp::UnitEnable.mutating());
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
         assert!(!SysOp::Journal.mutating());
         assert!(!SysOp::Reboot.streams());
         assert!(!SysOp::UnitRestart.streams());
+        assert!(!SysOp::UnitEnable.streams());
         assert!(SysOp::UnitRestart.needs_step_up());
+        assert!(SysOp::UnitEnable.needs_step_up());
         assert!(SysOp::Journal.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
     }
@@ -3973,6 +3983,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: None,
+            enabled: None,
             totp: "123456".into(),
             redirect: String::new(),
         };
@@ -4005,6 +4016,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: None,
+            enabled: None,
             totp: "000000".into(),
             redirect: String::new(),
         };
@@ -4030,6 +4042,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: None,
+            enabled: None,
             totp: "654321".into(),
             redirect: String::new(),
         };
@@ -4055,6 +4068,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: None,
+            enabled: None,
             totp: "111111".into(),
             redirect: String::new(),
         };
@@ -4081,6 +4095,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: None,
+            enabled: None,
             totp: "222222".into(),
             redirect: String::new(),
         };
@@ -4107,6 +4122,7 @@ mod tests {
             ssid: Some(" Home Lab ".into()),
             psk: Some("testpass1".into()),
             password_auth: None,
+            enabled: None,
             totp: "333333".into(),
             redirect: String::new(),
         };
@@ -4136,6 +4152,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: Some(" no ".into()),
+            enabled: None,
             totp: "444444".into(),
             redirect: String::new(),
         };
@@ -4162,6 +4179,7 @@ mod tests {
             ssid: None,
             psk: None,
             password_auth: Some("yes;rm".into()),
+            enabled: None,
             totp: "555555".into(),
             redirect: String::new(),
         };
@@ -4169,6 +4187,82 @@ mod tests {
         assert!(!j.contains("password_auth"));
         assert!(!j.contains("yes;rm"));
         assert!(!j.contains("555555"));
+        let boot_on = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: None,
+            psk: None,
+            password_auth: None,
+            enabled: Some("yes".into()),
+            totp: "666666".into(),
+            redirect: String::new(),
+        };
+        let b = sys_form_payload(&boot_on);
+        assert!(b.contains("\"enabled\":true"));
+        assert!(!b.contains("666666"));
+        let boot_off = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: None,
+            psk: None,
+            password_auth: None,
+            enabled: Some("no".into()),
+            totp: "777777".into(),
+            redirect: String::new(),
+        };
+        assert!(sys_form_payload(&boot_off).contains("\"enabled\":false"));
+        let boot_junk = SysForm {
+            payload: None,
+            iface: None,
+            method: None,
+            address: None,
+            prefix: None,
+            gateway: None,
+            dns: None,
+            ipv6_method: None,
+            ipv6_address: None,
+            ipv6_prefix: None,
+            ipv6_gateway: None,
+            ipv6_dns: None,
+            unit: None,
+            name: None,
+            vlan: None,
+            ssid: None,
+            psk: None,
+            password_auth: None,
+            enabled: Some("yes;rm".into()),
+            totp: "888888".into(),
+            redirect: String::new(),
+        };
+        let bj = sys_form_payload(&boot_junk);
+        assert!(!bj.contains("enabled"));
+        assert!(!bj.contains("yes;rm"));
     }
 
     #[test]
@@ -4262,8 +4356,12 @@ mod tests {
             "System tab must know whether TOTP is on"
         );
         assert!(
-            html.contains("leftover restart"),
-            "Settings manage checkbox must mention leftover unit restart"
+            html.contains("start on boot"),
+            "Settings manage checkbox must mention start on boot"
+        );
+        assert!(
+            html.contains("id=\"keystone-boot-settings\""),
+            "Start on boot must be a separate Settings form, not Save settings"
         );
         assert!(
             html.contains("GitLab restore"),
@@ -4330,6 +4428,13 @@ mod tests {
                 && js.contains("not an SSID textbox")
                 && js.contains("wifiIface"),
             "Wi-Fi join must scan listed SSIDs, not a free SSID field"
+        );
+        assert!(
+            js.contains("/sys/unit_enable")
+                && js.contains("Start KeyStone on boot")
+                && js.contains("does not restart the running process")
+                && js.contains("not a unit-name textbox"),
+            "boot enable must be a checkbox for packaged units, not a live restart"
         );
         assert!(
             js.contains("/sys/ssh_password")

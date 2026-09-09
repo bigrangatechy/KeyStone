@@ -350,13 +350,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_poll_secs_defaults_to_one() {
-        let s = NodeSettings::parse_or_default(Some("{}"));
-        assert_eq!(s.poll_interval_secs(), 1);
-        assert_eq!(NodeSettings::default().poll_interval_secs(), 1);
-        assert_eq!(NodeSettings::parse_or_default(None).poll_interval_secs(), 1);
+    fn old_node_json_ignores_unknown_keys() {
+        let s = NodeSettings::parse_or_default(Some(
+            r#"{"poll_secs":5,"boot_enable":true,"future_flag":1}"#,
+        ));
+        assert_eq!(s.poll_secs, 5);
+        assert!(!s.sys_manage);
+        assert!(!s.sys_enabled);
         assert!(!s.docker_enabled);
-        assert!(s.labels.is_empty());
+    }
+
+    #[test]
+    fn old_server_json_ignores_unknown_keys() {
+        let s = ServerSettings::parse_or_default(Some(
+            r#"{"retention_hours":12,"ingest_token":"x","boot_enable":true}"#,
+        ));
+        assert_eq!(s.retention_hours, 12);
+        assert_eq!(s.ingest_token, "x");
+        assert!(s.alert_webhook_url.is_empty());
     }
 
     #[test]
