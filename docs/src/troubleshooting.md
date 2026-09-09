@@ -147,6 +147,8 @@ token does not.
   Login refused: username/token rejected by the registry, or the registry is
   not Docker Hub / GHCR (Harbor is not this form). The password is not stored
   on the KeyStone server.
+- Disk full on a Docker node: Images shows Engine disk use. Prune unused
+  images and prune build cache (Manage). That does not delete volumes.
 
 ## System tab errors
 

@@ -224,6 +224,30 @@ mod tests {
         assert!(!err.contains("docker.sock"), "{err}");
     }
 
+    #[tokio::test]
+    async fn local_status_omits_helper_only_fields() {
+        let v = local_status().await;
+        assert_eq!(v["helper_running"], json!(socket_present()));
+        assert!(
+            v["restart_services"]
+                .as_array()
+                .is_some_and(|a| a.is_empty()),
+            "leftovers come from the helper, not local_status"
+        );
+        assert!(
+            v["failed_units"].as_array().is_some_and(|a| a.is_empty()),
+            "failed units come from the helper, not local_status"
+        );
+        for key in ["ssh", "unattended", "keystone_boot", "packages", "net"] {
+            assert!(
+                v.get(key).is_none(),
+                "{key} must wait for keystone-sys; laptop without the socket must not show those actions"
+            );
+        }
+        assert!(v.get("interfaces").is_some());
+        assert!(v.get("ntp").is_some());
+    }
+
     #[test]
     fn status_call_budget_is_shorter_than_node_page_timeout() {
         assert!(

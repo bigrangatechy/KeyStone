@@ -6,6 +6,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # Summary
 
 - [Introduction](introduction.md)
+- [Features](features.md)
 - [Install](install.md)
 - [User guide](using.md)
 - [Dashboards](dashboard.md)
@@ -17,3 +18,4 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - [Metrics](metrics.md)
 - [Security](security.md)
 - [Troubleshooting](troubleshooting.md)
+- [Changelog](changelog.md)

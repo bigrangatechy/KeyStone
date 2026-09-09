@@ -814,6 +814,45 @@ fn operator_docs_cover_image_inspect() {
     );
 }
 
+#[test]
+fn operator_docs_cover_system_df() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    assert!(
+        docker.contains("Engine disk use") && docker.contains("prune build cache"),
+        "operator Docker doc must describe df glance and build-cache prune"
+    );
+    assert!(
+        using.contains("Engine disk use") && using.contains("build cache"),
+        "using.md must mention Engine disk use and build cache"
+    );
+    assert!(
+        http.contains("/api/v1/nodes/{id}/system-df") && http.contains("system_df"),
+        "HTTP API must list summarized system df"
+    );
+    assert!(
+        dev.contains("`system_df`") && dev.contains("`build_cache_prune`"),
+        "developer docker.md must list system_df and build_cache_prune"
+    );
+    assert!(
+        arch.contains("system_df") && arch.contains("build_cache_prune"),
+        "architecture.md must mention system_df and build_cache_prune"
+    );
+    assert!(
+        audit.contains("build cache") || audit.contains("build-cache"),
+        "audit.md must mention build-cache prune"
+    );
+    assert!(
+        trouble.contains("Engine disk use") && trouble.contains("build cache"),
+        "troubleshooting must point disk-full at Images df and prune"
+    );
+}
+
 /// Walkthrough needles for every SysOp. A new variant fails to compile here
 /// until `docs/src/using.md` (Help → User guide) mentions it.
 fn user_guide_sysop_needle(op: SysOp) -> &'static str {
@@ -832,6 +871,52 @@ fn user_guide_sysop_needle(op: SysOp) -> &'static str {
         SysOp::UnitRestart => "leftover restart",
         SysOp::UnitEnable => "Start KeyStone on boot",
     }
+}
+
+#[test]
+fn operator_docs_cover_changelog_and_features() {
+    let log = include_str!("../../../docs/src/changelog.md");
+    let feat = include_str!("../../../docs/src/features.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let intro = include_str!("../../../docs/src/introduction.md");
+    assert!(log.contains("# Changelog") && log.contains("AEST"));
+    let mut headings = 0usize;
+    for line in log.lines() {
+        let Some(rest) = line.strip_prefix("## ") else {
+            continue;
+        };
+        headings += 1;
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "changelog heading must be HH:MM:SS DD/MM/YYYY AEST, got {rest}"
+        );
+        assert_eq!(parts[0].matches(':').count(), 2, "{rest}");
+        assert_eq!(parts[1].matches('/').count(), 2, "{rest}");
+        assert_eq!(parts[2], "AEST", "{rest}");
+    }
+    assert!(
+        headings >= 50,
+        "changelog must keep dated history, got {headings}"
+    );
+    assert!(
+        feat.contains("# Features")
+            && feat.contains("## Current")
+            && feat.contains("## Later")
+            && feat.contains("## Not this product")
+            && feat.contains("keystone-sys")
+            && feat.contains("docker.sock"),
+        "features.md must split current, later, and stay-out"
+    );
+    assert!(
+        using.contains("Features") && using.contains("Changelog"),
+        "using.md must point at Features and Changelog"
+    );
+    assert!(
+        intro.contains("HH:MM:SS DD/MM/YYYY AEST"),
+        "introduction must say how changelog times are written"
+    );
 }
 
 #[test]

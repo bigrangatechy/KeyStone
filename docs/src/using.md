@@ -8,7 +8,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 This is how you use KeyStone in the browser. Agents do not serve a page.
 Header **Help** is this book for **this** binary. Start here, then open
 [Docker](docker.md) or [System](system.md) when you need the detail on one
-tab.
+tab. [Features](features.md) is current vs later. [Changelog](changelog.md)
+is dated.
 
 ## Sign in
 
@@ -96,7 +97,8 @@ series for debugging, not the usual way to watch a host. See
 ### Docker
 
 Containers and Compose are cards (click for details). Local images are cards
-(inspect drops `Env`). Volumes and Networks are tables. **Logs** follows
+(inspect drops `Env`). Images also show Engine disk use and can prune unused
+build cache. Volumes and Networks are tables. **Logs** follows
 that container or Compose project. Images search Docker Hub as cards that
 fill Pull, and can log into Hub or GHCR on that node.
 
@@ -129,4 +131,5 @@ paths, System-admin flags. See [Configuration](configuration.md).
   authenticator 2FA, and **Replay welcome tour**. Listen addresses and the
   admin username stay in `server.toml`. The home page reminds you to enable
   2FA if it is still off.
-- **Help** — this operator book.
+- **Help** — this operator book, including [Features](features.md) and
+  [Changelog](changelog.md).

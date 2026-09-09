@@ -16,7 +16,9 @@ Two audiences, two trees. Neither is generated from Rust types.
 user-facing page means: write `docs/src/*.md`, add it to `docs/src/SUMMARY.md`,
 and add a `HelpSection` in `help.rs` if it should appear in the UI. Titles in
 `SUMMARY.md` must match `help.rs`. The User guide (`using.md`), Alerts, System,
-and Audit chapters must be in all three places.
+and Audit chapters must be in all three places. **Features** (`features.md`)
+is current vs later vs stay-out. **Changelog** (`changelog.md`) headings are
+`HH:MM:SS DD/MM/YYYY AEST` (newest first).
 
 `/help` redirects to `/help/using`. Relative chapter links (`docker.md`,
 `security.md#tls`) are rewritten to `/help/docker` when Help renders HTML;

@@ -54,6 +54,10 @@ pub enum DockerOp {
     ImageLogin,
     ImagePrune,
     ImageRemove,
+    /// Engine `/system/df`. Agent and HTTP summarize to counts/sizes.
+    SystemDf,
+    /// `docker builder prune -a -f`. Confirm-only; tests must not invoke it.
+    BuildCachePrune,
     VolumeList,
     VolumeInspect,
     VolumeCreate,
@@ -109,6 +113,8 @@ impl DockerOp {
             Self::ImageLogin => "Log in to Docker Hub or GHCR on this node",
             Self::ImagePrune => "Prune unused images",
             Self::ImageRemove => "Remove an image",
+            Self::SystemDf => "Show Engine disk use",
+            Self::BuildCachePrune => "Prune unused Docker build cache",
             Self::VolumeList => "List volumes",
             Self::VolumeInspect => "Inspect a volume",
             Self::VolumeCreate => "Create a volume",
@@ -145,6 +151,7 @@ impl DockerOp {
                 | Self::ImageLogin
                 | Self::ImagePrune
                 | Self::ImageRemove
+                | Self::BuildCachePrune
                 | Self::VolumeCreate
                 | Self::VolumeRemove
                 | Self::VolumePrune
@@ -168,8 +175,9 @@ impl DockerOp {
     }
 
     /// Fresh authenticator code when TOTP is on. No Docker op uses this
-    /// yet (`image_login` is confirm-only). IPv4/IPv6, VLAN, Wi-Fi, SSH
-    /// password, leftover restart, and GitLab restore are `SysOp`s.
+    /// yet (`image_login` and `build_cache_prune` are confirm-only).
+    /// IPv4/IPv6, VLAN, Wi-Fi, SSH password, leftover restart, and GitLab
+    /// restore are `SysOp`s.
     pub fn needs_step_up(self) -> bool {
         let _ = self;
         false
@@ -250,6 +258,51 @@ fn json_str(v: &serde_json::Value, names: &[&str]) -> Option<String> {
 
 fn json_bool(v: &serde_json::Value, names: &[&str]) -> Option<bool> {
     json_field(v, names).and_then(|x| x.as_bool())
+}
+
+fn json_i64(v: &serde_json::Value, names: &[&str]) -> i64 {
+    json_field(v, names).and_then(value_i64).unwrap_or(0)
+}
+
+fn value_i64(x: &serde_json::Value) -> Option<i64> {
+    match x {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .or_else(|| n.as_u64().and_then(|u| i64::try_from(u).ok()))
+            .or_else(|| n.as_f64().map(|f| f as i64)),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+fn usage_bucket(count: i64, size: i64, reclaimable: i64) -> serde_json::Value {
+    serde_json::json!({
+        "count": count.max(0),
+        "size": size.max(0),
+        "reclaimable": reclaimable.max(0),
+    })
+}
+
+fn compact_usage(v: &serde_json::Value) -> serde_json::Value {
+    usage_bucket(
+        json_i64(v, &["count", "TotalCount", "total_count"]),
+        json_i64(v, &["size", "Size"]),
+        json_i64(v, &["reclaimable", "Reclaimable"]),
+    )
+}
+
+fn usage_from_field(
+    raw: &serde_json::Value,
+    names: &[&str],
+    from_array: impl Fn(&[serde_json::Value]) -> serde_json::Value,
+) -> serde_json::Value {
+    let Some(v) = json_field(raw, names) else {
+        return usage_bucket(0, 0, 0);
+    };
+    if let Some(arr) = v.as_array() {
+        return from_array(arr);
+    }
+    compact_usage(v)
 }
 
 fn json_string_list(v: &serde_json::Value, names: &[&str]) -> Vec<String> {
@@ -350,6 +403,11 @@ pub fn validate_login_password(raw: &str) -> Result<String, DockerLoginError> {
         return Err(DockerLoginError::Password);
     }
     Ok(t.to_string())
+}
+
+/// `docker builder prune -a -f`. Unused BuildKit cache, not images or volumes.
+pub fn docker_builder_prune_args() -> &'static [&'static str] {
+    &["builder", "prune", "-a", "-f"]
 }
 
 /// `docker login --username … --password-stdin <registry>`. Password is stdin.
@@ -696,6 +754,82 @@ pub fn summarize_image_inspect(raw: &serde_json::Value) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
+/// Map Engine `/system/df` JSON to counts, sizes, and reclaimable bytes.
+/// Drops image ids, tags, labels, and cache descriptions so the UI never
+/// sees layer lists. Idempotent on an already-summarized object.
+pub fn summarize_system_df(raw: &serde_json::Value) -> serde_json::Value {
+    let layers = json_i64(raw, &["LayersSize", "layers_size"]);
+    let images = usage_from_field(raw, &["Images", "images"], |arr| {
+        let count = arr.len() as i64;
+        let mut unused = 0i64;
+        let mut summed = 0i64;
+        for img in arr {
+            let sz = json_i64(img, &["Size", "size"]).max(0);
+            summed = summed.saturating_add(sz);
+            if json_i64(img, &["Containers", "containers"]) == 0 {
+                unused = unused.saturating_add(sz);
+            }
+        }
+        let size = if layers > 0 { layers } else { summed };
+        usage_bucket(count, size, unused)
+    });
+    let containers = usage_from_field(raw, &["Containers", "containers"], |arr| {
+        let count = arr.len() as i64;
+        let mut size = 0i64;
+        let mut reclaimable = 0i64;
+        for c in arr {
+            let rw = json_i64(c, &["SizeRw", "size_rw"]).max(0);
+            size = size.saturating_add(rw);
+            let state = json_str(c, &["State", "state"])
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if state != "running" && state != "paused" {
+                reclaimable = reclaimable.saturating_add(rw);
+            }
+        }
+        usage_bucket(count, size, reclaimable)
+    });
+    let volumes = usage_from_field(raw, &["Volumes", "volumes"], |arr| {
+        let count = arr.len() as i64;
+        let mut size = 0i64;
+        let mut reclaimable = 0i64;
+        for vol in arr {
+            let usage = json_field(vol, &["UsageData", "usage_data"]).unwrap_or(vol);
+            let sz = json_i64(usage, &["Size", "size"]).max(0);
+            size = size.saturating_add(sz);
+            if json_i64(usage, &["RefCount", "ref_count"]) == 0 {
+                reclaimable = reclaimable.saturating_add(sz);
+            }
+        }
+        usage_bucket(count, size, reclaimable)
+    });
+    let build_cache = usage_from_field(raw, &["BuildCache", "build_cache"], |arr| {
+        let count = arr.len() as i64;
+        let mut size = 0i64;
+        let mut reclaimable = 0i64;
+        for c in arr {
+            let sz = json_i64(c, &["Size", "size"]).max(0);
+            size = size.saturating_add(sz);
+            if !json_bool(c, &["InUse", "in_use"]).unwrap_or(false) {
+                reclaimable = reclaimable.saturating_add(sz);
+            }
+        }
+        usage_bucket(count, size, reclaimable)
+    });
+    let layers_size = if layers > 0 {
+        layers
+    } else {
+        json_i64(&images, &["size"])
+    };
+    serde_json::json!({
+        "layers_size": layers_size.max(0),
+        "images": images,
+        "containers": containers,
+        "volumes": volumes,
+        "build_cache": build_cache,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,6 +1048,71 @@ mod tests {
     }
 
     #[test]
+    fn summarize_system_df_drops_ids_and_labels() {
+        assert_eq!(
+            docker_builder_prune_args(),
+            &["builder", "prune", "-a", "-f"]
+        );
+        let raw = serde_json::json!({
+            "LayersSize": 1000,
+            "Images": [{
+                "Id": "sha256:abcsecrettag",
+                "RepoTags": ["secret.example.com/app:latest"],
+                "Labels": { "password": "hunter2" },
+                "Containers": 0,
+                "Size": 400
+            }, {
+                "Id": "sha256:used",
+                "Containers": 1,
+                "Size": 600
+            }],
+            "Containers": [
+                { "Id": "deadbeef", "State": "exited", "SizeRw": 50 },
+                { "Id": "cafef00d", "State": "running", "SizeRw": 10 }
+            ],
+            "Volumes": [{
+                "Name": "secrets",
+                "UsageData": { "Size": 80, "RefCount": 0 }
+            }],
+            "BuildCache": [{
+                "ID": "cachesecret",
+                "Description": "COPY secret.env",
+                "InUse": false,
+                "Size": 200
+            }, {
+                "ID": "live",
+                "InUse": true,
+                "Size": 25
+            }]
+        });
+        let out = summarize_system_df(&raw);
+        let dumped = out.to_string();
+        assert!(
+            !dumped.contains("hunter2")
+                && !dumped.contains("secret.example.com")
+                && !dumped.contains("sha256:abc")
+                && !dumped.contains("cachesecret")
+                && !dumped.contains("secret.env")
+                && !dumped.contains("RepoTags"),
+            "df summary must not leak Engine ids or labels: {dumped}"
+        );
+        assert_eq!(out["images"]["count"], 2);
+        assert_eq!(out["images"]["size"], 1000);
+        assert_eq!(out["images"]["reclaimable"], 400);
+        assert_eq!(out["containers"]["count"], 2);
+        assert_eq!(out["containers"]["size"], 60);
+        assert_eq!(out["containers"]["reclaimable"], 50);
+        assert_eq!(out["volumes"]["count"], 1);
+        assert_eq!(out["volumes"]["reclaimable"], 80);
+        assert_eq!(out["build_cache"]["count"], 2);
+        assert_eq!(out["build_cache"]["size"], 225);
+        assert_eq!(out["build_cache"]["reclaimable"], 200);
+        let again = summarize_system_df(&out);
+        assert_eq!(again["build_cache"]["reclaimable"], 200);
+        assert_eq!(again["images"]["count"], 2);
+    }
+
+    #[test]
     fn mutating_ops_are_in_the_ui_except_reserved_exec() {
         use strum::IntoEnumIterator;
         let js = include_str!("../../keystone-server/src/static/app.js");
@@ -961,6 +1160,18 @@ mod tests {
         assert!(!DockerOp::ImageLogin.streams());
         assert_eq!(DockerOp::ImageLogin.permission(), Permission::DockerManage);
         assert!(!DockerOp::ImageLogin.needs_step_up());
+        assert_eq!(DockerOp::SystemDf.as_str(), "system_df");
+        assert!(!DockerOp::SystemDf.mutating());
+        assert_eq!(DockerOp::SystemDf.permission(), Permission::DockerView);
+        assert!(!DockerOp::SystemDf.streams());
+        assert_eq!(DockerOp::BuildCachePrune.as_str(), "build_cache_prune");
+        assert!(DockerOp::BuildCachePrune.mutating());
+        assert!(!DockerOp::BuildCachePrune.streams());
+        assert_eq!(
+            DockerOp::BuildCachePrune.permission(),
+            Permission::DockerManage
+        );
+        assert!(!DockerOp::BuildCachePrune.needs_step_up());
     }
 
     #[test]

@@ -46,6 +46,7 @@ pub fn sections() -> Vec<HelpSection> {
             "Introduction",
             operator_md!("introduction.md"),
         ),
+        section("features", "Features", operator_md!("features.md")),
         section("install", "Install", operator_md!("install.md")),
         section("using", "User guide", operator_md!("using.md")),
         section("dashboard", "Dashboards", operator_md!("dashboard.md")),
@@ -65,6 +66,7 @@ pub fn sections() -> Vec<HelpSection> {
             "Troubleshooting",
             operator_md!("troubleshooting.md"),
         ),
+        section("changelog", "Changelog", operator_md!("changelog.md")),
     ]
 }
 

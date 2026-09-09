@@ -71,6 +71,8 @@ not advertise mDNS.
    and never opens `docker.sock`. The Compose tab paints glance cards from
    `compose_ps` (running/exited) then the service table; it is not an app
    shop. Clicking a local image loads summarized `image_inspect` and drops `Env`.
+   Images then load summarized `system_df` (counts/sizes, no layer ids) and can
+   prune unused build cache (`build_cache_prune`, confirm-only).
    A CasaOS-style app shop is not this path.
    Host System POSTs are the same gRPC path with `SysOp`; the agent talks
    to `/run/keystone/sys.sock` only if `keystone-sys.socket` is enabled.

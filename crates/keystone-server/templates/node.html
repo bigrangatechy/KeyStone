@@ -82,6 +82,9 @@
     <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/image_prune" data-confirm="Prune unused images on this node?">
       <button type="submit" class="danger">Prune unused</button>
     </form>
+    <form class="inline" method="post" action="/nodes/{{ node_id }}/docker/build_cache_prune" data-confirm="Delete unused Docker build cache on this node? Images, containers, and volumes stay. This cannot be undone.">
+      <button type="submit" class="danger">Prune build cache</button>
+    </form>
   </div>
   <div id="hub-results" hidden></div>
   {% endif %}

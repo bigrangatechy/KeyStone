@@ -19,7 +19,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
 use keystone_core::docker::{
     audit_docker_target, docker_ref_ok, summarize_container_inspect, summarize_image_inspect,
-    DockerOp,
+    summarize_system_df, DockerOp,
 };
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
@@ -169,6 +169,7 @@ pub fn router(state: AppState) -> Router {
             get(container_inspect_api),
         )
         .route("/api/v1/nodes/{id}/images/{iid}", get(image_inspect_api))
+        .route("/api/v1/nodes/{id}/system-df", get(system_df_api))
         .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
@@ -2064,6 +2065,33 @@ async fn image_inspect_api(
     }
 }
 
+async fn system_df_api(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    // After the Images tab paints. Not part of the 8s page bundle.
+    match call_json_op_timeout(
+        &state,
+        &id,
+        DockerOp::SystemDf.as_str(),
+        "{}",
+        std::time::Duration::from_secs(60),
+    )
+    .await
+    {
+        Ok(body) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            Json(summarize_system_df(&raw)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn call_json_op(
     state: &AppState,
     node_id: &str,
@@ -2163,7 +2191,9 @@ fn panel_for_op(op: DockerOp) -> &'static str {
         | DockerOp::ImagePull
         | DockerOp::ImageLogin
         | DockerOp::ImagePrune
-        | DockerOp::ImageRemove => "images",
+        | DockerOp::ImageRemove
+        | DockerOp::SystemDf
+        | DockerOp::BuildCachePrune => "images",
         DockerOp::VolumeList
         | DockerOp::VolumeInspect
         | DockerOp::VolumeCreate
@@ -3121,7 +3151,10 @@ mod tests {
             let name = op.as_str();
             if name.starts_with("compose_") {
                 assert_eq!(panel, "compose", "{name}");
-            } else if name.starts_with("image_") {
+            } else if name.starts_with("image_")
+                || name == "system_df"
+                || name == "build_cache_prune"
+            {
                 assert_eq!(panel, "images", "{name}");
             } else if name.starts_with("volume_") {
                 assert_eq!(panel, "volumes", "{name}");
@@ -3847,6 +3880,7 @@ mod tests {
     fn images_ui_is_cards_then_inspect() {
         let js = include_str!("static/app.js");
         let css = include_str!("static/app.css");
+        let html = include_str!("../templates/node.html");
         assert!(
             js.contains("image-card")
                 && js.contains("image-detail")
@@ -3858,7 +3892,18 @@ mod tests {
             js.contains("image_remove") && js.contains("not Env"),
             "Images detail must keep Remove and must not paint Env"
         );
-        assert!(css.contains(".image-card") && css.contains(".image-grid"));
+        assert!(
+            js.contains("/system-df")
+                && js.contains("Build cache")
+                && js.contains("build_cache_prune")
+                && html.contains("docker/build_cache_prune"),
+            "Images tab must show Engine disk use and prune build cache"
+        );
+        assert!(
+            css.contains(".image-card")
+                && css.contains(".image-grid")
+                && css.contains(".disk-glance")
+        );
     }
 
     #[test]
@@ -3899,6 +3944,13 @@ mod tests {
         assert!(
             image_inspect < authed_end,
             "image inspect must require a UI session"
+        );
+        let system_df = head
+            .find("/api/v1/nodes/{id}/system-df")
+            .expect("system df API");
+        assert!(
+            system_df < authed_end,
+            "system df must require a UI session"
         );
         let docker_post = head
             .find("/nodes/{id}/docker/{op}")
@@ -4473,6 +4525,11 @@ mod tests {
             "helper-down copy must cover ProtectSystem until the agent is restarted"
         );
         assert!(
+            js.contains("System helper is not running")
+                && js.contains("Turn the System helper on to change this from the UI."),
+            "helper-off must hide System actions instead of painting empty forms"
+        );
+        assert!(
             js.contains("formatCpuRatio") && js.contains("CPU"),
             "Containers tab must show per-container CPU from pushed samples"
         );
@@ -4508,6 +4565,10 @@ mod tests {
         assert!(
             inspect.contains("summarize_image_inspect") && inspect.contains("unknown image"),
             "image inspect API must strip Engine JSON and reject junk ids"
+        );
+        assert!(
+            inspect.contains("summarize_system_df") && inspect.contains("SystemDf"),
+            "system df API must summarize Engine JSON and stay off the page bundle"
         );
         let css = include_str!("static/app.css");
         assert!(
@@ -4551,6 +4612,10 @@ mod tests {
         assert!(
             list_at < join_at,
             "container_list must not share docker.sock with images/volumes on page load"
+        );
+        assert!(
+            !fn_src.contains("SystemDf"),
+            "system_df must load after paint, not on the 8s page bundle"
         );
     }
 

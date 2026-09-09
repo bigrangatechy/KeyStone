@@ -1044,6 +1044,10 @@ mod tests {
         assert!(is_page_list_op("container_list"));
         assert!(is_page_list_op("status"));
         assert!(!is_page_list_op("image_pull"));
+        assert!(
+            !is_page_list_op("system_df"),
+            "Engine df must not steal the node page 8s list budget"
+        );
         let src = include_str!("session.rs");
         assert!(
             src.contains("list_inflight"),

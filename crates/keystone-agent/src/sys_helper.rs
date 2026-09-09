@@ -572,6 +572,9 @@ fn netplan_methods(iface: &str) -> (String, String) {
 }
 
 async fn updates_list() -> anyhow::Result<Value> {
+    if cfg!(test) {
+        anyhow::bail!("updates list is not invoked in tests");
+    }
     apt_cmd(&["update"], false).await?;
     let mut pkgs = parse_apt_list_upgradable(&apt_list_upgradable().await.unwrap_or_default());
     let sim = apt_cmd(
@@ -615,6 +618,9 @@ async fn apt_list_upgradable() -> anyhow::Result<String> {
 }
 
 async fn updates_apply(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
+    if cfg!(test) {
+        anyhow::bail!("updates apply is not invoked in tests");
+    }
     stream_apt(writer, &["update"]).await?;
     stream_apt(
         writer,
@@ -761,6 +767,9 @@ async fn gitlab_backup(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow:
         anyhow::bail!(
             "GitLab Omnibus is not installed on this node ({GITLAB_BACKUP_BIN} missing). Docker GitLab is not in this version."
         );
+    }
+    if cfg!(test) {
+        anyhow::bail!("gitlab backup is not invoked in tests");
     }
     stream_argv(
         GITLAB_BACKUP_BIN,
@@ -1460,6 +1469,7 @@ mod tests {
         assert!(body.contains("GITLAB_BACKUP_BIN"));
         assert!(body.contains("\"create\""));
         assert!(body.contains("stream_argv"));
+        assert!(body.contains("cfg!(test)"));
         assert!(!body.contains("sh -c") && !body.contains("bash -c"));
         assert!(!body.contains("Restore is not in this UI"));
     }
@@ -1572,6 +1582,10 @@ mod tests {
             !list.contains("\"upgrade\""),
             "listing must not use apt-get -s upgrade (misses kept-back and new apt output)"
         );
+        assert!(
+            list.contains("cfg!(test)"),
+            "Check for updates must not run apt-get update in cargo test"
+        );
         let apply = src
             .split("async fn updates_apply")
             .nth(1)
@@ -1580,6 +1594,10 @@ mod tests {
             .next()
             .expect("updates_apply body");
         assert!(apply.contains("upgrade"));
+        assert!(
+            apply.contains("cfg!(test)"),
+            "Apply must not run apt-get upgrade in cargo test"
+        );
         assert!(
             !apply.contains("dist-upgrade"),
             "Apply stays apt-get upgrade, not dist-upgrade"
@@ -2408,6 +2426,48 @@ mod tests {
             "ssh_password must reject a non-bool payload, got {err}"
         );
         server.await.unwrap();
+    }
+
+    fn helper_impl_fn(op: SysOp) -> Option<&'static str> {
+        match op {
+            SysOp::Status => None,
+            SysOp::UpdatesList => Some("updates_list"),
+            SysOp::UpdatesApply => Some("updates_apply"),
+            SysOp::UpdatesAutoremove => Some("updates_autoremove"),
+            SysOp::NetSet => Some("net_set"),
+            SysOp::VlanAdd => Some("vlan_add"),
+            SysOp::WifiScan => Some("wifi_scan"),
+            SysOp::WifiJoin => Some("wifi_join"),
+            SysOp::SshPassword => Some("ssh_password"),
+            SysOp::GitlabBackup => Some("gitlab_backup"),
+            SysOp::GitlabRestore => Some("gitlab_restore"),
+            SysOp::Reboot => Some("reboot"),
+            SysOp::Journal => Some("journal_follow"),
+            SysOp::UnitRestart => Some("unit_restart"),
+            SysOp::UnitEnable => Some("unit_enable"),
+        }
+    }
+
+    #[test]
+    fn helper_live_tools_bail_in_tests() {
+        let src = include_str!("sys_helper.rs");
+        for op in SysOp::all() {
+            let Some(name) = helper_impl_fn(op) else {
+                continue;
+            };
+            let start = format!("async fn {name}");
+            let body = src
+                .split(&start)
+                .nth(1)
+                .unwrap_or_else(|| panic!("{start}"))
+                .split("async fn ")
+                .next()
+                .unwrap_or_else(|| panic!("{name} body"));
+            assert!(
+                body.contains("cfg!(test)"),
+                "{name} must not invoke live host tools in cargo test"
+            );
+        }
     }
 
     struct SockGuard(std::path::PathBuf);

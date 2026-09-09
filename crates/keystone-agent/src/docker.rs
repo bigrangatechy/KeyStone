@@ -22,7 +22,8 @@ use futures_util::future::join_all;
 use futures_util::StreamExt;
 use keystone_core::config::DockerConfig;
 use keystone_core::docker::{
-    docker_config_auth, docker_login_args, registry_host_for_image, DockerOp, ImageLogin,
+    docker_builder_prune_args, docker_config_auth, docker_login_args, registry_host_for_image,
+    summarize_system_df, DockerOp, ImageLogin,
 };
 use keystone_core::sample::Sample;
 use serde_json::{json, Value};
@@ -260,6 +261,8 @@ impl DockerHandle {
                     .await?;
                 Ok(serde_json::to_value(r)?)
             }
+            DockerOp::SystemDf => self.system_df().await,
+            DockerOp::BuildCachePrune => self.build_cache_prune().await,
             DockerOp::VolumeList => self.volume_list().await,
             DockerOp::VolumeInspect => {
                 let name = str_field(&payload, "name")?;
@@ -626,6 +629,29 @@ impl DockerHandle {
             anyhow::bail!("docker login failed: {stderr}{stdout}");
         }
         Ok(json!({"ok": true, "registry": req.registry}))
+    }
+
+    async fn system_df(&self) -> anyhow::Result<Value> {
+        let raw = self.docker.df().await?;
+        Ok(summarize_system_df(&serde_json::to_value(raw)?))
+    }
+
+    async fn build_cache_prune(&self) -> anyhow::Result<Value> {
+        if cfg!(test) {
+            anyhow::bail!("build cache prune is not invoked in tests");
+        }
+        // bollard 0.18 has df() but not POST /build/prune. Hardcoded argv, no shell.
+        let output = Command::new("docker")
+            .args(docker_builder_prune_args())
+            .output()
+            .await
+            .context("docker builder prune")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            anyhow::bail!("docker builder prune failed: {stderr}{stdout}");
+        }
+        Ok(json!({"ok": true}))
     }
 
     pub async fn execute_streaming(
@@ -1190,6 +1216,32 @@ mod tests {
         assert!(
             pull.contains("docker_credentials_for_image"),
             "Pull must send stored registry creds, not only public Hub"
+        );
+    }
+
+    #[test]
+    fn build_cache_prune_is_argv_not_shell() {
+        let src = include_str!("docker.rs");
+        let body = src
+            .split("async fn build_cache_prune")
+            .nth(1)
+            .expect("build_cache_prune")
+            .split("pub async fn execute_streaming")
+            .next()
+            .expect("build_cache_prune body");
+        assert!(body.contains("docker_builder_prune_args"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        let df = src
+            .split("async fn system_df")
+            .nth(1)
+            .expect("system_df")
+            .split("async fn build_cache_prune")
+            .next()
+            .expect("system_df body");
+        assert!(
+            df.contains("summarize_system_df"),
+            "system_df must summarize before the gRPC payload"
         );
     }
 

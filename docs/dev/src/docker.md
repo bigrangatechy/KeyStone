@@ -129,11 +129,13 @@ List payloads the UI expects:
 | `compose_pull` | yes | `docker_manage` | Compose pull |
 | `compose_update` | yes | `docker_manage` | Compose pull then up |
 | `image_list` | no | `docker_view` | List images |
-| `image_inspect` | no | `docker_view` | Inspect an image |
+| `image_inspect` | no | `docker_view` | Inspect an image; HTTP drops `Env` |
 | `image_pull` | yes | `docker_manage` | Pull an image |
 | `image_login` | yes | `docker_manage` | `docker login` on the **agent** for Docker Hub or GHCR (listed select). Password is stdin, stripped from Audit, never stored in the server SQLite. Tests must not invoke it. Harbor and GHCR browse are not this op. |
 | `image_prune` | yes | `docker_manage` | Prune unused images |
 | `image_remove` | yes | `docker_manage` | Remove an image |
+| `system_df` | no | `docker_view` | Engine disk use. Agent summarizes to counts/sizes (no image ids). Loaded after the Images tab paints; not a node-page list RPC. Tests use fixtures, not a live Engine df. |
+| `build_cache_prune` | yes | `docker_manage` | `docker builder prune -a -f` on the agent (bollard 0.18 has df but not `/build/prune`). Confirm-only. Tests must not invoke it. |
 | `volume_list` | no | `docker_view` | List volumes |
 | `volume_inspect` | no | `docker_view` | Inspect a volume |
 | `volume_create` | yes | `docker_manage` | Create a volume |
@@ -170,3 +172,9 @@ The agent runs `docker login --password-stdin`. Subsequent `image_pull` (and
 Compose image pulls over the Engine API) send those creds from the node's
 `~/.docker/config.json`. The server does not keep the password. Tests must
 not run `docker login`.
+
+`system_df` is observe. Cookie `GET /api/v1/nodes/{id}/system-df` asks the
+agent for Engine disk use and returns summarized counts/sizes. It is not
+part of the node-page 8s list wait. `build_cache_prune` is a cookie POST
+(`/nodes/{id}/docker/build_cache_prune`); tests must not run
+`docker builder prune`.

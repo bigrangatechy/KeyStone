@@ -98,6 +98,12 @@ impl SysOp {
         self.into()
     }
 
+    /// Every op. Prefer this over depending on `strum` in other crates.
+    pub fn all() -> impl Iterator<Item = Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+    }
+
     pub fn description(self) -> &'static str {
         match self {
             Self::Status => {
@@ -1504,28 +1510,29 @@ mod tests {
         }
     }
 
+    fn sys_ui_mutation_needle(op: SysOp) -> Option<&'static str> {
+        match op {
+            SysOp::UpdatesApply => Some("/sys/updates"),
+            SysOp::UpdatesAutoremove => Some("/sys/autoremove"),
+            SysOp::NetSet => Some("/sys/net_set"),
+            SysOp::VlanAdd => Some("/sys/vlan_add"),
+            SysOp::WifiJoin => Some("/sys/wifi_join"),
+            SysOp::SshPassword => Some("/sys/ssh_password"),
+            SysOp::GitlabBackup => Some("/sys/gitlab-backup"),
+            SysOp::GitlabRestore => Some("/sys/gitlab_restore"),
+            SysOp::Reboot => Some("/sys/reboot"),
+            SysOp::UnitRestart => Some("/sys/unit_restart"),
+            SysOp::UnitEnable => Some("/sys/unit_enable"),
+            SysOp::Status | SysOp::UpdatesList | SysOp::Journal | SysOp::WifiScan => None,
+        }
+    }
+
     #[test]
     fn mutating_sys_ops_are_in_the_ui() {
         let js = include_str!("../../keystone-server/src/static/app.js");
         for op in SysOp::iter() {
-            if !op.mutating() {
+            let Some(needle) = sys_ui_mutation_needle(op) else {
                 continue;
-            }
-            let needle = match op {
-                SysOp::UpdatesApply => "/sys/updates",
-                SysOp::UpdatesAutoremove => "/sys/autoremove",
-                SysOp::NetSet => "/sys/net_set",
-                SysOp::VlanAdd => "/sys/vlan_add",
-                SysOp::WifiJoin => "/sys/wifi_join",
-                SysOp::SshPassword => "/sys/ssh_password",
-                SysOp::GitlabBackup => "/sys/gitlab-backup",
-                SysOp::GitlabRestore => "/sys/gitlab_restore",
-                SysOp::Reboot => "/sys/reboot",
-                SysOp::UnitRestart => "/sys/unit_restart",
-                SysOp::UnitEnable => "/sys/unit_enable",
-                SysOp::Status | SysOp::UpdatesList | SysOp::Journal | SysOp::WifiScan => {
-                    unreachable!("not mutating")
-                }
             };
             assert!(
                 js.contains(needle),
@@ -1543,6 +1550,77 @@ mod tests {
         );
         assert!(!SysOp::Status.mutating());
         assert!(!SysOp::UpdatesList.mutating());
+    }
+
+    #[test]
+    fn system_ui_hides_mutations_until_the_helper_is_on() {
+        let js = include_str!("../../keystone-server/src/static/app.js");
+        assert!(
+            js.contains("System helper is not running")
+                && js.contains("sudo systemctl enable --now keystone-sys.socket"),
+            "laptop without keystone-sys must say how to enable the helper"
+        );
+        assert!(
+            js.contains("Turn the System helper on to change this from the UI."),
+            "Start KeyStone on boot must not be a checkbox without the helper"
+        );
+
+        let paint = js
+            .split("function paintSystem(host)")
+            .nth(1)
+            .expect("paintSystem")
+            .split("function restartUnitForm")
+            .next()
+            .expect("paintSystem body");
+        let before_helper = paint
+            .split("if (helperOn)")
+            .next()
+            .expect("helperOn gate in paintSystem");
+        assert!(
+            before_helper.contains("if (!helperOn)"),
+            "helper-off hint must run before any helper-gated actions"
+        );
+        assert!(
+            !before_helper.contains("unitNameTable")
+                && !before_helper.contains("gitlabRestoreForm")
+                && !before_helper.contains("Apply updates")
+                && !before_helper.contains("Check for updates"),
+            "leftovers, GitLab restore, and apt buttons must wait for helper_running"
+        );
+        for op in SysOp::iter() {
+            let Some(needle) = sys_ui_mutation_needle(op) else {
+                continue;
+            };
+            match op {
+                SysOp::UnitEnable | SysOp::UnitRestart | SysOp::GitlabRestore => continue,
+                _ => {
+                    assert!(
+                        !before_helper.contains(needle),
+                        "{needle} must not paint before helperOn (dev box without keystone-sys)"
+                    );
+                }
+            }
+        }
+
+        let boot = js
+            .split("function paintKeystoneBoot(")
+            .nth(1)
+            .expect("paintKeystoneBoot")
+            .split("function paintSystem(")
+            .next()
+            .expect("paintKeystoneBoot body");
+        let boot_off = boot
+            .split("if (!helperOn)")
+            .nth(1)
+            .expect("boot helper-off")
+            .split("return parent")
+            .next()
+            .expect("boot helper-off return");
+        assert!(
+            !boot_off.contains("/sys/unit_enable"),
+            "Start KeyStone on boot form must not render when the helper is off"
+        );
+        assert!(boot.contains("/sys/unit_enable"));
     }
 
     #[test]

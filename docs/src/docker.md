@@ -23,7 +23,7 @@ On the node **Settings** tab:
    and networks; follow logs. No start/stop.
 2. **Allow mutations** — start, stop, restart, pause/resume, kill, remove,
    prune stopped; Compose up/start/stop/restart/down/pull/**Update**; image
-   pull/prune/remove; volume and network create/remove/prune.
+   pull/prune/remove; prune unused build cache; volume and network create/remove/prune.
    Destructive actions ask for confirmation. The pull/create forms take a
    plain name, not JSON. Image pull can also be filled from a Docker Hub
    search on that same form.
@@ -79,9 +79,10 @@ pull/create toolbars are hidden when mutations are off.
   is read-only, not a hidden `/home`. This tab is not a CasaOS-style app shop.
 - **Images** — one card per local image (tags, short id, size). Click
   opens created, architecture, entrypoint, command, and exposed ports.
-  Inspect JSON is summarized and does **not** include `Env`. With Manage:
-  pull by name, search Docker Hub as cards that fill that name, prune
-  unused, remove.
+  Inspect JSON is summarized and does **not** include `Env`. The tab also
+  shows Engine disk use (images, containers, volumes, build cache) as
+  counts and sizes, not layer ids. With Manage: pull by name, search Docker
+  Hub as cards that fill that name, prune unused, prune build cache, remove.
 - **Volumes** and **Networks** — list; create/remove and prune unused with
   Manage.
 

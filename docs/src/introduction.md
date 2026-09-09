@@ -48,8 +48,10 @@ as a node too.
 
 These chapters are the **operator** documentation: install, add nodes,
 Settings, dashboards, alerts, Docker, System, audit, and security as you
-run it. Header **Help** opens the [User guide](using.md) for this binary,
-then the rest of this book. `keystone docs` prints the same markdown on stdout.
+run it. [Features](features.md) is current vs later vs stay-out.
+[Changelog](changelog.md) is dated (`HH:MM:SS DD/MM/YYYY AEST`). Header
+**Help** opens the [User guide](using.md) for this binary, then the rest of
+this book. `keystone docs` prints the same markdown on stdout.
 
 Changing KeyStone itself (crates, catalog, widgets, ingest protocol) is
 documented separately in `docs/dev/`. That material is not mixed into `/help`.

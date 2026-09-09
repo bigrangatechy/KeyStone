@@ -244,6 +244,7 @@
     compose_update: "Pull images and recreate this Compose project?",
     image_remove: "Remove this image?",
     image_prune: "Prune unused images on this node?",
+    build_cache_prune: "Delete unused Docker build cache on this node? Images, containers, and volumes stay. This cannot be undone.",
     volume_remove: "Remove this volume?",
     volume_prune: "Remove unused volumes? This cannot be undone.",
     network_remove: "Remove this network?",
@@ -919,6 +920,42 @@
       }
     }
 
+    function diskBucket(label, b) {
+      const item = el("div", "disk-item");
+      item.appendChild(el("strong", null, label));
+      if (!b || typeof b !== "object") {
+        item.appendChild(el("span", "muted", "—"));
+        return item;
+      }
+      const count = b.count == null ? "" : String(b.count);
+      const size = formatBytes(b.size);
+      item.appendChild(el("span", null, count ? count + " · " + (size || "0 B") : (size || "0 B")));
+      const rec = Number(b.reclaimable);
+      if (Number.isFinite(rec) && rec > 0) {
+        item.appendChild(el("span", "muted", (formatBytes(rec) || "") + " reclaimable"));
+      }
+      return item;
+    }
+
+    async function loadSystemDf(host) {
+      try {
+        const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/system-df");
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          host.replaceChildren(el("p", "muted", body.error || "Could not read Engine disk use."));
+          return;
+        }
+        host.replaceChildren(
+          diskBucket("Images", body.images),
+          diskBucket("Containers", body.containers),
+          diskBucket("Volumes", body.volumes),
+          diskBucket("Build cache", body.build_cache)
+        );
+      } catch (e) {
+        host.replaceChildren(el("p", "muted", "Could not read Engine disk use."));
+      }
+    }
+
     function showImageDetail(img) {
       const name = imageDisplayName(img);
       const id = img.id || "";
@@ -982,7 +1019,10 @@
       board.appendChild(grid);
       board.appendChild(detail);
     }
-    images.replaceChildren(board);
+    const glance = el("div", "disk-glance");
+    glance.appendChild(el("p", "muted", "Reading Engine disk use…"));
+    images.replaceChildren(glance, board);
+    loadSystemDf(glance);
   }
 
   bindHubSearch();
