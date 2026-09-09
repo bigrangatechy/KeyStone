@@ -64,7 +64,8 @@ is deleted and a new session id is issued.
 | GET | `/nodes/{id}/containers/{cid}/stats` | One-shot JSON stats (not linked from the UI). |
 | GET | `/nodes/{id}/compose/{project}/logs` | HTML follow page. |
 | GET | `/nodes/{id}/compose/{project}/logs/stream` | SSE, same as container logs. |
-| GET | `/help`, `/help/{slug}` | Operator markdown compiled in (`help.rs`). |
+| GET | `/help` | Redirects to `/help/using` (User guide). |
+| GET | `/help/{slug}` | Operator markdown compiled in (`help.rs`). Relative `*.md` links become `/help/{slug}`. |
 | POST | `/logout` | |
 
 ## JSON (session required)

@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 - [Introduction](introduction.md)
 - [Install](install.md)
-- [Using the UI](using.md)
+- [User guide](using.md)
 - [Dashboards](dashboard.md)
 - [Alerts](alerts.md)
 - [Docker](docker.md)

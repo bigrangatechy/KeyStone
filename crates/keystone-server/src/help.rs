@@ -12,6 +12,9 @@ pub struct HelpSection {
     pub markdown: String,
 }
 
+/// Header **Help** and `GET /help` land here (the operator walkthrough).
+pub const INDEX_SLUG: &str = "using";
+
 macro_rules! operator_md {
     ($file:expr) => {
         include_str!(concat!("../../../docs/src/", $file))
@@ -44,7 +47,7 @@ pub fn sections() -> Vec<HelpSection> {
             operator_md!("introduction.md"),
         ),
         section("install", "Install", operator_md!("install.md")),
-        section("using", "Using the UI", operator_md!("using.md")),
+        section("using", "User guide", operator_md!("using.md")),
         section("dashboard", "Dashboards", operator_md!("dashboard.md")),
         section("alerts", "Alerts", operator_md!("alerts.md")),
         section("docker", "Docker", operator_md!("docker.md")),
@@ -75,7 +78,21 @@ pub fn markdown_to_html(md: &str) -> String {
     let parser = Parser::new_ext(md, options);
     let mut html_out = String::new();
     html::push_html(&mut html_out, parser);
-    html_out
+    rewrite_help_chapter_hrefs(&html_out)
+}
+
+/// mdBook keeps `docker.md` in the source. `/help` is not a directory of
+/// markdown files, so rewrite those hrefs to `/help/docker`.
+/// Match `href="slug.md` (no closing quote) so `security.md#tls` becomes
+/// `/help/security#tls`.
+fn rewrite_help_chapter_hrefs(html: &str) -> String {
+    let mut out = html.to_string();
+    for s in sections() {
+        let from = format!("href=\"{}.md", s.slug);
+        let to = format!("href=\"/help/{}", s.slug);
+        out = out.replace(&from, &to);
+    }
+    out
 }
 
 pub fn all_markdown() -> String {
@@ -110,6 +127,11 @@ mod tests {
             );
         }
         assert!(
+            secs.iter()
+                .any(|s| s.slug == "using" && s.title == "User guide"),
+            "operator help must include the User guide"
+        );
+        assert!(
             secs.iter().any(|s| s.slug == "system"),
             "operator help must include System"
         );
@@ -135,20 +157,57 @@ mod tests {
     #[test]
     fn operator_help_matches_summary() {
         let summary = include_str!("../../../docs/src/SUMMARY.md");
-        let files: Vec<&str> = summary
+        let entries: Vec<(&str, &str)> = summary
             .lines()
             .filter_map(|l| {
-                let start = l.find('(')?;
-                let rest = &l[start + 1..];
+                let l = l.trim();
+                let start = l.find('[')?;
+                let mid = l.find("](")?;
+                let title = &l[start + 1..mid];
+                let rest = &l[mid + 2..];
                 let end = rest.find(')')?;
-                rest[..end].strip_suffix(".md")
+                let slug = rest[..end].strip_suffix(".md")?;
+                Some((title, slug))
             })
             .collect();
-        let slugs: Vec<String> = sections().into_iter().map(|s| s.slug).collect();
+        let help: Vec<(String, String)> =
+            sections().into_iter().map(|s| (s.title, s.slug)).collect();
         assert_eq!(
-            files,
-            slugs.iter().map(String::as_str).collect::<Vec<_>>(),
-            "docs/src/SUMMARY.md order must match help.rs sections()"
+            entries.iter().map(|(t, s)| (*t, *s)).collect::<Vec<_>>(),
+            help.iter()
+                .map(|(t, s)| (t.as_str(), s.as_str()))
+                .collect::<Vec<_>>(),
+            "docs/src/SUMMARY.md titles and order must match help.rs sections()"
         );
+        assert_eq!(INDEX_SLUG, "using");
+        assert!(
+            entries.iter().any(|(_, slug)| *slug == INDEX_SLUG),
+            "GET /help must land on a chapter that exists"
+        );
+    }
+
+    #[test]
+    fn help_html_rewrites_chapter_links() {
+        let html = markdown_to_html("See [Docker](docker.md) and [TLS](security.md#tls).");
+        assert!(
+            html.contains("href=\"/help/docker\""),
+            "chapter links must stay inside /help: {html}"
+        );
+        assert!(
+            html.contains("href=\"/help/security#tls\""),
+            "anchors must survive the rewrite: {html}"
+        );
+        assert!(
+            !html.contains(".md"),
+            "Help HTML must not leave .md hrefs: {html}"
+        );
+        for s in sections() {
+            let rendered = markdown_to_html(&s.markdown);
+            assert!(
+                !rendered.contains(".md\"") && !rendered.contains(".md#"),
+                "{} Help HTML still has a .md chapter href",
+                s.slug
+            );
+        }
     }
 }

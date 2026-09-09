@@ -259,5 +259,6 @@ window. History lives in `data_dir/series.redb`.
 
 ## Help in the UI looks wrong
 
-`/help` is this operator book compiled into the server binary. It matches
-the version you installed, not necessarily a newer GitLab Pages build.
+Header **Help** opens the User guide compiled into this binary. Chapter
+links stay under `/help/…`. The text matches the version you installed, not
+necessarily a newer GitLab Pages build.

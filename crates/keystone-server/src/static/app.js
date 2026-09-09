@@ -359,6 +359,7 @@
 
   const containers = document.getElementById("containers");
   if (containers && !dockerBlocked(containers)) {
+    // Glance cards; click loads summarized inspect (no Env) then Manage actions.
     const data = parse(containers);
     const node = containers.getAttribute("data-node");
     const board = el("div", "container-board");
@@ -455,6 +456,7 @@
 
     async function loadInspect(id, host) {
       try {
+        // 400 = junk id. 502 = agent/engine. JSON is summarized (no Env).
         const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id));
         const body = await r.json().catch(() => ({}));
         if (selectedId !== id) return;
@@ -902,6 +904,7 @@
 
     async function loadImageInspect(id, host) {
       try {
+        // Inspect uses img.id. A 400 here is a tag with `/`, not a missing image.
         const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/images/" + encodeURIComponent(id));
         const body = await r.json().catch(() => ({}));
         if (selectedId !== id) return;

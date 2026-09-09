@@ -3,14 +3,12 @@ SPDX-FileCopyrightText: 2026 The KeyStone Authors
 SPDX-License-Identifier: GPL-2.0-or-later
 -->
 
-# Using the UI
+# User guide
 
-The HTTP UI is the only console. Agents do not serve a web page. The home
-page is the Netdata-shaped **fleet** (live chips per host). Open a node for
-that machine’s Overview; the Docker tabs are the Portainer-shaped control
-plane; **System** is health vs actions on the machine itself (apt, leftover
-services, confirmed reboot, allowlisted journals, NTP, unattended-upgrades,
-IPv4, VLAN, Wi-Fi, SSH password, GitLab Omnibus backup — not Docker).
+This is how you use KeyStone in the browser. Agents do not serve a page.
+Header **Help** is this book for **this** binary. Start here, then open
+[Docker](docker.md) or [System](system.md) when you need the detail on one
+tab.
 
 ## Sign in
 
@@ -37,11 +35,11 @@ can still put a reverse proxy in front instead; see [Security](security.md).
 
 `GET /health` returns `ok` without a session, for a reverse-proxy check.
 
-## Nodes list
+## Home page
 
-The home page lists every enrolled node with live **CPU, RAM, disk, and
-temperature** chips (the Netdata-shaped fleet view). Click a host for that
-machine’s Overview, Docker tabs, and System tab.
+The home page is the fleet: every enrolled node with live **CPU, RAM, disk,
+and temperature** chips. Click a host for that machine’s Overview, Docker
+tabs, and System tab.
 
 Statuses you will see:
 
@@ -52,14 +50,14 @@ Statuses you will see:
 | **Seen, not connected** | Heartbeats arrived recently but the session dropped (restart, network blip). |
 | **Offline** | No recent heartbeat. |
 
-Click a row to open that node. **Add node** is the enroll form. Chips stay
-blank (`—`) until the agent has pushed samples. Disk is the fullest real
-filesystem (overlay/tmpfs skipped). Temperature is the CPU package when
-the kernel exposes it, otherwise the hottest hwmon reading. The list
-refreshes about once a second. A red count next to a hostname is the number
-of chips currently warn or crit; open [Alerts](alerts.md).
+**Add node** is the enroll form. Chips stay blank (`—`) until the agent has
+pushed samples. Disk is the fullest real filesystem (overlay/tmpfs skipped).
+Temperature is the CPU package when the kernel exposes it, otherwise the
+hottest hwmon reading. The list refreshes about once a second. A red count
+next to a hostname is the number of chips currently warn or crit; open
+[Alerts](alerts.md).
 
-## Add node
+## Add a node
 
 Enter a hostname (used as the default `node_id` unless you override it).
 Optionally tick that the box runs Docker — that only pre-enables **Observe
@@ -82,38 +80,53 @@ the form. Their `node_id` is whatever the agent sent (hostname if unset).
 A packaged agent with `ingest_url = "mdns"` and a matching token can
 appear on the home page without Add node at all.
 
-## Node page
-
-Tabs:
-
-- **Overview** — widget dashboard. See [Dashboards](dashboard.md).
-- **Containers / Compose / Images / Volumes / Networks** — Docker Engine on
-  *this* node. Containers and Compose are cards (click for details). Local
-  images are cards (inspect drops `Env`). Volumes and Networks are tables. **Logs** follows that container or Compose
-  project. Images search Docker Hub as cards that fill Pull, and can log into Hub or GHCR on that node. Empty or an explanation
-  until Observe Docker is on and the agent can use the socket. See
-  [Docker](docker.md).
-- **System** — health on the left (leftovers, failed units, journals, NTP,
-  unattended-upgrades, addresses) and actions on the right (apt, autoremove,
-  reboot, GitLab backup, GitLab restore, leftover restart, IPv4/IPv6, VLAN, Wi-Fi, SSH password) on **this** Ubuntu or Debian server. Off until you
-  enable the root helper and Settings flags. If 2FA is on, changing IPv4 or IPv6,
-  adding a VLAN, joining Wi-Fi, leftover restart, GitLab restore, or SSH password also asks for a current authenticator code. Proxmox, TrueNAS, and other
-  appliance OSes stay on Observe. See [System](system.md).
-- **Settings** — display name, notes, poll interval, NICs, labels, Docker
-  flags, Compose paths, System-admin flags. See [Configuration](configuration.md).
+## Open a node
 
 The header shows `node_id`, OS, kernel, agent version, last seen, and a link
-back to the install snippet.
+back to the install snippet. Work left to right: Overview, then Docker if
+you enabled it, then System on Ubuntu/Debian/Pi.
 
-**All samples** at the bottom of Overview is the raw allowlisted series for
-debugging, not the usual way to watch a host.
+### Overview
 
-## Global Settings
+Widget dashboard for **this** host. Customize layout, density, and empty
+cards on that page. **All samples** at the bottom is the raw allowlisted
+series for debugging, not the usual way to watch a host. See
+[Dashboards](dashboard.md).
 
-The header **Settings** link is the server, not a node: retention, ingest
-token, Prometheus/SNMP scrape jobs, optional alert webhook, admin password,
-authenticator 2FA (and **Replay welcome tour**). Listen addresses and the
-admin username stay in `server.toml`. Header **Alerts** is the live firing
-list; see [Alerts](alerts.md). Header **Audit** is Docker and System
-mutations from this UI (newest first); see [Audit](audit.md). The home page
-reminds you to enable 2FA if it is still off.
+### Docker
+
+Containers and Compose are cards (click for details). Local images are cards
+(inspect drops `Env`). Volumes and Networks are tables. **Logs** follows
+that container or Compose project. Images search Docker Hub as cards that
+fill Pull, and can log into Hub or GHCR on that node.
+
+Empty tabs or an explanation until **Observe Docker** is on (node Settings)
+and the agent can use the socket. Manage buttons stay hidden until you
+allow mutations. See [Docker](docker.md).
+
+### System
+
+The System tab is health vs actions on **this** Ubuntu or Debian server:
+health on the left (leftovers, failed units, journals, NTP,
+unattended-upgrades, addresses) and actions on the right (apt, autoremove,
+reboot, GitLab backup, GitLab restore, leftover restart, IPv4/IPv6, VLAN,
+Wi-Fi, SSH password). Off until you enable the root helper and Settings flags.
+
+If 2FA is on, changing IPv4 or IPv6, adding a VLAN, joining Wi-Fi, leftover restart, GitLab restore, or SSH password also asks for a current authenticator code. Proxmox, TrueNAS, and other appliance OSes stay on Observe. See [System](system.md).
+
+### Node Settings
+
+Display name, notes, poll interval, NICs, labels, Docker flags, Compose
+paths, System-admin flags. See [Configuration](configuration.md).
+
+## Header
+
+- **Alerts** — chips that are warn or crit right now. See [Alerts](alerts.md).
+- **Audit** — Docker and System mutations from this UI (newest first). See
+  [Audit](audit.md).
+- **Settings** — the **server**, not a node: retention, ingest token,
+  Prometheus/SNMP scrape jobs, optional alert webhook, admin password,
+  authenticator 2FA, and **Replay welcome tour**. Listen addresses and the
+  admin username stay in `server.toml`. The home page reminds you to enable
+  2FA if it is still off.
+- **Help** — this operator book.

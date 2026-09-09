@@ -48,8 +48,8 @@ as a node too.
 
 These chapters are the **operator** documentation: install, add nodes,
 Settings, dashboards, alerts, Docker, System, audit, and security as you
-run it. The running server serves the same text at `/help` after you log
-in, for this version of the binary. `keystone docs` prints it on stdout.
+run it. Header **Help** opens the [User guide](using.md) for this binary,
+then the rest of this book. `keystone docs` prints the same markdown on stdout.
 
 Changing KeyStone itself (crates, catalog, widgets, ingest protocol) is
 documented separately in `docs/dev/`. That material is not mixed into `/help`.

@@ -166,7 +166,9 @@ The Images tab can search **Docker Hub** through the server (public Hub
 HTTP API, cookie session). That lookup is not a Docker Engine call and
 does not use the ingest token. Pull still runs on the agent. Hub
 rate-limits unauthenticated search per IP — if it fails, type the image
-name. There is no Hub login in this version.
+name. **Log in** on Images stores Hub or GHCR credentials on **that node**
+(`docker login`); the password is not in the server database. Harbor and
+GHCR browse are not this form.
 
 ## System (host apt, addressing, GitLab backup)
 

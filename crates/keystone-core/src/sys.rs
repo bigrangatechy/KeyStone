@@ -31,7 +31,8 @@ pub const GITLAB_BACKUP_DIR: &str = "/var/opt/gitlab/backups";
 pub const GITLAB_RESTORE_LIST_CAP: usize = 50;
 
 /// Units the System tab may follow. Not a textbox — stolen cookie reads
-/// these journals only.
+/// these journals only. `unattended-upgrades.service` is still out (observe
+/// the stamp on Health; do not grow this list without a slice).
 pub const JOURNAL_UNITS: &[&str] = &[
     "keystone-agent.service",
     "keystone-server.service",
@@ -72,15 +73,21 @@ pub enum SysOp {
     UpdatesList,
     UpdatesApply,
     UpdatesAutoremove,
+    /// IPv4 and IPv6 on one Ethernet apply. Step-up. Can drop SSH/agent.
     NetSet,
+    /// 802.1Q create (`parent.vid`). No QinQ, no delete.
     VlanAdd,
     WifiScan,
+    /// Listed SSID + PSK only. Hidden / hotspot / 802.1X stay out.
     WifiJoin,
+    /// Yes/no `PasswordAuthentication`. Not users, firewall, or timezone.
     SshPassword,
     GitlabBackup,
+    /// Listed dump under `/var/opt/gitlab/backups`. Not a path textbox.
     GitlabRestore,
     Reboot,
     Journal,
+    /// Restart a name already on leftover/failed. Not a unit-name textbox.
     UnitRestart,
 }
 

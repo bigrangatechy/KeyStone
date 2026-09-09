@@ -223,6 +223,7 @@ impl DockerHandle {
             )),
             DockerOp::ImageList => self.image_list().await,
             DockerOp::ImageInspect => {
+                // Server summarizes this JSON (drops Env/labels). Payload `name` is the id.
                 let name = str_field(&payload, "name")?;
                 let info = self.docker.inspect_image(name).await?;
                 Ok(serde_json::to_value(info)?)
@@ -603,6 +604,8 @@ impl DockerHandle {
         if cfg!(test) {
             anyhow::bail!("image login is not invoked in tests");
         }
+        // Password is stdin, not argv. Failure here is docker login on the node
+        // (`~/.docker/config.json` as the keystone user), not a server-side store.
         let req = ImageLogin::parse_json(&payload.to_string()).map_err(|e| anyhow!("{e}"))?;
         let args = docker_login_args(&req).map_err(|e| anyhow!("{e}"))?;
         let mut child = Command::new("docker")

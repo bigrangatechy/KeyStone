@@ -47,8 +47,10 @@ pub enum DockerOp {
     ComposePull,
     ComposeUpdate,
     ImageList,
+    /// UI inspects by image id (`sha256:…`). Tags with `/` are not URL tokens.
     ImageInspect,
     ImagePull,
+    /// Agent `docker login` for listed `docker.io` / `ghcr.io` only. Confirm-only.
     ImageLogin,
     ImagePrune,
     ImageRemove,
@@ -166,7 +168,8 @@ impl DockerOp {
     }
 
     /// Fresh authenticator code when TOTP is on. No Docker op uses this
-    /// yet; keep-outs we promote later opt in here. IPv4 is a `SysOp`.
+    /// yet (`image_login` is confirm-only). IPv4/IPv6, VLAN, Wi-Fi, SSH
+    /// password, leftover restart, and GitLab restore are `SysOp`s.
     pub fn needs_step_up(self) -> bool {
         let _ = self;
         false
@@ -487,7 +490,8 @@ fn decode_std_base64(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Hex / name token the UI may put in a container inspect URL.
+/// Hex / name token the UI may put in a container or image inspect URL.
+/// `sha256:…` is ok; `ghcr.io/org/app:tag` is not (`/` would be a path segment).
 pub fn docker_ref_ok(id: &str) -> bool {
     let t = id.trim();
     !t.is_empty()
@@ -622,7 +626,8 @@ pub fn summarize_container_inspect(raw: &serde_json::Value) -> serde_json::Value
 }
 
 /// Map Engine image inspect JSON to what the Images detail pane may show.
-/// Drops `Env`, labels, and other secret-shaped fields.
+/// Drops `Env`, labels, GraphDriver, and RootFS. A 400 on the HTTP route is
+/// almost always a tag with `/` — inspect uses `img.id`, not the Hub name.
 pub fn summarize_image_inspect(raw: &serde_json::Value) -> serde_json::Value {
     let config = json_field(raw, &["Config", "config"])
         .cloned()

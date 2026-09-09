@@ -734,6 +734,10 @@ fn operator_docs_cover_image_login() {
         "security.md must say Hub/GHCR passwords are not in the server database"
     );
     assert!(
+        !security.contains("There is no Hub login"),
+        "security.md must not deny Hub login after image_login shipped"
+    );
+    assert!(
         audit.contains("Hub/GHCR login") && audit.contains("password omitted"),
         "Audit must list registry login and say the password is omitted"
     );
@@ -807,4 +811,39 @@ fn operator_docs_cover_image_inspect() {
         arch.contains("image_inspect") && arch.contains("Env"),
         "architecture.md must say image inspect drops Env"
     );
+}
+
+/// Walkthrough needles for every SysOp. A new variant fails to compile here
+/// until `docs/src/using.md` (Help → User guide) mentions it.
+fn user_guide_sysop_needle(op: SysOp) -> &'static str {
+    match op {
+        SysOp::Status => "health vs actions",
+        SysOp::UpdatesList | SysOp::UpdatesApply => "apt",
+        SysOp::UpdatesAutoremove => "autoremove",
+        SysOp::NetSet => "IPv4",
+        SysOp::VlanAdd => "VLAN",
+        SysOp::WifiScan | SysOp::WifiJoin => "Wi-Fi",
+        SysOp::SshPassword => "SSH password",
+        SysOp::GitlabBackup => "GitLab backup",
+        SysOp::GitlabRestore => "GitLab restore",
+        SysOp::Reboot => "reboot",
+        SysOp::Journal => "journals",
+        SysOp::UnitRestart => "leftover restart",
+    }
+}
+
+#[test]
+fn operator_user_guide_covers_every_sysop() {
+    let using = include_str!("../../../docs/src/using.md");
+    assert!(
+        using.contains("# User guide"),
+        "using.md is the Help walkthrough"
+    );
+    for op in SysOp::iter() {
+        let needle = user_guide_sysop_needle(op);
+        assert!(
+            using.contains(needle),
+            "docs/src/using.md must mention {needle:?} for SysOp {op:?}"
+        );
+    }
 }

@@ -2019,6 +2019,7 @@ async fn container_inspect_api(
     if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
         return (StatusCode::NOT_FOUND, "node not found").into_response();
     }
+    // 400 = junk id (`;`, `..`, `/`). 502 = agent/engine. Body is summarized (no Env).
     if !docker_ref_ok(&cid) {
         return (StatusCode::BAD_REQUEST, "unknown container").into_response();
     }
@@ -2044,6 +2045,7 @@ async fn image_inspect_api(
     if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
         return (StatusCode::NOT_FOUND, "node not found").into_response();
     }
+    // Inspect by `img.id` (`sha256:…`). A Hub tag with `/` is 400, not a missing image.
     if !docker_ref_ok(&iid) {
         return (StatusCode::BAD_REQUEST, "unknown image").into_response();
     }
@@ -2890,24 +2892,7 @@ struct HelpTemplate {
 }
 
 async fn help_index() -> impl IntoResponse {
-    let sections = help::sections();
-    let first = sections.first();
-    let title = first
-        .map(|s| s.title.clone())
-        .unwrap_or_else(|| "Help".into());
-    let md = first.map(|s| s.markdown.clone()).unwrap_or_default();
-    Html(
-        HelpTemplate {
-            sections: sections
-                .iter()
-                .map(|s| (s.slug.clone(), s.title.clone()))
-                .collect(),
-            title,
-            body_html: help::markdown_to_html(&md),
-        }
-        .render()
-        .unwrap_or_else(|e| e.to_string()),
-    )
+    Redirect::to(&format!("/help/{}", help::INDEX_SLUG))
 }
 
 async fn help_section(Path(slug): Path<String>) -> Response {

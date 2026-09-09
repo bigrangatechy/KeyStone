@@ -755,6 +755,7 @@ async fn gitlab_restore(
     if cfg!(test) {
         anyhow::bail!("gitlab restore is not invoked in tests");
     }
+    // Listed dump only. SSE must already have a one-shot ticket from the POST.
     if gitlab_kind() != "omnibus" {
         anyhow::bail!(
             "GitLab Omnibus is not installed on this node ({GITLAB_BACKUP_BIN} missing). Docker GitLab is not in this version."
@@ -815,6 +816,7 @@ async fn net_set(req: &NetSet) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("net set is not invoked in tests");
     }
+    // IPv4 and IPv6 on this Ethernet apply. A failed apply can drop SSH and the agent.
     let backend = detect_backend();
     match backend {
         "netplan" => {
@@ -865,6 +867,7 @@ async fn vlan_add(req: &VlanAdd) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("vlan add is not invoked in tests");
     }
+    // Parent must be on the live address list. QinQ (`eth0.10.20`) is rejected in validate.
     let name = req.iface_name();
     let ifaces = ip_addrs().await;
     if !iface_named(&ifaces, &req.iface) {
@@ -977,6 +980,7 @@ async fn wifi_join(req: &WifiJoin) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("wifi join is not invoked in tests");
     }
+    // SSID must still be on the live scan. "not on the live scan list" = stale pick, not a textbox.
     let ifaces = ip_addrs().await;
     if !iface_named(&ifaces, &req.iface) {
         anyhow::bail!("wireless interface is not on this host");
@@ -1025,6 +1029,8 @@ async fn ssh_password(req: &SshPassword) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("ssh password is not invoked in tests");
     }
+    // 00- so first-match beats 50-cloud-init. "not using the KeyStone … drop-in"
+    // means sshd -T still disagrees after write (wrong file or later Match).
     if let Some(dir) = Path::new(SSHD_KEYSTONE_DROPIN).parent() {
         tokio::fs::create_dir_all(dir)
             .await
@@ -1092,6 +1098,7 @@ async fn unit_restart(payload: &Value) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("unit restart is not invoked in tests");
     }
+    // Re-check leftover/failed at mutate time. Stale UI pick → "unit is not leftover or failed".
     let (leftovers, failed) = tokio::join!(leftover_services(), failed_units());
     if !unit_listed_for_restart(&unit, &leftovers.services, &failed) {
         anyhow::bail!("unit is not leftover or failed");

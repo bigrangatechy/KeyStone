@@ -14,9 +14,16 @@ Two audiences, two trees. Neither is generated from Rust types.
 
 `crates/keystone-server/src/help.rs` embeds operator chapters. Adding a
 user-facing page means: write `docs/src/*.md`, add it to `docs/src/SUMMARY.md`,
-and add a `HelpSection` in `help.rs` if it should appear in the UI. The
-Alerts, System, and Audit chapters are examples of pages that must be in
-all three places.
+and add a `HelpSection` in `help.rs` if it should appear in the UI. Titles in
+`SUMMARY.md` must match `help.rs`. The User guide (`using.md`), Alerts, System,
+and Audit chapters must be in all three places.
+
+`/help` redirects to `/help/using`. Relative chapter links (`docker.md`,
+`security.md#tls`) are rewritten to `/help/docker` when Help renders HTML;
+mdBook still uses the `.md` hrefs in `docs/src/`.
+
+Every `SysOp` has a user-facing needle in `using.md` (`docs_coverage.rs`).
+A new variant does not compile that test until the walkthrough mentions it.
 
 Developer pages are mdBook only. Completeness tests (not generators) live
 in `keystone-core`:
@@ -38,8 +45,9 @@ gRPC session, smoke vs packaged listen ports) live next to the code they
 cover. A passing suite that never opens a session or copies a snippet will
 not catch those regressions. Smoke `examples/*.toml` must not use 8080/9100.
 
-`/help` is the operator book **for this binary**. Pages can be newer than
-an installed `.deb`. Do not teach operators to run a docs generator.
+`/help` is the operator book **for this binary** (User guide first). Pages can
+be newer than an installed `.deb`. Do not teach operators to run a docs
+generator.
 
 CLI: `keystone docs` and `keystone docs --section <slug>` print the same
 markdown as `/help`. Slugs match the operator filenames without `.md`.
