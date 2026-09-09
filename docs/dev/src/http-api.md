@@ -47,7 +47,7 @@ is deleted and a new session id is issued.
 | GET | `/settings/totp` | QR + secret from `totp_pending`. |
 | POST | `/settings/totp/confirm` | 6-digit code; enables TOTP, shows backup codes once. |
 | POST | `/settings/totp/disable` | Password + TOTP or backup; clears TOTP columns. |
-| POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`, or `registry` / `username` / `password` (`image_login`: listed `docker.io` or `ghcr.io`). Optional `totp` (6 digits). Enforced only when `needs_step_up()` and TOTP is on; no Docker op does yet. Redirect keeps `?panel=`. Audit log (`password` stripped on `image_login`). Streaming ops are 400. |
+| POST | `/nodes/{id}/docker/{op}` | `{op}` is `DockerOp::as_str()`. Form `payload` JSON, or `name` / `id` / `project`, or `registry` / `username` / `password` (`image_login`: listed `docker.io` or `ghcr.io`). Optional `totp` (6 digits). Enforced only when `needs_step_up()` and TOTP is on; no Docker op does yet. Redirect keeps `?panel=`. Audit log (`password` stripped on `image_login`). Log streaming ops are 400. `container_exec` arms a one-shot ticket and redirects to the exec page. |
 | POST | `/nodes/{id}/sys/{op}` | `{op}` is `SysOp::as_str()`. Form JSON or `iface` / `method` / IPv4 fields / `ipv6_method` / IPv6 fields or `unit` (hidden, leftover/failed name) or `name` (hidden listed Omnibus dump) or `vlan` (id 1–4094 with parent `iface`) or `ssid` / `psk` (listed Wi-Fi join) or `password_auth` (`yes`/`no` SSH password toggle) or `enabled` (`yes`/`no` KeyStone boot) or `timezone` (listed IANA name). Optional `totp`. `net_set`, `vlan_add`, `wifi_join`, `ssh_password`, `unit_restart`, `unit_enable`, and `gitlab_restore` require a current authenticator code when TOTP is on (`needs_step_up`); backup codes are rejected; TOTP off is confirm-only. Failed step-up redirects `?panel=system&err=step-up` (or `step-up-locked`) and audits `ok` false. Audit log on mutate (`psk` stripped). Streaming ops redirect to their follow page (`updates_apply` → apply, `updates_autoremove` → autoremove, `gitlab_backup` → backup, `gitlab_restore` → restore after arming a one-shot ticket, `journal` → System tab). `reboot`, `timezone_set`, `unattended_set`, `unit_restart`, `unit_enable`, `vlan_add`, `wifi_join`, and `ssh_password` are mutating and not streamed. |
 | GET | `/nodes/{id}/sys/updates` | HTML follow page for `apt-get upgrade`. |
 | GET | `/nodes/{id}/sys/updates/stream` | SSE for `updates_apply`. Cancel on drop. |
@@ -61,6 +61,9 @@ is deleted and a new session id is issued.
 | GET | `/nodes/{id}/sys/journal/{unit}/stream` | SSE for `journal`. Observe; no audit. Cancel on drop. |
 | GET | `/nodes/{id}/containers/{cid}/logs` | HTML follow page. |
 | GET | `/nodes/{id}/containers/{cid}/logs/stream` | SSE: `{"t":"..."}` then `event: done`. Cancel on drop. |
+| GET | `/nodes/{id}/containers/{cid}/exec` | HTML exec page. Reachable after POST `container_exec` arms a ticket. Listed `/bin/sh` or `/bin/bash`. |
+| GET | `/nodes/{id}/containers/{cid}/exec/stream` | SSE for `container_exec`. First event `meta` with `request_id`. Consumes the ticket (403 without it). Audit `started`. Cancel on drop. |
+| POST | `/nodes/{id}/exec/stdin` | JSON `{request_id, data?}` or `{request_id, cols, rows}` for TTY resize. Cookie session. In-flight exec only. |
 | GET | `/nodes/{id}/containers/{cid}/stats` | One-shot JSON stats (not linked from the UI). |
 | GET | `/nodes/{id}/compose/{project}/logs` | HTML follow page. |
 | GET | `/nodes/{id}/compose/{project}/logs/stream` | SSE, same as container logs. |

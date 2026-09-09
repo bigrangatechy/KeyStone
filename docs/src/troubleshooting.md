@@ -140,7 +140,10 @@ token does not.
 - Manage/Exec refused with a message that the flag is disabled: turn the
   checkbox on and save; a connected agent applies it without restart.
 - Logs page stays empty: the agent must be **control connected**. Leave the
-  page to cancel follow. Exec is not in the UI yet.
+  page to cancel follow.
+- Exec refused: turn **Allow `docker exec`** on (Observe must be on) and
+  save. Only running containers. Listed `/bin/sh` or `/bin/bash`, not a
+  command textbox. Tests do not run live exec.
 - Docker Hub search empty or an error: type `nginx:1.27` in Pull yourself.
   Hub rate-limits the **server** IP (not each browser). GHCR is not searched;
   Log in on Images for Hub or GHCR on that node, then paste the full name.

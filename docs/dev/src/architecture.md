@@ -68,7 +68,8 @@ not advertise mDNS.
    `StreamChunk` then a result; the HTML logs page is an EventSource onto
    that stream. `cancel` aborts a follow when the browser disconnects.
    The same `StreamChunk` type can travel server → agent as stdin (or a TTY
-   resize) for that `request_id`. Logs drain it. Interactive exec is not in the UI.
+   resize) for that `request_id`. Logs drain it. Interactive exec is in the UI
+   (`container_exec`, listed `/bin/sh` or `/bin/bash`).
    Image pull is still that path. Docker Hub search is a separate
    cookie-authed GET: the server talks to `hub.docker.com` over HTTPS and
    returns names/tags for Images **cards** that fill Pull; it never pulls

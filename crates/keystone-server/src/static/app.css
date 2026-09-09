@@ -527,16 +527,8 @@ details.raw-metrics summary { cursor: pointer; margin-bottom: 0.5rem; }
 table.fleet td { vertical-align: middle; }
 .state-exited, .state-dead, .state-created { color: var(--muted); }
 .state-paused, .state-restarting { color: #d29922; }
-pre.logs {
-  background: #0a0c0e;
-  border: 1px solid var(--line);
-  padding: 0.75rem 1rem;
-  height: calc(100vh - 12rem);
-  overflow: auto;
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  white-space: pre-wrap;
-  word-break: break-word;
+pre.logs:focus {
+  outline: 2px solid var(--accent);
 }
 
 .tour-backdrop {

@@ -40,9 +40,8 @@ fetches.
   Ops that need step-up in the UI are **denied** here. Damaging ops are
   denied at the socket, full stop.
 - No `sh -c`, no free PTY, no unit-name textbox, no remote `docker.sock`.
-  Same keep-outs as the product. `container_exec` stays out until the
-  UI exec slice exists, and even then this API does not get it by
-  default (root-equivalent).
+  Same keep-outs as the product. The UI has `container_exec`; this API does
+  not get it by default (root-equivalent).
 - Tests must not talk to Ollama, must not bind a public port, and must
   not spawn live apt / reboot / netplan / docker login.
 
@@ -177,5 +176,5 @@ WebAuthn, a CasaOS-style app shop, Harbor, Watchtower, node cap.
 
 Ingest is NAT-friendly push from `keystone-agent`. Mixing LLM traffic
 onto it would share queues with `container_list` and metrics. A wedged
-model would look like **agent command timed out**. The stdin
-`StreamChunk` path is for a later **docker exec** UI, not for this API.
+model would look like **agent command timed out**. The ingest stdin
+`StreamChunk` path is the UI `container_exec` TTY, not this API.

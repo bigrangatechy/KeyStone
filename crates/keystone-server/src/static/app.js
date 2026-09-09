@@ -255,6 +255,10 @@
     return host.getAttribute("data-manage") === "1";
   }
 
+  function execOn(host) {
+    return host.getAttribute("data-exec") === "1";
+  }
+
   function dockerBlocked(host) {
     const reason = host.getAttribute("data-reason") || "";
     if (reason === "offline") {
@@ -306,6 +310,37 @@
     return a;
   }
 
+  function execForm(node, id) {
+    const f = document.createElement("form");
+    f.method = "post";
+    f.action = "/nodes/" + encodeURIComponent(node) + "/docker/container_exec";
+    f.className = "inline";
+    const hid = document.createElement("input");
+    hid.type = "hidden";
+    hid.name = "payload";
+    f.appendChild(hid);
+    const sel = document.createElement("select");
+    sel.name = "cmd";
+    [["sh", "/bin/sh"], ["bash", "/bin/bash"]].forEach((pair) => {
+      const o = document.createElement("option");
+      o.value = pair[0];
+      o.textContent = pair[1];
+      sel.appendChild(o);
+    });
+    f.appendChild(sel);
+    const b = document.createElement("button");
+    b.type = "submit";
+    b.textContent = "Exec";
+    f.appendChild(b);
+    f.addEventListener("submit", (ev) => {
+      const cmd = sel.value || "sh";
+      hid.value = JSON.stringify({ id: id, cmd: cmd });
+      const sh = cmd === "bash" ? "/bin/bash" : "/bin/sh";
+      if (!window.confirm("Open " + sh + " in this container? This is root-equivalent inside the container. Not a host PTY.")) ev.preventDefault();
+    });
+    return f;
+  }
+
   function stateCell(state, status) {
     const td = document.createElement("td");
     const s = (state || "").toLowerCase();
@@ -333,6 +368,9 @@
   const logView = document.getElementById("log-view");
   if (logView) {
     const url = logView.getAttribute("data-stream");
+    const stdinUrl = logView.getAttribute("data-stdin");
+    const isExec = logView.getAttribute("data-exec") === "1";
+    let requestId = "";
     if (url) {
       const es = new EventSource(url);
       function appendLog(text) {
@@ -342,6 +380,20 @@
         }
         logView.scrollTop = logView.scrollHeight;
       }
+      function postStdin(body) {
+        if (!stdinUrl || !requestId) return;
+        fetch(stdinUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({ request_id: requestId }, body))
+        });
+      }
+      function sendResize() {
+        if (!isExec) return;
+        const cols = Math.max(20, Math.floor(logView.clientWidth / 8));
+        const rows = Math.max(8, Math.floor(logView.clientHeight / 16));
+        postStdin({ cols: cols, rows: rows });
+      }
       es.onmessage = (e) => {
         try {
           const j = JSON.parse(e.data);
@@ -350,11 +402,36 @@
           appendLog(e.data);
         }
       };
+      es.addEventListener("meta", (e) => {
+        try {
+          requestId = JSON.parse(e.data).request_id || "";
+        } catch (_) {
+          requestId = "";
+        }
+        sendResize();
+      });
       es.addEventListener("done", () => {
         es.close();
         appendLog("\n— end —\n");
       });
       window.addEventListener("beforeunload", () => es.close());
+      if (isExec) {
+        logView.addEventListener("click", () => logView.focus());
+        logView.addEventListener("keydown", (ev) => {
+          let data = null;
+          if (ev.key === "Enter") data = "\r";
+          else if (ev.key === "Backspace") data = "\x7f";
+          else if (ev.key === "Tab") data = "\t";
+          else if (ev.ctrlKey && (ev.key === "c" || ev.key === "C")) data = "\x03";
+          else if (ev.ctrlKey && (ev.key === "d" || ev.key === "D")) data = "\x04";
+          else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) data = ev.key;
+          if (data == null) return;
+          ev.preventDefault();
+          postStdin({ data: data });
+        });
+        window.addEventListener("resize", sendResize);
+        logView.focus();
+      }
     }
   }
 
@@ -407,6 +484,9 @@
         });
       }
       acts.appendChild(logsLink("/nodes/" + encodeURIComponent(node) + "/containers/" + encodeURIComponent(id) + "/logs"));
+      if (execOn(containers) && (c.state || "").toLowerCase() === "running") {
+        acts.appendChild(execForm(node, id));
+      }
       detail.appendChild(acts);
       return inspectHost;
     }

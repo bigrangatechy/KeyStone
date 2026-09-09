@@ -96,7 +96,7 @@ impl DockerOp {
             Self::ContainerLogs => "Stream container logs (on-demand)",
             Self::ContainerStats => "Stream live container stats (on-demand)",
             Self::ContainerExec => {
-                "Exec a command in a container (disabled unless docker.allow_exec)"
+                "Exec a listed shell in a container (/bin/sh or /bin/bash, not sh -c)"
             }
             Self::ComposePs => "List Compose project services",
             Self::ComposeUp => "Compose up",
@@ -169,9 +169,12 @@ impl DockerOp {
         }
     }
 
-    /// Agent sends `StreamChunk`s then a `CommandResult` (logs).
+    /// Agent sends `StreamChunk`s then a `CommandResult` (logs, exec).
     pub fn streams(self) -> bool {
-        matches!(self, Self::ContainerLogs | Self::ComposeLogs)
+        matches!(
+            self,
+            Self::ContainerLogs | Self::ComposeLogs | Self::ContainerExec
+        )
     }
 
     /// Fresh authenticator code when TOTP is on. No Docker op uses this
@@ -371,6 +374,67 @@ impl ImageLogin {
         self.username = validate_login_username(&self.username)?;
         self.password = validate_login_password(&self.password)?;
         Ok(self)
+    }
+}
+
+/// Listed `/bin/sh` or `/bin/bash` only. Not a command textbox and not `sh -c`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContainerExec {
+    pub id: String,
+    pub cmd: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerExecError {
+    Id,
+    Cmd,
+}
+
+impl std::fmt::Display for DockerExecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Id => write!(f, "container id is invalid"),
+            Self::Cmd => write!(f, "shell must be sh or bash"),
+        }
+    }
+}
+
+impl ContainerExec {
+    pub fn parse_json(raw: &str) -> Result<Self, DockerExecError> {
+        let v: serde_json::Value = serde_json::from_str(raw).map_err(|_| DockerExecError::Cmd)?;
+        Self::from_value(&v)
+    }
+
+    pub fn from_value(v: &serde_json::Value) -> Result<Self, DockerExecError> {
+        let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        if !docker_ref_ok(id) {
+            return Err(DockerExecError::Id);
+        }
+        let cmd = exec_shell_name(v.get("cmd").and_then(|x| x.as_str()).unwrap_or("sh"))?;
+        Ok(Self {
+            id: id.trim().to_string(),
+            cmd,
+        })
+    }
+
+    pub fn argv(&self) -> Vec<String> {
+        exec_shell_argv(&self.cmd).expect("cmd validated")
+    }
+}
+
+/// Token `sh` or `bash` only. Never a path or `sh -c`.
+pub fn exec_shell_name(raw: &str) -> Result<String, DockerExecError> {
+    match raw.trim() {
+        "sh" | "bash" => Ok(raw.trim().to_string()),
+        _ => Err(DockerExecError::Cmd),
+    }
+}
+
+pub fn exec_shell_argv(cmd: &str) -> Result<Vec<String>, DockerExecError> {
+    match cmd {
+        "sh" => Ok(vec!["/bin/sh".into()]),
+        "bash" => Ok(vec!["/bin/bash".into()]),
+        _ => Err(DockerExecError::Cmd),
     }
 }
 
@@ -1325,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn mutating_ops_are_in_the_ui_except_reserved_exec() {
+    fn mutating_ops_are_in_the_ui() {
         use strum::IntoEnumIterator;
         let js = include_str!("../../keystone-server/src/static/app.js");
         let html = include_str!("../../keystone-server/templates/node.html");
@@ -1334,18 +1398,30 @@ mod tests {
                 continue;
             }
             let name = op.as_str();
-            if op == DockerOp::ContainerExec {
-                assert!(
-                    !js.contains(name) && !html.contains(name),
-                    "container_exec must stay out of the UI"
-                );
-                continue;
-            }
             assert!(
                 js.contains(name) || html.contains(&format!("docker/{name}")),
                 "mutating {name} must be reachable from the Docker UI"
             );
         }
+        assert!(DockerOp::ContainerExec.streams());
+        assert_eq!(DockerOp::ContainerExec.permission(), Permission::DockerExec);
+        assert!(!DockerOp::ContainerExec.needs_step_up());
+        let sh = ContainerExec::parse_json(r#"{"id":"abc123","cmd":"sh"}"#).unwrap();
+        assert_eq!(sh.argv(), vec!["/bin/sh"]);
+        assert_eq!(
+            ContainerExec::parse_json(r#"{"id":"abc123","cmd":"bash"}"#)
+                .unwrap()
+                .argv(),
+            vec!["/bin/bash"]
+        );
+        assert!(ContainerExec::parse_json(r#"{"id":"abc123","cmd":"sh -c"}"#).is_err());
+        assert!(ContainerExec::parse_json(r#"{"id":"abc;rm","cmd":"sh"}"#).is_err());
+        assert!(ContainerExec::parse_json(r#"{"id":"abc123","cmd":"/bin/sh"}"#).is_err());
+        assert!(ContainerExec::parse_json(r#"{"id":"abc123","cmd":"yes;rm"}"#).is_err());
+        assert!(!exec_shell_argv("sh")
+            .unwrap()
+            .iter()
+            .any(|a| a.contains("sh -c")));
     }
 
     #[test]

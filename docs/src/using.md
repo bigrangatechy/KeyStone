@@ -99,7 +99,8 @@ series for debugging, not the usual way to watch a host. See
 Containers and Compose are cards (click for details). Local images are cards
 (inspect drops `Env`). Images also show Engine disk use and can prune unused
 build cache. Volumes and Networks are cards (inspect drops Labels). **Logs** follows
-that container or Compose project. Images search Docker Hub as cards that
+that container or Compose project. **Exec** is `/bin/sh` or `/bin/bash` in a
+running container when the Settings exec checkbox is on. Images search Docker Hub as cards that
 fill Pull, and can log into Hub or GHCR on that node.
 
 Empty tabs or an explanation until **Observe Docker** is on (node Settings)

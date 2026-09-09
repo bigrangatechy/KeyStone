@@ -27,9 +27,10 @@ On the node **Settings** tab:
    Destructive actions ask for confirmation. The pull/create forms take a
    plain name, not JSON. Image pull can also be filled from a Docker Hub
    search on that same form.
-3. **Allow `docker exec`** — reserved for a future interactive exec. This
-   version does **not** expose exec in the UI even if the box is ticked.
-   Leave it off.
+3. **Allow `docker exec`** — interactive `/bin/sh` or `/bin/bash` in a running
+   container. Confirm + Audit. Listed shells only, not a command textbox, not a
+   host PTY. Off until you tick this (Observe must be on). Leave it off if you
+   do not need a shell in containers.
 
 The add-node form’s “runs Docker” checkbox only turns on Observe.
 
@@ -96,7 +97,9 @@ agents cannot call these actions. Every mutation is written to
 [Audit](audit.md) (who, node, operation, target, success).
 
 Leave a logs page to stop follow: the browser disconnects, the server
-cancels the agent stream. There is no interactive exec/PTY in this UI.
+cancels the agent stream. **Exec** is a listed `/bin/sh` or `/bin/bash`
+follow page (Settings exec checkbox). Not a command textbox and not a
+host PTY. Leave that page to stop.
 
 ## Pulling an image
 

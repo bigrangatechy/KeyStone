@@ -538,17 +538,13 @@ async fn run_streaming(
     payload_json: &str,
     tx: mpsc::Sender<AgentToServer>,
     request_id: &str,
-    mut stdin_rx: mpsc::Receiver<StreamChunk>,
+    stdin_rx: mpsc::Receiver<StreamChunk>,
 ) -> anyhow::Result<serde_json::Value> {
     let payload = if payload_json.is_empty() {
         serde_json::json!({})
     } else {
         serde_json::from_str(payload_json).context("payload json")?
     };
-    // Logs and apt follow have no stdin. Drain so a later exec slice can
-    // send bytes without filling the ingest queue. Interactive exec is
-    // not wired here yet.
-    let drain_stdin = tokio::spawn(async move { while stdin_rx.recv().await.is_some() {} });
     let (chunk_tx, mut chunk_rx) = mpsc::channel::<Vec<u8>>(128);
     let tx_chunks = tx.clone();
     let rid = request_id.to_string();
@@ -571,7 +567,13 @@ async fn run_streaming(
         }
     });
     let result = if let Ok(sys_op) = SysOp::from_str(op) {
-        run_sys_streaming(runtime, sys_op, payload, chunk_tx).await
+        let drain_stdin = tokio::spawn(async move {
+            let mut stdin_rx = stdin_rx;
+            while stdin_rx.recv().await.is_some() {}
+        });
+        let r = run_sys_streaming(runtime, sys_op, payload, chunk_tx).await;
+        drain_stdin.abort();
+        r
     } else {
         let docker = runtime
             .docker
@@ -581,10 +583,11 @@ async fn run_streaming(
             .ok_or_else(|| anyhow::anyhow!("docker is not enabled on this agent"))?;
         let docker_op =
             DockerOp::from_str(op).map_err(|_| anyhow::anyhow!("unknown docker op {op}"))?;
-        docker.execute_streaming(docker_op, payload, chunk_tx).await
+        docker
+            .execute_streaming(docker_op, payload, chunk_tx, stdin_rx)
+            .await
     };
     let _ = forward.await;
-    drain_stdin.abort();
     let _ = tx
         .send(AgentToServer {
             body: Some(agent_to_server::Body::Chunk(StreamChunk {
@@ -1043,8 +1046,12 @@ mod tests {
             "server stdin chunks must route to an in-flight stream, not be ignored"
         );
         assert!(
+            src.contains("execute_streaming") && src.contains("stdin_rx"),
+            "exec streams consume stdin; logs drain inside execute_streaming"
+        );
+        assert!(
             src.contains("drain_stdin") || src.contains("while stdin_rx.recv()"),
-            "current log streams must drain stdin until exec is wired"
+            "apt follow must still drain stdin"
         );
     }
 

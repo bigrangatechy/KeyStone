@@ -101,16 +101,18 @@ fn developer_ingest_doc_covers_stdin_stream() {
         "ingest.md must document server→agent StreamChunk as stdin, not cancel"
     );
     assert!(
-        docker.contains("stdin") && docker.contains("Interactive exec is not in"),
-        "developer docker.md must say logs ignore stdin and exec stays out of the UI"
+        docker.contains("stdin")
+            && docker.contains("Logs drain")
+            && docker.contains("`container_exec`"),
+        "developer docker.md must say logs drain stdin and container_exec is in"
     );
     assert!(
-        arch.contains("server → agent as stdin") && arch.contains("Interactive exec is not in"),
-        "architecture.md must say stdin is on ingest and exec is not in the UI"
+        arch.contains("server → agent as stdin") && arch.contains("Interactive exec is in"),
+        "architecture.md must say stdin is on ingest and exec is in the UI"
     );
     assert!(
-        feat.contains("Bidirectional `StreamChunk`") && feat.contains("exec checkbox"),
-        "features.md Later must say the protocol is in and the UI is not"
+        feat.contains("docker exec") && !feat.contains("exec checkbox stays reserved"),
+        "features.md Current must list exec; Later must drop the reserved checkbox"
     );
 }
 
@@ -487,6 +489,49 @@ fn operator_docs_cover_autoremove_and_unattended() {
     assert!(
         trouble.contains("Unattended refused"),
         "troubleshooting must cover a refused unattended-upgrades toggle"
+    );
+}
+
+#[test]
+fn operator_docs_cover_container_exec() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let audit = include_str!("../../../docs/src/audit.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    let feat = include_str!("../../../docs/src/features.md");
+    assert!(
+        docker.contains("`docker exec`") && docker.contains("not a command textbox"),
+        "operator Docker doc must document listed-shell exec, not a command textbox"
+    );
+    assert!(
+        docker.contains("host PTY") && docker.contains("/bin/sh"),
+        "operator Docker doc must say exec is not a host PTY"
+    );
+    assert!(
+        using.contains("Exec") && using.contains("/bin/sh"),
+        "using.md must mention container Exec"
+    );
+    assert!(
+        audit.contains("docker exec") && !audit.contains("exec/PTY"),
+        "Audit must list docker exec and drop the old not-in-this-UI line"
+    );
+    assert!(
+        trouble.contains("Exec refused"),
+        "troubleshooting must cover a refused exec"
+    );
+    assert!(
+        http.contains("`container_exec`") && http.contains("/exec/stdin"),
+        "HTTP API must list container_exec and stdin"
+    );
+    assert!(
+        dev.contains("`container_exec`") && dev.contains("not `sh -c`"),
+        "developer docker.md must say exec is listed argv, not sh -c"
+    );
+    assert!(
+        feat.contains("docker exec") && !feat.contains("Exec is not in the UI"),
+        "features.md Current must list exec"
     );
 }
 

@@ -22,7 +22,7 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
   drops `Env`); Hub search cards that fill Pull; Hub/GHCR login on that node;
   Engine disk use (images, containers, volumes, build cache) and prune unused
   build cache; Volumes and Networks as cards (inspect drops Labels); live logs.
-  Manage is opt-in. Exec is not in the UI. See [Docker](docker.md).
+  Manage is opt-in. Listed-shell docker exec (`/bin/sh` or `/bin/bash`) when the Settings exec checkbox is on. See [Docker](docker.md).
 - **System** — Ubuntu / Debian / Raspberry Pi OS when the root helper is on
   (`keystone-sys.socket` plus Settings). Health vs actions: apt, autoremove,
     leftover/failed unit restart, journals (including
@@ -44,8 +44,6 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
 One slice at a time. Not mixed into the current tree:
 
 - Fedora `dnf`.
-- Interactive `docker exec` in the UI. Bidirectional `StreamChunk` on ingest
-  is in; the Settings exec checkbox stays reserved.
 - LAN-only LLM Agent API (Unix socket, off by default, never on the internet).
 
 ## Not this product

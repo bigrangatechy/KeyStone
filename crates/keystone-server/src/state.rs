@@ -141,7 +141,7 @@ impl AgentRegistry {
     }
 
     /// Stdin (or a TTY resize) for an in-flight stream. Logs drain this and
-    /// ignore it. Interactive exec is not in the UI yet. Dropped if the
+    /// ignore it. Exec writes it to the container TTY. Dropped if the
     /// outbound queue is full so a busy terminal cannot starve Commands.
     pub fn send_stdin(
         &self,
@@ -158,6 +158,25 @@ impl AgentRegistry {
                 eof,
                 cols: 0,
                 rows: 0,
+            },
+        )
+    }
+
+    pub fn send_resize(
+        &self,
+        node_id: &str,
+        request_id: &str,
+        cols: u32,
+        rows: u32,
+    ) -> anyhow::Result<()> {
+        self.send_chunk(
+            node_id,
+            StreamChunk {
+                request_id: request_id.to_string(),
+                data: Vec::new(),
+                eof: false,
+                cols,
+                rows,
             },
         )
     }

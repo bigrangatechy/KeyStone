@@ -14,6 +14,7 @@ use bollard::container::{
     InspectContainerOptions, KillContainerOptions, ListContainersOptions, LogsOptions,
     PruneContainersOptions, RemoveContainerOptions, StatsOptions,
 };
+use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::{ListImagesOptions, PruneImagesOptions, RemoveImageOptions};
 use bollard::network::{CreateNetworkOptions, ListNetworksOptions, PruneNetworksOptions};
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions, PruneVolumesOptions};
@@ -23,9 +24,10 @@ use futures_util::StreamExt;
 use keystone_core::config::DockerConfig;
 use keystone_core::docker::{
     docker_builder_prune_args, docker_config_auth, docker_login_args, registry_host_for_image,
-    summarize_system_df, DockerOp, ImageLogin,
+    summarize_system_df, ContainerExec, DockerOp, ImageLogin,
 };
 use keystone_core::sample::Sample;
+use keystone_proto::StreamChunk;
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -131,11 +133,12 @@ impl DockerHandle {
 
     pub async fn execute(&self, op: DockerOp, payload: Value) -> anyhow::Result<Value> {
         let policy = self.policy();
-        if op.mutating() && !policy.manage {
+        if op == DockerOp::ContainerExec {
+            if !policy.allow_exec {
+                anyhow::bail!("docker.allow_exec is disabled on this agent");
+            }
+        } else if op.mutating() && !policy.manage {
             anyhow::bail!("docker.manage is disabled on this agent");
-        }
-        if op == DockerOp::ContainerExec && !policy.allow_exec {
-            anyhow::bail!("docker.allow_exec is disabled on this agent");
         }
         match op {
             DockerOp::ContainerList => self.container_list().await,
@@ -204,7 +207,7 @@ impl DockerHandle {
                     .await?;
                 Ok(serde_json::to_value(report)?)
             }
-            DockerOp::ContainerLogs | DockerOp::ComposeLogs => {
+            DockerOp::ContainerLogs | DockerOp::ComposeLogs | DockerOp::ContainerExec => {
                 Err(anyhow!("{} must be streamed (StreamChunk)", op.as_str()))
             }
             DockerOp::ContainerStats => {
@@ -219,9 +222,6 @@ impl DockerHandle {
                 let stats = stream.next().await.ok_or_else(|| anyhow!("no stats"))??;
                 Ok(serde_json::to_value(stats)?)
             }
-            DockerOp::ContainerExec => Err(anyhow!(
-                "interactive exec is not exposed over this RPC; enable a future streaming exec"
-            )),
             DockerOp::ImageList => self.image_list().await,
             DockerOp::ImageInspect => {
                 // Server summarizes this JSON (drops Env/labels). Payload `name` is the id.
@@ -659,14 +659,39 @@ impl DockerHandle {
         op: DockerOp,
         payload: Value,
         chunk_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+        stdin_rx: tokio::sync::mpsc::Receiver<StreamChunk>,
     ) -> anyhow::Result<Value> {
         let policy = self.policy();
-        if op.mutating() && !policy.manage {
+        if op == DockerOp::ContainerExec {
+            if !policy.allow_exec {
+                anyhow::bail!("docker.allow_exec is disabled on this agent");
+            }
+        } else if op.mutating() && !policy.manage {
             anyhow::bail!("docker.manage is disabled on this agent");
         }
         match op {
-            DockerOp::ContainerLogs => self.stream_container_logs(&payload, chunk_tx).await,
-            DockerOp::ComposeLogs => self.stream_compose_logs(&payload, chunk_tx).await,
+            DockerOp::ContainerLogs => {
+                let drain = tokio::spawn(async move {
+                    let mut stdin_rx = stdin_rx;
+                    while stdin_rx.recv().await.is_some() {}
+                });
+                let r = self.stream_container_logs(&payload, chunk_tx).await;
+                drain.abort();
+                r
+            }
+            DockerOp::ComposeLogs => {
+                let drain = tokio::spawn(async move {
+                    let mut stdin_rx = stdin_rx;
+                    while stdin_rx.recv().await.is_some() {}
+                });
+                let r = self.stream_compose_logs(&payload, chunk_tx).await;
+                drain.abort();
+                r
+            }
+            DockerOp::ContainerExec => {
+                self.stream_container_exec(&payload, chunk_tx, stdin_rx)
+                    .await
+            }
             other => anyhow::bail!("{} is not a streaming op", other.as_str()),
         }
     }
@@ -697,6 +722,101 @@ impl DockerHandle {
                 .is_err()
             {
                 break;
+            }
+        }
+        Ok(json!({"ok": true}))
+    }
+
+    async fn stream_container_exec(
+        &self,
+        payload: &Value,
+        chunk_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+        mut stdin_rx: tokio::sync::mpsc::Receiver<StreamChunk>,
+    ) -> anyhow::Result<Value> {
+        if cfg!(test) {
+            anyhow::bail!("docker exec is not invoked in tests");
+        }
+        let req = ContainerExec::from_value(payload).map_err(|e| anyhow!("{e}"))?;
+        let argv = req.argv();
+        let created = self
+            .docker
+            .create_exec(
+                &req.id,
+                CreateExecOptions {
+                    attach_stdin: Some(true),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    tty: Some(true),
+                    cmd: Some(argv),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("docker exec create")?;
+        let start = self
+            .docker
+            .start_exec(
+                &created.id,
+                Some(StartExecOptions {
+                    detach: false,
+                    tty: true,
+                    output_capacity: None,
+                }),
+            )
+            .await
+            .context("docker exec start")?;
+        let StartExecResults::Attached {
+            mut output,
+            mut input,
+        } = start
+        else {
+            anyhow::bail!("docker exec detached");
+        };
+        let mut stdin_open = true;
+        loop {
+            tokio::select! {
+                chunk = stdin_rx.recv(), if stdin_open => {
+                    match chunk {
+                        None => {
+                            let _ = input.shutdown().await;
+                            stdin_open = false;
+                        }
+                        Some(c) if c.eof => {
+                            let _ = input.shutdown().await;
+                            stdin_open = false;
+                        }
+                        Some(c) if c.cols > 0 || c.rows > 0 => {
+                            let width = c.cols.clamp(1, 500) as u16;
+                            let height = c.rows.clamp(1, 500) as u16;
+                            let _ = self
+                                .docker
+                                .resize_exec(
+                                    &created.id,
+                                    ResizeExecOptions { height, width },
+                                )
+                                .await;
+                        }
+                        Some(c) if !c.data.is_empty() => {
+                            if input.write_all(&c.data).await.is_err() {
+                                stdin_open = false;
+                            } else {
+                                let _ = input.flush().await;
+                            }
+                        }
+                        Some(_) => {}
+                    }
+                }
+                item = output.next() => {
+                    match item {
+                        None => break,
+                        Some(Err(e)) => return Err(e.into()),
+                        Some(Ok(line)) => {
+                            if chunk_tx.send(line.to_string().into_bytes()).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(json!({"ok": true}))
@@ -1183,16 +1303,26 @@ mod tests {
     }
 
     #[test]
-    fn streaming_ops_are_logs_only() {
+    fn streaming_ops_include_exec() {
         assert!(DockerOp::ContainerLogs.streams());
         assert!(DockerOp::ComposeLogs.streams());
+        assert!(DockerOp::ContainerExec.streams());
         assert!(!DockerOp::ContainerList.streams());
         assert!(!DockerOp::ComposeUp.streams());
         assert!(!DockerOp::ComposeUpdate.streams());
-        assert!(
-            !DockerOp::ContainerExec.streams(),
-            "exec stays off the log stream until a later UI slice"
-        );
+        let src = include_str!("docker.rs");
+        let body = src
+            .split("async fn stream_container_exec")
+            .nth(1)
+            .expect("stream_container_exec")
+            .split("async fn stream_compose_logs")
+            .next()
+            .expect("stream_container_exec body");
+        assert!(body.contains("cfg!(test)"));
+        assert!(body.contains("CreateExecOptions"));
+        assert!(body.contains("req.argv()"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(!body.contains("privileged: Some(true)"));
     }
 
     #[test]

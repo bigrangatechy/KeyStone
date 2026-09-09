@@ -18,7 +18,7 @@ The server never opens `docker.sock`. `keystone-agent` uses bollard (and
 `compose_paths`) is pushed as `set_runtime`. The agent refuses:
 
 - any `DockerOp` when observe is off (no handle)
-- `mutating()` ops unless `manage`
+- `mutating()` ops unless `manage` (`container_exec` uses `allow_exec` instead)
 - `container_exec` unless `allow_exec` (even if manage is on)
 
 `docker.host` stays in `agent.toml`. Socket access is root-equivalent.
@@ -26,7 +26,8 @@ The server never opens `docker.sock`. `keystone-agent` uses bollard (and
 UI POST `/nodes/{id}/docker/{op}` requires a cookie session. The ingest
 token cannot call it. Mutations are written to `audit` (header `GET /audit`).
 Streaming ops (`container_logs`, `compose_logs`) are not POSTed; they use
-SSE (below). `DockerOp::needs_step_up()` is empty this version: confirm
+SSE (below). `container_exec` POSTs, arms a one-shot ticket, then SSE.
+`DockerOp::needs_step_up()` is empty this version: confirm
 only. The same `consume_step_up` helper as System will enforce a current
 6-digit `totp` form field when a Docker op opts in. Backup codes are for
 sign-in only. TOTP off stays confirm-only.
@@ -39,12 +40,12 @@ Observe is off. The agent gates still apply.
 
 ## Streaming logs
 
-`DockerOp::streams()` is `container_logs` and `compose_logs`. The agent
+`DockerOp::streams()` is `container_logs`, `compose_logs`, and `container_exec`. The agent
 sends `StreamChunk` (`data`, then `eof`) followed by `CommandResult`.
 `op == "cancel"` with `{"request_id":"..."}` aborts the task. The server may
 also send `StreamChunk` on that `request_id` (stdin, or `cols`/`rows` for a
-later TTY). Logs drain and ignore those bytes. Interactive exec is not in
-the UI.
+TTY). Logs drain and ignore those bytes. `container_exec` consumes them as a
+listed `/bin/sh` or `/bin/bash` TTY (not `sh -c`, not a host PTY).
 
 Non-streaming Docker and System RPCs (`container_list`, `status`, …) are
 also spawned off the ingest `select!` loop. Awaiting them there meant the
@@ -127,7 +128,7 @@ List payloads the UI expects:
 | `container_prune` | yes | `docker_manage` | Prune stopped containers |
 | `container_logs` | no | `docker_view` | Stream container logs (on-demand) |
 | `container_stats` | no | `docker_view` | Stream live container stats (on-demand) |
-| `container_exec` | yes | `docker_exec` | Exec a command in a container (disabled unless allow_exec) |
+| `container_exec` | yes | `docker_exec` | Listed `/bin/sh` or `/bin/bash` in a running container (TTY). Disabled unless `allow_exec`. Confirm + Audit; not `needs_step_up()`. POST arms a ticket; SSE consumes it. Stdin via POST `/nodes/{id}/exec/stdin`. Not `sh -c`. Tests must not invoke it. |
 | `compose_ps` | no | `docker_view` | List Compose project services |
 | `compose_up` | yes | `docker_manage` | Compose up |
 | `compose_stop` | yes | `docker_manage` | Compose stop |

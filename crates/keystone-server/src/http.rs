@@ -19,7 +19,8 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
 use keystone_core::docker::{
     audit_docker_target, docker_ref_ok, summarize_container_inspect, summarize_image_inspect,
-    summarize_network_inspect, summarize_system_df, summarize_volume_inspect, DockerOp,
+    summarize_network_inspect, summarize_system_df, summarize_volume_inspect, ContainerExec,
+    DockerOp,
 };
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
@@ -141,6 +142,15 @@ pub fn router(state: AppState) -> Router {
             "/nodes/{id}/containers/{cid}/logs/stream",
             get(container_logs_sse),
         )
+        .route(
+            "/nodes/{id}/containers/{cid}/exec",
+            get(container_exec_page),
+        )
+        .route(
+            "/nodes/{id}/containers/{cid}/exec/stream",
+            get(container_exec_sse),
+        )
+        .route("/nodes/{id}/exec/stdin", post(container_exec_stdin))
         .route(
             "/nodes/{id}/containers/{cid}/stats",
             get(container_stats_json),
@@ -2301,11 +2311,40 @@ async fn docker_action(
         Err(_) => return (StatusCode::BAD_REQUEST, "unknown op").into_response(),
     };
     if parsed.streams() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "logs are streamed from the logs page",
-        )
-            .into_response();
+        if parsed != DockerOp::ContainerExec {
+            return (
+                StatusCode::BAD_REQUEST,
+                "logs are streamed from the logs page",
+            )
+                .into_response();
+        }
+        let payload = docker_form_payload(&form);
+        let req = match ContainerExec::parse_json(&payload) {
+            Ok(r) => r,
+            Err(_) => return (StatusCode::BAD_REQUEST, "invalid exec").into_response(),
+        };
+        if let Err(err) = consume_step_up(&state, &username, parsed.needs_step_up(), &form.totp) {
+            return step_up_denied(
+                &state,
+                &username,
+                &id,
+                parsed.as_str(),
+                &payload,
+                parsed.mutating(),
+                err,
+                panel_for_op(parsed),
+            );
+        }
+        state
+            .stream_arms
+            .lock()
+            .arm(&username, &id, parsed.as_str(), payload);
+        return Redirect::to(&format!(
+            "/nodes/{}/containers/{}/exec",
+            id,
+            urlencoding_path(&req.id)
+        ))
+        .into_response();
     }
     let payload = docker_form_payload(&form);
     let target = audit_docker_target(parsed, &payload);
@@ -2903,6 +2942,132 @@ async fn container_logs_sse(
     logs_sse(state, id, DockerOp::ContainerLogs, payload)
 }
 
+#[derive(Template)]
+#[template(path = "exec.html")]
+struct ExecTemplate {
+    title: String,
+    node_id: String,
+    subtitle: String,
+    hint: String,
+    back_href: String,
+    stream_url: String,
+    stdin_url: String,
+}
+
+async fn container_exec_page(Path((id, cid)): Path<(String, String)>) -> impl IntoResponse {
+    Html(
+        ExecTemplate {
+            title: "Container exec".into(),
+            node_id: id.clone(),
+            subtitle: cid.clone(),
+            hint: "Listed /bin/sh or /bin/bash. Leave this page to stop. Not a command textbox and not a host PTY.".into(),
+            back_href: format!("/nodes/{id}?panel=containers"),
+            stream_url: format!(
+                "/nodes/{}/containers/{}/exec/stream",
+                urlencoding_path(&id),
+                urlencoding_path(&cid)
+            ),
+            stdin_url: format!("/nodes/{}/exec/stdin", urlencoding_path(&id)),
+        }
+        .render()
+        .unwrap_or_else(|e| e.to_string()),
+    )
+}
+
+async fn container_exec_sse(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Path((id, cid)): Path<(String, String)>,
+) -> Response {
+    let username = session_username(&state, &jar).unwrap_or_else(|| "unknown".into());
+    let Some(arm) = state
+        .stream_arms
+        .lock()
+        .take(&username, &id, DockerOp::ContainerExec.as_str())
+    else {
+        return (StatusCode::FORBIDDEN, "exec was not confirmed").into_response();
+    };
+    let Ok(req) = ContainerExec::parse_json(&arm.payload_json) else {
+        return (StatusCode::BAD_REQUEST, "invalid exec").into_response();
+    };
+    if req.id != cid {
+        return (StatusCode::BAD_REQUEST, "container mismatch").into_response();
+    }
+    let _ = state.stores.metadata.audit(
+        &username,
+        &id,
+        DockerOp::ContainerExec.as_str(),
+        &arm.payload_json,
+        true,
+        "started",
+    );
+    exec_sse(state, id, arm.payload_json)
+}
+
+#[derive(Deserialize)]
+struct ExecStdinBody {
+    request_id: String,
+    #[serde(default)]
+    data: String,
+    #[serde(default)]
+    eof: bool,
+    cols: Option<u32>,
+    rows: Option<u32>,
+}
+
+async fn container_exec_stdin(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<ExecStdinBody>,
+) -> Response {
+    let rid = body.request_id.trim();
+    if rid.is_empty() || rid.len() > 64 {
+        return (StatusCode::BAD_REQUEST, "invalid request").into_response();
+    }
+    if let (Some(cols), Some(rows)) = (body.cols, body.rows) {
+        if !(1..=500).contains(&cols) || !(1..=500).contains(&rows) {
+            return (StatusCode::BAD_REQUEST, "invalid size").into_response();
+        }
+        return match state.agents.send_resize(&id, rid, cols, rows) {
+            Ok(()) => Json(serde_json::json!({"ok": true})).into_response(),
+            Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        };
+    }
+    if body.data.len() > 4096 {
+        return (StatusCode::BAD_REQUEST, "stdin too large").into_response();
+    }
+    match state
+        .agents
+        .send_stdin(&id, rid, body.data.into_bytes(), body.eof)
+    {
+        Ok(()) => Json(serde_json::json!({"ok": true})).into_response(),
+        Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    }
+}
+
+fn exec_sse(state: AppState, node_id: String, payload: String) -> Response {
+    let (request_id, rx) =
+        match state
+            .agents
+            .stream(&node_id, DockerOp::ContainerExec.as_str(), payload)
+        {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        };
+    let stream = ExecSse {
+        meta: Some(request_id.clone()),
+        rx,
+        cancel: Some(StreamCancel {
+            agents: state.agents.clone(),
+            node_id,
+            request_id,
+        }),
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
 async fn compose_logs_sse(
     State(state): State<AppState>,
     Path((id, project)): Path<(String, String)>,
@@ -2942,6 +3107,41 @@ impl Stream for LogSse {
     type Item = Result<Event, std::convert::Infallible>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match Pin::new(&mut self.rx).poll_recv(cx) {
+                Poll::Ready(Some(chunk)) => {
+                    if chunk.eof {
+                        self.cancel.take();
+                        return Poll::Ready(Some(Ok(Event::default().event("done").data("eof"))));
+                    }
+                    if chunk.data.is_empty() {
+                        continue;
+                    }
+                    let t = String::from_utf8_lossy(&chunk.data).into_owned();
+                    let data = serde_json::json!({ "t": t }).to_string();
+                    return Poll::Ready(Some(Ok(Event::default().data(data))));
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+struct ExecSse {
+    meta: Option<String>,
+    rx: mpsc::Receiver<StreamChunk>,
+    cancel: Option<StreamCancel>,
+}
+
+impl Stream for ExecSse {
+    type Item = Result<Event, std::convert::Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(rid) = self.meta.take() {
+            let data = serde_json::json!({ "request_id": rid }).to_string();
+            return Poll::Ready(Some(Ok(Event::default().event("meta").data(data))));
+        }
         loop {
             match Pin::new(&mut self.rx).poll_recv(cx) {
                 Poll::Ready(Some(chunk)) => {
@@ -3108,6 +3308,7 @@ fn _headers(_: HeaderMap, _: HashMap<String, String>) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use keystone_core::rbac::Permission;
 
     #[test]
     fn host_strips_numeric_port_only() {
@@ -3282,6 +3483,10 @@ mod tests {
         assert!(
             docker.contains("consume_step_up") && docker.contains("needs_step_up"),
             "Docker POSTs must share step-up with System"
+        );
+        assert!(
+            docker.contains("stream_arms") && docker.contains("ContainerExec"),
+            "container_exec POST must arm a ticket then go to the exec page"
         );
 
         let sys = src
@@ -3701,7 +3906,7 @@ mod tests {
     }
 
     #[test]
-    fn ui_docker_posts_are_mutating_and_skip_exec() {
+    fn ui_docker_posts_are_mutating() {
         let js = include_str!("static/app.js");
         let html = include_str!("../templates/node.html");
         for op in DockerOp::all() {
@@ -3709,13 +3914,6 @@ mod tests {
                 continue;
             }
             let name = op.as_str();
-            if op == DockerOp::ContainerExec {
-                assert!(
-                    !js.contains(name) && !html.contains(name),
-                    "interactive exec must stay out of this UI"
-                );
-                continue;
-            }
             assert!(
                 js.contains(name) || html.contains(&format!("docker/{name}")),
                 "{name} must appear in the Docker UI"
@@ -3771,6 +3969,19 @@ mod tests {
         assert!(SysOp::UnitEnable.needs_step_up());
         assert!(SysOp::Journal.streams());
         assert!(SysOp::UpdatesAutoremove.streams());
+        assert!(DockerOp::ContainerExec.mutating());
+        assert!(DockerOp::ContainerExec.streams());
+        assert!(!DockerOp::ContainerExec.needs_step_up());
+        assert_eq!(DockerOp::ContainerExec.permission(), Permission::DockerExec);
+        assert!(js.contains("/docker/container_exec"));
+        assert!(js.contains("data-exec"));
+        let exec_html = include_str!("../templates/exec.html");
+        assert!(
+            exec_html.contains("data-exec")
+                && exec_html.contains("Not a command textbox")
+                && exec_html.contains("/exec/stdin"),
+            "exec page must send stdin and say it is not a command textbox"
+        );
     }
 
     fn host_headers(host: &str) -> HeaderMap {

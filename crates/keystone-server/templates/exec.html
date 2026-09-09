@@ -1,0 +1,15 @@
+{# SPDX-FileCopyrightText: 2026 The KeyStone Authors
+   SPDX-License-Identifier: GPL-2.0-or-later #}
+{% extends "layout.html" %}
+{% block title %}{{ title }} — {{ subtitle }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="muted"><a href="{{ back_href }}">← Back</a></p>
+    <h1>{{ title }}</h1>
+    <p class="muted"><code>{{ node_id }}</code> · {{ subtitle }} · {{ hint }}</p>
+    <p class="muted">Listed /bin/sh or /bin/bash. Leave this page to stop. Not a command textbox and not a host PTY. Keys go to POST /exec/stdin.</p>
+  </div>
+</section>
+<pre class="logs" id="log-view" data-stream="{{ stream_url }}" data-stdin="{{ stdin_url }}" data-exec="1" tabindex="0"></pre>
+{% endblock %}

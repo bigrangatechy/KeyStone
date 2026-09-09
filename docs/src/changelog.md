@@ -8,6 +8,12 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 03:49:39 10/09/2026 AEST
+
+Open a listed `/bin/sh` or `/bin/bash` in a running container from the
+Containers tab when the Settings exec checkbox is on. Not a command
+textbox and not a host PTY. Tests do not run live `docker exec`.
+
 ## 02:06:39 10/09/2026 AEST
 
 Enable or disable unattended-upgrades from the System tab. Writes a KeyStone
