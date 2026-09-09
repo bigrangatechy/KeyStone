@@ -115,6 +115,45 @@ fn developer_ingest_doc_covers_stdin_stream() {
 }
 
 #[test]
+fn developer_agent_api_plan_is_documented() {
+    let plan = include_str!("../../../docs/dev/src/agent-api.md");
+    let feat = include_str!("../../../docs/src/features.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    let summary = include_str!("../../../docs/dev/src/SUMMARY.md");
+    assert!(
+        summary.contains("agent-api.md") && plan.contains("# LLM Agent API"),
+        "developer SUMMARY must list the Agent API plan"
+    );
+    assert!(
+        plan.contains("never exposed to the internet")
+            && plan.contains("keystone-sys.socket")
+            && plan.contains("capability flags")
+            && plan.contains("ingest token"),
+        "Agent API plan must keep the internet, sys-socket, capability, and token rules"
+    );
+    assert!(
+        plan.contains("needs_step_up") && plan.contains("denied"),
+        "Agent API plan must deny UI step-up ops (no authenticator on this path)"
+    );
+    assert!(
+        plan.contains("Conversational") && plan.contains("cookie session"),
+        "UI chat must stay on the existing session, not this socket"
+    );
+    assert!(
+        feat.contains("LLM Agent API") && feat.contains("never on the internet"),
+        "features.md Later must mention the LAN-only Agent API"
+    );
+    assert!(
+        feat.contains("Exposing the LLM Agent API to the internet"),
+        "features.md stay-out must forbid internet exposure"
+    );
+    assert!(
+        arch.contains("LLM Agent API") && arch.contains("agent-api.md"),
+        "architecture.md must point at the Agent API plan"
+    );
+}
+
+#[test]
 fn operator_dashboard_documents_page_and_widget_styles() {
     let dash = include_str!("../../../docs/src/dashboard.md");
     for needle in [

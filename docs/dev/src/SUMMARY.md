@@ -12,6 +12,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - [Docker control](docker.md)
 - [Host system admin](system.md)
 - [Ingest protocol](ingest.md)
+- [LLM Agent API](agent-api.md)
 - [Stores](stores.md)
 - [HTTP API](http-api.md)
 - [Settings](settings.md)

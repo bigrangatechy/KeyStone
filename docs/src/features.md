@@ -45,6 +45,7 @@ One slice at a time. Not mixed into the current tree:
 - Timezone from a dropdown; unattended-upgrades enable/disable; Fedora `dnf`.
 - Interactive `docker exec` in the UI. Bidirectional `StreamChunk` on ingest
   is in; the Settings exec checkbox stays reserved.
+- LAN-only LLM Agent API (Unix socket, off by default, never on the internet).
 
 ## Not this product
 
@@ -56,4 +57,5 @@ These stay out on purpose:
 - Hostname, users, firewall, `PermitRootLogin`, or a timezone textbox.
 - Harbor, public GHCR browse, Watchtower, a CasaOS-style app shop.
 - Enabling `keystone-sys.socket` from the UI; rewriting unit files.
+- Exposing the LLM Agent API to the internet.
 - Kubernetes, 32-bit ARM packages, SSO, required 2FA, WebAuthn, PagerDuty.

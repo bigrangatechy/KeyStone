@@ -118,4 +118,5 @@ audited) is in; hidden SSID, hotspot, and 802.1X are not. **SSH password**
 is enabled and when it last ran is in; editing `20auto-upgrades` is not.
 **Hub/GHCR login** (`image_login`) stores credentials on the **agent** with
 `docker login` (password not audited, not in the server DB). Public GHCR
-browse and Harbor remain out.
+browse and Harbor remain out. The **LLM Agent API** (Unix socket for a
+local model) is not in this binary; see [LLM Agent API](agent-api.md).
