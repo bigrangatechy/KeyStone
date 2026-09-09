@@ -8,6 +8,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 03:58:36 10/09/2026 AEST
+
+Package server 0.1.0-18 and agent 0.1.0-15.
+
 ## 03:49:39 10/09/2026 AEST
 
 Open a listed `/bin/sh` or `/bin/bash` in a running container from the

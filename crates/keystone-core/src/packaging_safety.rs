@@ -350,6 +350,55 @@ fn debs_must_not_depend_on_engine() {
 }
 
 #[test]
+fn upgrade_keeps_toml_and_sqlite() {
+    for (name, cargo, toml, default) in [
+        (
+            "agent",
+            AGENT_CARGO,
+            "/etc/keystone/agent.toml",
+            "/etc/default/keystone-agent",
+        ),
+        (
+            "server",
+            SERVER_CARGO,
+            "/etc/keystone/server.toml",
+            "/etc/default/keystone-server",
+        ),
+    ] {
+        let deb = cargo
+            .split("[package.metadata.deb]")
+            .nth(1)
+            .expect("deb metadata");
+        assert!(
+            deb.contains("conf-files"),
+            "{name} must mark toml as a conffile so dpkg keeps operator edits"
+        );
+        assert!(deb.contains(toml), "{name} must keep {toml} as a conffile");
+        assert!(
+            deb.contains(default),
+            "{name} must keep {default} as a conffile"
+        );
+    }
+    let server_postrm = active_shell(SERVER_POSTRM);
+    assert!(
+        server_postrm.contains("purge)") && !server_postrm.contains("remove)"),
+        "server postrm must delete sqlite only on purge, not apt remove"
+    );
+    let agent_postrm = active_shell(AGENT_POSTRM);
+    assert!(
+        agent_postrm.contains("purge)") && !agent_postrm.contains("remove)"),
+        "agent postrm must delete the buffer only on purge, not apt remove"
+    );
+    let install = include_str!("../../../docs/src/install.md");
+    assert!(
+        install.contains("conffiles")
+            && install.contains("--reinstall")
+            && install.contains("`apt purge`"),
+        "install.md must say a newer .deb is an upgrade that keeps toml/sqlite; purge is the wipe"
+    );
+}
+
+#[test]
 fn etc_keystone_is_readable_by_service_user() {
     for (name, s) in [("agent", AGENT_POSTINST), ("server", SERVER_POSTINST)] {
         let active = active_shell(s);

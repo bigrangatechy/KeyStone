@@ -358,6 +358,12 @@ mod tests {
         assert!(!s.sys_manage);
         assert!(!s.sys_enabled);
         assert!(!s.docker_enabled);
+        assert!(!s.docker_allow_exec);
+        let rt: AgentRuntime = serde_json::from_str(r#"{"interval_secs":1,"docker_enabled":true}"#)
+            .expect("old set_runtime json");
+        assert!(rt.docker_enabled);
+        assert!(!rt.docker_allow_exec);
+        assert!(!rt.sys_manage);
     }
 
     #[test]
