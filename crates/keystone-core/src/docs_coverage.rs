@@ -777,3 +777,34 @@ fn operator_docs_cover_compose_cards() {
         "architecture.md must say Compose cards are not an app shop"
     );
 }
+
+#[test]
+fn operator_docs_cover_image_inspect() {
+    let docker = include_str!("../../../docs/src/docker.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let http = include_str!("../../../docs/dev/src/http-api.md");
+    let dev = include_str!("../../../docs/dev/src/docker.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    assert!(
+        docker.contains("one card per local image")
+            && docker.contains("entrypoint")
+            && docker.contains("`Env`"),
+        "operator Docker doc must describe image cards and that Env is not shown"
+    );
+    assert!(
+        using.contains("inspect drops") && using.contains("`Env`"),
+        "using.md must mention image inspect without Env"
+    );
+    assert!(
+        http.contains("/api/v1/nodes/{id}/images/{iid}") && http.contains("image_inspect"),
+        "HTTP API must list summarized image inspect"
+    );
+    assert!(
+        dev.contains("`image_inspect`") && dev.contains("drops `Env`"),
+        "developer docker.md must say image inspect is summarized without Env"
+    );
+    assert!(
+        arch.contains("image_inspect") && arch.contains("Env"),
+        "architecture.md must say image inspect drops Env"
+    );
+}

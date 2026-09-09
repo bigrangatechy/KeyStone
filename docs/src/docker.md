@@ -44,13 +44,13 @@ add `keystone` to `docker` and restart the agent.
 
 ## What the tabs do
 
-With Observe on and a live session, Images / Volumes / Networks are tables
-(not a JSON dump). **Containers** and **Compose** are cards. Container
-cards show name, state, CPU, and memory; click for image, ports, mounts,
-networks, and Manage actions. Inspect JSON is summarized and does **not**
-include container `Env`. If the agent is offline or Observe is off, the tab
-says so instead of showing stale lists. Manage buttons and pull/create
-toolbars are hidden when mutations are off.
+With Observe on and a live session, Volumes / Networks are tables (not a
+JSON dump). **Containers**, **Compose**, and local **Images** are cards.
+Container cards show name, state, CPU, and memory; click for image, ports,
+mounts, networks, and Manage actions. Inspect JSON is summarized and does
+**not** include container `Env`. If the agent is offline or Observe is off,
+the tab says so instead of showing stale lists. Manage buttons and
+pull/create toolbars are hidden when mutations are off.
 
 - **Containers** — one card per container (name, state, CPU, memory). Click
   opens details (image, ports, Compose project, mounts, networks) and
@@ -77,8 +77,11 @@ toolbars are hidden when mutations are off.
   `keystone`: the YAML (and its directory) must be readable by that user.
   Put stacks in `/opt/…` or `chmod`/`setfacl` a home path; `ProtectHome`
   is read-only, not a hidden `/home`. This tab is not a CasaOS-style app shop.
-- **Images** — tags, short id, size. With Manage: pull by name, search
-  Docker Hub as cards that fill that name, prune unused, remove.
+- **Images** — one card per local image (tags, short id, size). Click
+  opens created, architecture, entrypoint, command, and exposed ports.
+  Inspect JSON is summarized and does **not** include `Env`. With Manage:
+  pull by name, search Docker Hub as cards that fill that name, prune
+  unused, remove.
 - **Volumes** and **Networks** — list; create/remove and prune unused with
   Manage.
 

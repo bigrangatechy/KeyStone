@@ -18,7 +18,8 @@ use axum::Router;
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use futures_util::Stream;
 use keystone_core::docker::{
-    audit_docker_target, docker_ref_ok, summarize_container_inspect, DockerOp,
+    audit_docker_target, docker_ref_ok, summarize_container_inspect, summarize_image_inspect,
+    DockerOp,
 };
 use keystone_core::fleet::{fleet_chips, FleetChip};
 use keystone_core::metrics::catalog;
@@ -167,6 +168,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/nodes/{id}/containers/{cid}",
             get(container_inspect_api),
         )
+        .route("/api/v1/nodes/{id}/images/{iid}", get(image_inspect_api))
         .route(
             "/api/v1/nodes/{id}/dashboard",
             get(dashboard_get)
@@ -2035,6 +2037,31 @@ async fn container_inspect_api(
     }
 }
 
+async fn image_inspect_api(
+    State(state): State<AppState>,
+    Path((id, iid)): Path<(String, String)>,
+) -> Response {
+    if state.stores.metadata.get_node(&id).ok().flatten().is_none() {
+        return (StatusCode::NOT_FOUND, "node not found").into_response();
+    }
+    if !docker_ref_ok(&iid) {
+        return (StatusCode::BAD_REQUEST, "unknown image").into_response();
+    }
+    let payload = serde_json::json!({ "name": iid }).to_string();
+    match call_json_op(&state, &id, DockerOp::ImageInspect.as_str(), &payload).await {
+        Ok(body) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            Json(summarize_image_inspect(&raw)).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn call_json_op(
     state: &AppState,
     node_id: &str,
@@ -3822,6 +3849,24 @@ mod tests {
     }
 
     #[test]
+    fn images_ui_is_cards_then_inspect() {
+        let js = include_str!("static/app.js");
+        let css = include_str!("static/app.css");
+        assert!(
+            js.contains("image-card")
+                && js.contains("image-detail")
+                && js.contains("/images/")
+                && js.contains("Entrypoint"),
+            "Images tab must be glance cards that load summarized inspect"
+        );
+        assert!(
+            js.contains("image_remove") && js.contains("not Env"),
+            "Images detail must keep Remove and must not paint Env"
+        );
+        assert!(css.contains(".image-card") && css.contains(".image-grid"));
+    }
+
+    #[test]
     fn dockerhub_api_is_behind_the_session_cookie() {
         let src = include_str!("http.rs");
         let head = src.split("#[cfg(test)]").next().expect("router source");
@@ -3852,6 +3897,13 @@ mod tests {
         assert!(
             inspect < authed_end,
             "container inspect must require a UI session"
+        );
+        let image_inspect = head
+            .find("/api/v1/nodes/{id}/images/{iid}")
+            .expect("image inspect API");
+        assert!(
+            image_inspect < authed_end,
+            "image inspect must require a UI session"
         );
         let docker_post = head
             .find("/nodes/{id}/docker/{op}")
@@ -4362,6 +4414,10 @@ mod tests {
         assert!(
             inspect.contains("summarize_container_inspect") && inspect.contains("docker_ref_ok"),
             "inspect API must strip Engine JSON and reject junk ids"
+        );
+        assert!(
+            inspect.contains("summarize_image_inspect") && inspect.contains("unknown image"),
+            "image inspect API must strip Engine JSON and reject junk ids"
         );
         let css = include_str!("static/app.css");
         assert!(

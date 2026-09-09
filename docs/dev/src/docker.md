@@ -96,6 +96,9 @@ List payloads the UI expects:
   RPC. Union of engine labels, Settings `compose_paths`, and last-seen
   projects so Down does not drop the tab. Not a CasaOS-style app shop.)
 - images: `[{id, id_short, tags, size}]`
+  (cards; click loads summarized `image_inspect` via
+  `GET /api/v1/nodes/{id}/images/{iid}`. That summary drops `Env`.
+  Inspect uses the image id, not a tag with `/`.)
 - volumes: `[{name, driver, mountpoint}]`
 - networks: `[{id, id_short, name, driver, scope}]`
 

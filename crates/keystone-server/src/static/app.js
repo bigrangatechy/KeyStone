@@ -854,34 +854,132 @@
 
   const images = document.getElementById("images");
   if (images && !dockerBlocked(images)) {
+    // Local glance cards then summarized inspect — not Env.
     const data = parse(images);
     const node = images.getAttribute("data-node");
-    const table = document.createElement("table");
-    table.appendChild(thead(["Tags", "ID", "Size", ""]));
-    const body = document.createElement("tbody");
+    const board = el("div", "image-board");
+    const grid = el("div", "image-grid");
+    const detail = el("div", "image-detail");
+    detail.hidden = true;
+    let selectedId = "";
+
+    function imageDisplayName(img) {
+      const tags = img.tags || img.repo_tags || [];
+      if (Array.isArray(tags) && tags[0]) return String(tags[0]);
+      return img.id_short || img.id || "";
+    }
+
+    function kvRow(label, value) {
+      if (value == null || value === "") return null;
+      const row = el("p", "detail-kv");
+      row.appendChild(el("span", "muted", label));
+      row.appendChild(document.createTextNode(" " + value));
+      return row;
+    }
+
+    function applyImageInspect(host, info) {
+      host.replaceChildren();
+      if (!info || typeof info !== "object") {
+        host.appendChild(el("p", "muted", "Could not inspect this image."));
+        return;
+      }
+      if (info.error) {
+        host.appendChild(el("p", "error", String(info.error)));
+      }
+      const tags = Array.isArray(info.tags) ? info.tags.join(", ") : "";
+      [
+        kvRow("Tags", tags),
+        kvRow("Created", info.created || ""),
+        kvRow("Size", info.size == null ? "" : (formatBytes(info.size) || "")),
+        kvRow("Platform", info.platform || ""),
+        kvRow("User", info.user || ""),
+        kvRow("Entrypoint", Array.isArray(info.entrypoint) ? info.entrypoint.join(" ") : ""),
+        kvRow("Command", Array.isArray(info.command) ? info.command.join(" ") : ""),
+        kvRow("Ports", Array.isArray(info.exposed_ports) ? info.exposed_ports.join(", ") : ""),
+        kvRow("Working dir", info.working_dir || "")
+      ].forEach((n) => { if (n) host.appendChild(n); });
+    }
+
+    async function loadImageInspect(id, host) {
+      try {
+        const r = await fetch("/api/v1/nodes/" + encodeURIComponent(node) + "/images/" + encodeURIComponent(id));
+        const body = await r.json().catch(() => ({}));
+        if (selectedId !== id) return;
+        if (!r.ok) {
+          host.replaceChildren(el("p", "muted", body.error || "Could not inspect this image."));
+          return;
+        }
+        applyImageInspect(host, body);
+      } catch (e) {
+        if (selectedId !== id) return;
+        host.replaceChildren(el("p", "muted", "Could not inspect this image."));
+      }
+    }
+
+    function showImageDetail(img) {
+      const name = imageDisplayName(img);
+      const id = img.id || "";
+      detail.hidden = false;
+      board.classList.add("has-detail");
+      detail.replaceChildren();
+      detail.appendChild(el("h3", null, name || "Image"));
+      const idRow = kvRow("Id", img.id_short || id);
+      if (idRow) detail.appendChild(idRow);
+      const sizeRow = kvRow("Size", img.size == null ? "" : (formatBytes(img.size) || ""));
+      if (sizeRow) detail.appendChild(sizeRow);
+      const inspectHost = el("div", "inspect-extra");
+      inspectHost.appendChild(el("p", "muted", "Loading details…"));
+      detail.appendChild(inspectHost);
+      const acts = el("div", "actions");
+      if (manageOn(images)) {
+        const tags = img.tags || img.repo_tags || [];
+        const rm = (Array.isArray(tags) && tags[0]) ? tags[0] : (img.id || "");
+        if (rm) acts.appendChild(actionForm(node, "image_remove", { name: rm }));
+      }
+      detail.appendChild(acts);
+      return inspectHost;
+    }
+
+    function selectImage(img) {
+      const id = img.id || "";
+      if (!id) return;
+      if (selectedId === id) {
+        selectedId = "";
+        detail.hidden = true;
+        board.classList.remove("has-detail");
+        grid.querySelectorAll(".image-card").forEach((card) => card.classList.remove("is-open"));
+        return;
+      }
+      selectedId = id;
+      grid.querySelectorAll(".image-card").forEach((card) => {
+        card.classList.toggle("is-open", card.getAttribute("data-id") === id);
+      });
+      const extra = showImageDetail(img);
+      loadImageInspect(id, extra);
+    }
+
     const rows = Array.isArray(data) ? data : [];
     if (!rows.length) {
-      body.appendChild(emptyRow(4, "No images."));
+      board.appendChild(el("p", "muted", "No images."));
     } else {
       rows.forEach((img) => {
-        const tr = document.createElement("tr");
-        const tags = img.tags || img.repo_tags || [];
-        const tagText = Array.isArray(tags) ? tags.join(", ") : "";
-        const id = img.id_short || img.id || "";
-        tr.appendChild(tdText(tagText || "<none>"));
-        tr.appendChild(tdCode(id));
-        tr.appendChild(tdText(formatBytes(img.size)));
-        const acts = [];
-        if (manageOn(images)) {
-          const name = (Array.isArray(tags) && tags[0]) ? tags[0] : (img.id || "");
-          acts.push(actionForm(node, "image_remove", { name: name }));
-        }
-        tr.appendChild(actionsCell(acts));
-        body.appendChild(tr);
+        const id = img.id || "";
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "image-card";
+        if (id) card.setAttribute("data-id", id);
+        card.appendChild(el("h3", null, imageDisplayName(img) || "<none>"));
+        card.appendChild(el("span", "muted", img.id_short || id || ""));
+        const metrics = el("div", "container-metrics");
+        metrics.appendChild(el("span", null, img.size == null ? "—" : (formatBytes(img.size) || "—")));
+        card.appendChild(metrics);
+        card.addEventListener("click", () => selectImage(img));
+        grid.appendChild(card);
       });
+      board.appendChild(grid);
+      board.appendChild(detail);
     }
-    table.appendChild(body);
-    images.replaceChildren(table);
+    images.replaceChildren(board);
   }
 
   bindHubSearch();

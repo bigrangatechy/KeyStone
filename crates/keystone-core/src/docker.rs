@@ -249,6 +249,34 @@ fn json_bool(v: &serde_json::Value, names: &[&str]) -> Option<bool> {
     json_field(v, names).and_then(|x| x.as_bool())
 }
 
+fn json_string_list(v: &serde_json::Value, names: &[&str]) -> Vec<String> {
+    json_field(v, names)
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn json_port_list(config: &serde_json::Value) -> Vec<String> {
+    match json_field(config, &["ExposedPorts", "exposed_ports"]) {
+        Some(serde_json::Value::Object(map)) => {
+            let mut keys: Vec<_> = map.keys().cloned().collect();
+            keys.sort();
+            keys
+        }
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Log in to Docker Hub or GHCR. Password is argv-stdin only and must not
 /// be audited. Credentials stay on the node (`docker login`), never in the
 /// server SQLite.
@@ -593,6 +621,76 @@ pub fn summarize_container_inspect(raw: &serde_json::Value) -> serde_json::Value
     serde_json::Value::Object(out)
 }
 
+/// Map Engine image inspect JSON to what the Images detail pane may show.
+/// Drops `Env`, labels, and other secret-shaped fields.
+pub fn summarize_image_inspect(raw: &serde_json::Value) -> serde_json::Value {
+    let config = json_field(raw, &["Config", "config"])
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let mut out = serde_json::Map::new();
+    if let Some(id) = json_str(raw, &["Id", "id"]) {
+        out.insert("id".into(), serde_json::json!(id));
+    }
+    let tags = json_field(raw, &["RepoTags", "repo_tags"])
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !tags.is_empty() {
+        out.insert("tags".into(), serde_json::json!(tags));
+    }
+    if let Some(created) = json_str(raw, &["Created", "created"]) {
+        out.insert("created".into(), serde_json::json!(created));
+    }
+    if let Some(sz) = json_field(raw, &["Size", "size"]).and_then(|s| s.as_i64()) {
+        out.insert("size".into(), serde_json::json!(sz));
+    }
+
+    let mut platform = String::new();
+    if let Some(os) = json_str(raw, &["Os", "os"]) {
+        platform.push_str(&os);
+    }
+    if let Some(arch) = json_str(raw, &["Architecture", "architecture"]) {
+        if !platform.is_empty() {
+            platform.push('/');
+        }
+        platform.push_str(&arch);
+    }
+    if let Some(var) = json_str(raw, &["Variant", "variant"]) {
+        if !platform.is_empty() {
+            platform.push('/');
+        }
+        platform.push_str(&var);
+    }
+    if !platform.is_empty() {
+        out.insert("platform".into(), serde_json::json!(platform));
+    }
+
+    if let Some(user) = json_str(&config, &["User", "user"]) {
+        out.insert("user".into(), serde_json::json!(user));
+    }
+    if let Some(wd) = json_str(&config, &["WorkingDir", "working_dir"]) {
+        out.insert("working_dir".into(), serde_json::json!(wd));
+    }
+    let entrypoint = json_string_list(&config, &["Entrypoint", "entrypoint"]);
+    if !entrypoint.is_empty() {
+        out.insert("entrypoint".into(), serde_json::json!(entrypoint));
+    }
+    let command = json_string_list(&config, &["Cmd", "cmd"]);
+    if !command.is_empty() {
+        out.insert("command".into(), serde_json::json!(command));
+    }
+    let ports = json_port_list(&config);
+    if !ports.is_empty() {
+        out.insert("exposed_ports".into(), serde_json::json!(ports));
+    }
+    serde_json::Value::Object(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,6 +864,48 @@ mod tests {
         assert_eq!(out["networks"][0]["ip"], "172.17.0.2");
         assert_eq!(out["mounts"][0]["destination"], "/var/opt/gitlab");
         assert!(out.get("privileged").is_none());
+    }
+
+    #[test]
+    fn summarize_image_inspect_drops_env_and_labels() {
+        assert!(docker_ref_ok("sha256:0123456789abcdef"));
+        let raw = serde_json::json!({
+            "Id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "RepoTags": ["nginx:1.27"],
+            "Created": "2026-01-01T00:00:00Z",
+            "Architecture": "amd64",
+            "Os": "linux",
+            "Size": 42100000,
+            "Config": {
+                "User": "nginx",
+                "WorkingDir": "/usr/share/nginx/html",
+                "Entrypoint": ["/docker-entrypoint.sh"],
+                "Cmd": ["nginx", "-g", "daemon off;"],
+                "Env": ["SECRET=hunter2", "PATH=/usr/bin"],
+                "ExposedPorts": { "80/tcp": {}, "443/tcp": {} },
+                "Labels": { "token": "ghp_notarealtoken" }
+            }
+        });
+        let out = summarize_image_inspect(&raw);
+        let dumped = out.to_string();
+        assert!(
+            !dumped.contains("hunter2"),
+            "Env must never reach the UI JSON"
+        );
+        assert!(!dumped.contains("Env"), "{dumped}");
+        assert!(
+            !dumped.contains("ghp_notarealtoken") && !dumped.contains("Labels"),
+            "image labels must not reach the UI JSON: {dumped}"
+        );
+        assert_eq!(out["tags"][0], "nginx:1.27");
+        assert_eq!(out["platform"], "linux/amd64");
+        assert_eq!(out["user"], "nginx");
+        assert_eq!(out["working_dir"], "/usr/share/nginx/html");
+        assert_eq!(out["entrypoint"][0], "/docker-entrypoint.sh");
+        assert_eq!(out["command"][0], "nginx");
+        assert_eq!(out["size"], 42100000);
+        assert_eq!(out["exposed_ports"][0], "443/tcp");
+        assert_eq!(out["exposed_ports"][1], "80/tcp");
     }
 
     #[test]

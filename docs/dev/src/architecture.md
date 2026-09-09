@@ -70,7 +70,8 @@ not advertise mDNS.
    returns names/tags for Images **cards** that fill Pull; it never pulls
    and never opens `docker.sock`. The Compose tab paints glance cards from
    `compose_ps` (running/exited) then the service table; it is not an app
-   shop. A CasaOS-style app shop is not this path.
+   shop. Clicking a local image loads summarized `image_inspect` and drops `Env`.
+   A CasaOS-style app shop is not this path.
    Host System POSTs are the same gRPC path with `SysOp`; the agent talks
    to `/run/keystone/sys.sock` only if `keystone-sys.socket` is enabled.
 5. Overview polls `GET /api/v1/nodes/{id}/dashboard` at `poll_secs`. The
