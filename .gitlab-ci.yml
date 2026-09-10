@@ -44,7 +44,11 @@ deny:
 
 reuse:
   stage: check
-  image: fsfe/reuse:latest
+  # The image ENTRYPOINT is `reuse`; GitLab runs `sh -c`. Clear it or the
+  # job becomes `reuse sh` and fails with "No such command 'sh'".
+  image:
+    name: fsfe/reuse:latest
+    entrypoint: [""]
   script:
     - reuse lint
   cache: []

@@ -3,6 +3,7 @@
 
 pub mod keystone {
     pub mod v1 {
+        #![allow(clippy::result_large_err)]
         tonic::include_proto!("keystone.v1");
     }
 }
