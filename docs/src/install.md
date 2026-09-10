@@ -53,14 +53,14 @@ Copy the files onto the machine (into `/tmp` if apt cannot read
 
 ```
 # Copy out of ~/Downloads first if apt complains that _apt cannot read the file
-sudo cp keystone-server_0.1.0-18_amd64.deb keystone-agent_0.1.0-15_amd64.deb /tmp/
+sudo cp keystone-server_0.1.0-19_amd64.deb keystone-agent_0.1.0-16_amd64.deb /tmp/
 
 # The one UI box (optional: agent as well, so this host is in the list)
-sudo apt install /tmp/keystone-server_0.1.0-18_amd64.deb
-sudo apt install /tmp/keystone-agent_0.1.0-15_amd64.deb   # optional on the UI host
+sudo apt install /tmp/keystone-server_0.1.0-19_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-16_amd64.deb   # optional on the UI host
 
 # Every other node: agent only
-sudo apt install /tmp/keystone-agent_0.1.0-15_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-16_amd64.deb
 ```
 
 A **Notice** about `_apt` / `pkgAcquire::Run (13: Permission denied)` means
@@ -187,9 +187,10 @@ sudo systemctl enable --now keystone-agent
 - **Server** wants headroom: Pi 4 with 2 GB+ or a Pi 5 if this Pi is the
   central KeyStone box. An x86 VM or the Docker host is also a good server.
 
-CI builds on Debian Bookworm (glibc 2.36), which matches 64-bit Raspberry Pi
-OS Bookworm. A `.deb` built on a newer PC may depend on a newer libc and
-refuse to install on the Pi — use the CI artifacts.
+CI builds on Debian Bookworm (glibc 2.36). That binary runs on Ubuntu
+24.04 LTS, Ubuntu 26.04 LTS, and 64-bit Raspberry Pi OS Bookworm. A
+`.deb` built on 26.04 may need a newer libc than 24.04 — use the CI
+artifacts (or build in `rust:bookworm`) if you need both Ubuntu releases.
 
 ## From source (no package)
 
@@ -244,7 +245,7 @@ already generated a token.
 
 Same Debian revision (`0.1.0-1` over itself) looks like “already the
 newest version” and does not replace the binary; use
-`apt install --reinstall ./….deb`. A newer revision (`0.1.0-18`) is a
+`apt install --reinstall ./….deb`. A newer revision (`0.1.0-19`) is a
 normal upgrade.
 
 Do **not** `apt purge` to pick up a new binary: purge deletes

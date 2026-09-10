@@ -81,4 +81,19 @@ esac
 
 #DEBHELPER#
 
+# The helper is a long-running Accept=false process. Replacing the binary
+# does not update RAM. If the operator already enabled the socket, pick up
+# the new keystone-sys. Never enable or start it when it was off.
+case "$1" in
+configure)
+	if [ -d /run/systemd/system ]; then
+		if systemctl is-active --quiet keystone-sys.socket 2>/dev/null; then
+			systemctl try-restart keystone-sys.socket || true
+		elif systemctl is-active --quiet keystone-sys.service 2>/dev/null; then
+			systemctl try-restart keystone-sys.service || true
+		fi
+	fi
+	;;
+esac
+
 exit 0

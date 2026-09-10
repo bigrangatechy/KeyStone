@@ -132,6 +132,9 @@ token does not.
   socket connect must not block reading lists. Use agent 0.1.0-11+ and
   server 0.1.0-14+. Series writes and retention prune run off the ingest
   select so CommandResults are not stuck behind `series.redb`.
+- Volumes tab says No volumes: image_list was holding `docker.sock`. Current
+  servers list volumes before images. If the Engine JSON does not match
+  bollard, the agent falls back to `docker volume ls` (not a shell).
 - `keystone` user not in `docker` group — `Permission denied` on the
   socket. Log out/in is not enough for a systemd service: restart
   `keystone-agent` after `usermod -aG docker keystone`.
@@ -160,6 +163,10 @@ token does not.
   **that** node. If the unit is already enabled, `sudo systemctl restart
   keystone-agent` so the sandboxed agent can use `/run/keystone/sys.sock`,
   then reload the tab. The metrics agent is not root.
+- System actions look like the previous helper after an agent `.deb`
+  upgrade: the socket-activated process stays in RAM. Current packages
+  `try-restart` `keystone-sys.socket` when it is already active. They never
+  enable it. If it is still stale: `systemctl try-restart keystone-sys.socket`.
 - Agent not control-connected (same session as metrics).
 - Manage refused: turn **Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, GitLab backup, GitLab restore, timezone, unattended-upgrades, and reboot**
   on and save.

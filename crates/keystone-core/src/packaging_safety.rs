@@ -203,8 +203,14 @@ fn sys_helper_is_opt_in_root_socket() {
         "RuntimeDirectory must be group-traversable by the agent"
     );
     assert!(socket.contains("Accept=false"));
+    let postinst = active_shell(AGENT_POSTINST);
     assert!(
-        !active_shell(AGENT_POSTINST).contains("keystone-sys"),
+        postinst.contains("systemctl try-restart keystone-sys.socket")
+            && postinst.contains("is-active"),
+        "upgrade must try-restart an already-active sys socket so the new helper binary is used"
+    );
+    assert!(
+        !postinst.contains("systemctl enable") && !postinst.contains("enable --now keystone-sys"),
         "postinst must not enable the sys helper"
     );
     let deb = AGENT_CARGO
@@ -393,8 +399,10 @@ fn upgrade_keeps_toml_and_sqlite() {
     assert!(
         install.contains("conffiles")
             && install.contains("--reinstall")
-            && install.contains("`apt purge`"),
-        "install.md must say a newer .deb is an upgrade that keeps toml/sqlite; purge is the wipe"
+            && install.contains("`apt purge`")
+            && install.contains("24.04")
+            && install.contains("26.04"),
+        "install.md must say a newer .deb is an upgrade that keeps toml/sqlite; purge is the wipe; Bookworm debs run on Ubuntu 24.04 and 26.04"
     );
 }
 

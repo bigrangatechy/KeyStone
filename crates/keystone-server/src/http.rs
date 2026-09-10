@@ -1981,19 +1981,17 @@ async fn fetch_docker_bundle(
 ) -> (String, String, String, String, String, String) {
     let timeout = crate::state::PAGE_LIST_TIMEOUT;
     let deadline = tokio::time::Instant::now() + timeout;
-    // container_list first so it does not share docker.sock with images/volumes
-    // and the tab can render before those slower calls.
+    // container_list first, then volume_list, then images/compose/networks.
+    // image_list must not hold docker.sock so the Volumes tab goes empty.
     let c = call_json_op_timeout(state, id, DockerOp::ContainerList.as_str(), "{}", timeout).await;
-    let rest = deadline.saturating_duration_since(tokio::time::Instant::now());
-    let rest = if rest.is_zero() {
-        std::time::Duration::from_millis(50)
-    } else {
-        rest
-    };
-    let (p, i, v, n) = tokio::join!(
+    // Volumes before Images: both use docker.sock, and image_list can eat the
+    // leftover budget so the Volumes tab paints "No volumes."
+    let rest = page_list_rest(deadline);
+    let v = call_json_op_timeout(state, id, DockerOp::VolumeList.as_str(), "{}", rest).await;
+    let rest = page_list_rest(deadline);
+    let (p, i, n) = tokio::join!(
         call_json_op_timeout(state, id, DockerOp::ComposePs.as_str(), "{}", rest),
         call_json_op_timeout(state, id, DockerOp::ImageList.as_str(), "{}", rest),
-        call_json_op_timeout(state, id, DockerOp::VolumeList.as_str(), "{}", rest),
         call_json_op_timeout(state, id, DockerOp::NetworkList.as_str(), "{}", rest),
     );
     let (containers_json, docker_error) = match c {
@@ -2008,6 +2006,12 @@ async fn fetch_docker_bundle(
         n.unwrap_or_else(|_| "[]".into()),
         docker_error,
     )
+}
+
+fn page_list_rest(deadline: tokio::time::Instant) -> std::time::Duration {
+    deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .max(std::time::Duration::from_secs(2))
 }
 
 fn attach_container_usage(state: &AppState, node_id: &str, raw: String) -> String {
@@ -4997,10 +5001,11 @@ mod tests {
             .next()
             .expect("bundle body");
         let list_at = fn_src.find("ContainerList").expect("container_list");
+        let vol_at = fn_src.find("VolumeList").expect("volume_list");
         let join_at = fn_src.find("tokio::join!").expect("remaining lists");
         assert!(
-            list_at < join_at,
-            "container_list must not share docker.sock with images/volumes on page load"
+            list_at < vol_at && vol_at < join_at,
+            "container_list then volume_list must not share docker.sock with image_list"
         );
         assert!(
             !fn_src.contains("SystemDf")

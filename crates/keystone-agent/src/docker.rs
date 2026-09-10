@@ -882,11 +882,21 @@ impl DockerHandle {
     }
 
     async fn volume_list(&self) -> anyhow::Result<Value> {
+        match self.volume_list_engine().await {
+            Ok(rows) => Ok(json!(rows)),
+            Err(e) => {
+                warn!("volume list via Engine API failed: {e}");
+                self.volume_list_cli().await
+            }
+        }
+    }
+
+    async fn volume_list_engine(&self) -> anyhow::Result<Vec<Value>> {
         let vols = self
             .docker
             .list_volumes(None::<ListVolumesOptions<String>>)
             .await?;
-        let rows: Vec<Value> = vols
+        Ok(vols
             .volumes
             .unwrap_or_default()
             .into_iter()
@@ -896,6 +906,44 @@ impl DockerHandle {
                     "driver": v.driver,
                     "mountpoint": v.mountpoint,
                 })
+            })
+            .collect())
+    }
+
+    async fn volume_list_cli(&self) -> anyhow::Result<Value> {
+        if cfg!(test) {
+            anyhow::bail!("docker volume ls is not invoked in tests");
+        }
+        // Hardcoded argv, not a shell. Used when Engine JSON does not match bollard.
+        let output = Command::new("docker")
+            .args(["volume", "ls", "--format", "{{.Name}}\t{{.Driver}}"])
+            .output()
+            .await
+            .context("docker volume ls")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "docker volume ls failed: {}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        let rows: Vec<Value> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return None;
+                }
+                let mut parts = line.splitn(2, '\t');
+                let name = parts.next().unwrap_or("");
+                if name.is_empty() {
+                    return None;
+                }
+                Some(json!({
+                    "name": name,
+                    "driver": parts.next().unwrap_or(""),
+                    "mountpoint": "",
+                }))
             })
             .collect();
         Ok(json!(rows))
@@ -1285,6 +1333,23 @@ mod tests {
             !fn_src.contains("\"labels\": labels"),
             "full label maps on every container blow the ingest Result past the page wait"
         );
+    }
+
+    #[test]
+    fn volume_list_falls_back_to_argv_not_shell() {
+        let src = include_str!("docker.rs");
+        let body = src
+            .split("async fn volume_list(")
+            .nth(1)
+            .expect("volume_list")
+            .split("async fn network_list")
+            .next()
+            .expect("volume_list body");
+        assert!(body.contains("list_volumes"));
+        assert!(body.contains("volume_list_cli"));
+        assert!(body.contains("cfg!(test)"));
+        assert!(!body.contains("sh -c") && !body.contains("bash -c"));
+        assert!(body.contains("volume") && body.contains("ls"));
     }
 
     #[test]

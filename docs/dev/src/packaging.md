@@ -86,10 +86,8 @@ cargo deb -p keystone-server --target aarch64-unknown-linux-gnu
 ```
 
 CI (`package:amd64`, `package:arm64`) uses `rust:bookworm` so glibc matches
-64-bit Raspberry Pi OS Bookworm. A `.deb` built on a newer host may not
-install on the Pi.
-
-`armhf` is not a target.
+64-bit Raspberry Pi OS Bookworm and Ubuntu 24.04 / 26.04. A `.deb` built
+on Ubuntu 26.04 may not install on 24.04. `armhf` is not a target.
 
 ## CLI worth knowing
 
