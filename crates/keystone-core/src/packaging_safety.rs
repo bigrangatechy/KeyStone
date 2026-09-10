@@ -210,6 +210,10 @@ fn sys_helper_is_opt_in_root_socket() {
         "upgrade must try-restart an already-active sys socket so the new helper binary is used"
     );
     assert!(
+        postinst.contains("systemctl try-restart keystone-agent.service"),
+        "upgrade must try-restart a running agent so the new binary is in RAM"
+    );
+    assert!(
         !postinst.contains("systemctl enable") && !postinst.contains("enable --now keystone-sys"),
         "postinst must not enable the sys helper"
     );
@@ -242,9 +246,19 @@ fn cargo_deb_enables_boot_without_starting_on_upgrade() {
         );
         assert!(
             line.contains("start = false"),
-            "{name} postinst must not start the daemon during configure/upgrade"
+            "{name} package must not start a unit that was off (first install still needs enable --now)"
         );
     }
+    let agent_post = active_shell(AGENT_POSTINST);
+    let server_post = active_shell(SERVER_POSTINST);
+    assert!(
+        agent_post.contains("systemctl try-restart keystone-agent.service"),
+        "upgrade of a running agent must load the new binary"
+    );
+    assert!(
+        server_post.contains("systemctl try-restart keystone-server.service"),
+        "upgrade of a running server must load the new binary"
+    );
     for s in scripts() {
         let active = active_shell(s);
         assert!(
@@ -282,6 +296,18 @@ fn deb_revision(cargo: &str) -> &str {
         .find(|l| l.trim().starts_with("revision"))
         .and_then(|l| l.split('"').nth(1))
         .expect("deb revision")
+}
+
+#[test]
+fn compiled_package_versions_match_deb_revisions() {
+    assert_eq!(
+        crate::AGENT_PACKAGE_VERSION,
+        format!("0.1.0-{}", deb_revision(AGENT_CARGO))
+    );
+    assert_eq!(
+        crate::SERVER_PACKAGE_VERSION,
+        format!("0.1.0-{}", deb_revision(SERVER_CARGO))
+    );
 }
 
 #[test]

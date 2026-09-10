@@ -129,6 +129,10 @@
 <section class="tab-panel" data-panel="settings">
   <h2>Node settings</h2>
   <p class="muted">These apply to this node. A connected agent picks up poll interval, Docker flags, labels, and compose paths at runtime; <code>agent.toml</code> on the machine is only bootstrap (ingest URL, token, node id, buffer directory, optional Docker socket).</p>
+  <fieldset>
+    <legend>Versions</legend>
+    <p>This node’s agent: <code>{{ agent_version }}</code>. This UI server: <code>{{ server_version }}</code>. The agent string is the last heartbeat. After <code>apt install</code> of a new agent <code>.deb</code>, it updates when that process is running the new binary and is control connected.</p>
+  </fieldset>
   {% if settings_saved %}<p>Saved.</p>{% endif %}
   <form class="stack wide" method="post" action="/nodes/{{ node_id }}/settings">
     <label>Display name

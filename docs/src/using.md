@@ -120,14 +120,16 @@ If 2FA is on, changing IPv4 or IPv6, adding a VLAN, joining Wi-Fi, leftover rest
 ### Node Settings
 
 Display name, notes, poll interval, NICs, labels, Docker flags, Compose
-paths, System-admin flags. See [Configuration](configuration.md).
+paths, System-admin flags, and **Versions** (this node's agent and this UI
+server). See [Configuration](configuration.md).
 
 ## Header
 
 - **Alerts** — chips that are warn or crit right now. See [Alerts](alerts.md).
 - **Audit** — Docker and System mutations from this UI (newest first). See
   [Audit](audit.md).
-- **Settings** — the **server**, not a node: retention, ingest token,
+- **Settings** — the **server**, not a node: **Versions** (this UI and each
+  agent's last heartbeat), retention, ingest token,
   Prometheus/SNMP scrape jobs, optional alert webhook, admin password,
   authenticator 2FA, and **Replay welcome tour**. Listen addresses and the
   admin username stay in `server.toml`. The home page reminds you to enable

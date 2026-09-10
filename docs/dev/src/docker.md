@@ -146,7 +146,7 @@ List payloads the UI expects:
 | `image_remove` | yes | `docker_manage` | Remove an image |
 | `system_df` | no | `docker_view` | Engine disk use. Agent summarizes to counts/sizes (no image ids). Loaded after the Images tab paints; not a node-page list RPC. Tests use fixtures, not a live Engine df. |
 | `build_cache_prune` | yes | `docker_manage` | `docker builder prune -a -f` on the agent (bollard 0.18 has df but not `/build/prune`). Confirm-only. Tests must not invoke it. |
-| `volume_list` | no | `docker_view` | List volumes |
+| `volume_list` | no | `docker_view` | List volumes. Untyped Engine JSON (`glance_volume_list`); `docker volume ls` argv fallback, not a shell. |
 | `volume_inspect` | no | `docker_view` | Inspect a volume; HTTP drops Labels |
 | `volume_create` | yes | `docker_manage` | Create a volume |
 | `volume_remove` | yes | `docker_manage` | Remove a volume |

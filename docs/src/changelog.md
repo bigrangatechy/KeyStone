@@ -8,6 +8,12 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 17:55:00 10/09/2026 AEST
+
+Package server 0.1.0-20 and agent 0.1.0-17. Heartbeat and Settings show the
+Debian revision. Volumes list uses untyped Engine JSON (not bollard's
+`Volume` struct). An upgrade `try-restart`s a running agent or server.
+
 ## 17:03:06 10/09/2026 AEST
 
 Package server 0.1.0-19 and agent 0.1.0-16.

@@ -708,6 +708,15 @@ struct SettingsTemplate {
     saved: bool,
     rotated: bool,
     error: String,
+    server_version: String,
+    agents: Vec<AgentVersionRow>,
+}
+
+struct AgentVersionRow {
+    node_id: String,
+    hostname: String,
+    agent_version: String,
+    last_seen: String,
 }
 
 #[derive(Deserialize)]
@@ -761,7 +770,37 @@ fn settings_view(
         saved,
         rotated,
         error,
+        server_version: keystone_core::SERVER_PACKAGE_VERSION.to_string(),
+        agents: agent_version_rows(state),
     }
+}
+
+fn agent_version_rows(state: &AppState) -> Vec<AgentVersionRow> {
+    state
+        .stores
+        .metadata
+        .list_nodes()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|n| {
+            let last_seen = if n.awaiting_agent() {
+                "never".into()
+            } else {
+                n.last_seen().to_rfc3339()
+            };
+            let agent_version = if n.agent_version.is_empty() {
+                "—".into()
+            } else {
+                n.agent_version
+            };
+            AgentVersionRow {
+                node_id: n.node_id,
+                hostname: n.hostname,
+                agent_version,
+                last_seen,
+            }
+        })
+        .collect()
 }
 
 async fn settings_page(
@@ -1654,6 +1693,7 @@ struct NodeTemplate {
     sys_error: String,
     sys_ui_host: bool,
     totp_enabled: bool,
+    server_version: String,
 }
 
 #[derive(Deserialize)]
@@ -1839,6 +1879,7 @@ async fn node_page(
             sys_error,
             sys_ui_host,
             totp_enabled,
+            server_version: keystone_core::SERVER_PACKAGE_VERSION.to_string(),
         }
         .render()
         .unwrap_or_else(|e| e.to_string()),
@@ -1980,38 +2021,34 @@ async fn fetch_docker_bundle(
     id: &str,
 ) -> (String, String, String, String, String, String) {
     let timeout = crate::state::PAGE_LIST_TIMEOUT;
-    let deadline = tokio::time::Instant::now() + timeout;
-    // container_list first, then volume_list, then images/compose/networks.
-    // image_list must not hold docker.sock so the Volumes tab goes empty.
-    let c = call_json_op_timeout(state, id, DockerOp::ContainerList.as_str(), "{}", timeout).await;
-    // Volumes before Images: both use docker.sock, and image_list can eat the
-    // leftover budget so the Volumes tab paints "No volumes."
-    let rest = page_list_rest(deadline);
-    let v = call_json_op_timeout(state, id, DockerOp::VolumeList.as_str(), "{}", rest).await;
-    let rest = page_list_rest(deadline);
+    // Containers and volumes together, each with the full page budget.
+    // image_list must not share docker.sock with volume_list (it can eat the
+    // leftover so the Volumes tab paints "No volumes.").
+    let (c, v) = tokio::join!(
+        call_json_op_timeout(state, id, DockerOp::ContainerList.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::VolumeList.as_str(), "{}", timeout),
+    );
     let (p, i, n) = tokio::join!(
-        call_json_op_timeout(state, id, DockerOp::ComposePs.as_str(), "{}", rest),
-        call_json_op_timeout(state, id, DockerOp::ImageList.as_str(), "{}", rest),
-        call_json_op_timeout(state, id, DockerOp::NetworkList.as_str(), "{}", rest),
+        call_json_op_timeout(state, id, DockerOp::ComposePs.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::ImageList.as_str(), "{}", timeout),
+        call_json_op_timeout(state, id, DockerOp::NetworkList.as_str(), "{}", timeout),
     );
     let (containers_json, docker_error) = match c {
         Ok(body) => (attach_container_usage(state, id, body), String::new()),
         Err(e) => ("[]".into(), e.to_string()),
     };
+    let volumes_json = match v {
+        Ok(body) => body,
+        Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+    };
     (
         containers_json,
         p.unwrap_or_else(|_| "{}".into()),
         i.unwrap_or_else(|_| "[]".into()),
-        v.unwrap_or_else(|_| "[]".into()),
+        volumes_json,
         n.unwrap_or_else(|_| "[]".into()),
         docker_error,
     )
-}
-
-fn page_list_rest(deadline: tokio::time::Instant) -> std::time::Duration {
-    deadline
-        .saturating_duration_since(tokio::time::Instant::now())
-        .max(std::time::Duration::from_secs(2))
 }
 
 fn attach_container_usage(state: &AppState, node_id: &str, raw: String) -> String {
@@ -4209,6 +4246,31 @@ mod tests {
             "Volumes detail must keep Remove and must not paint Labels"
         );
         assert!(css.contains(".volume-card") && css.contains(".volume-grid"));
+        assert!(
+            js.contains("data.error"),
+            "Volumes tab must show a list error instead of No volumes"
+        );
+    }
+
+    #[test]
+    fn settings_page_lists_server_and_agent_versions() {
+        let html = include_str!("../templates/settings.html");
+        let node = include_str!("../templates/node.html");
+        let src = include_str!("http.rs");
+        assert!(
+            html.contains("<legend>Versions</legend>")
+                && html.contains("server_version")
+                && html.contains("agent_version"),
+            "Settings must show this server version and each node's agent version"
+        );
+        assert!(
+            node.contains("This node’s agent") && node.contains("server_version"),
+            "node Settings must show this agent and this UI server"
+        );
+        assert!(
+            src.contains("SERVER_PACKAGE_VERSION") && src.contains("agent_version_rows"),
+            "package versions come from the compiled Debian revision"
+        );
     }
 
     #[test]
@@ -5002,10 +5064,27 @@ mod tests {
             .expect("bundle body");
         let list_at = fn_src.find("ContainerList").expect("container_list");
         let vol_at = fn_src.find("VolumeList").expect("volume_list");
-        let join_at = fn_src.find("tokio::join!").expect("remaining lists");
+        let img_at = fn_src.find("ImageList").expect("image_list");
+        let first_join = fn_src.find("tokio::join!").expect("first join");
+        let second_join = fn_src[first_join + 1..]
+            .find("tokio::join!")
+            .map(|i| first_join + 1 + i)
+            .expect("second join");
         assert!(
-            list_at < vol_at && vol_at < join_at,
-            "container_list then volume_list must not share docker.sock with image_list"
+            list_at > first_join
+                && vol_at > first_join
+                && list_at < second_join
+                && vol_at < second_join
+                && img_at > second_join,
+            "container_list and volume_list must share a join; image_list must wait"
+        );
+        assert!(
+            !fn_src.contains("page_list_rest"),
+            "volume_list must not inherit leftover time after container_list"
+        );
+        assert!(
+            fn_src.contains("\"error\""),
+            "volume_list failure must not paint an empty list as No volumes"
         );
         assert!(
             !fn_src.contains("SystemDf")

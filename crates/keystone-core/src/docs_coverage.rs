@@ -1036,6 +1036,30 @@ fn operator_docs_cover_volume_network_inspect() {
 }
 
 #[test]
+fn operator_docs_cover_package_versions() {
+    let config = include_str!("../../../docs/src/configuration.md");
+    let using = include_str!("../../../docs/src/using.md");
+    let trouble = include_str!("../../../docs/src/troubleshooting.md");
+    let settings = include_str!("../../../docs/dev/src/settings.md");
+    assert!(
+        config.contains("### Versions") && config.contains("heartbeat"),
+        "configuration.md must document Settings Versions"
+    );
+    assert!(
+        using.contains("Versions") && using.contains("heartbeat"),
+        "using.md must mention Settings Versions"
+    );
+    assert!(
+        trouble.contains("crate `0.1.0`"),
+        "troubleshooting must say crate 0.1.0 is an old agent binary"
+    );
+    assert!(
+        settings.contains("AGENT_PACKAGE_VERSION") && settings.contains("SERVER_PACKAGE_VERSION"),
+        "developer settings.md must name the compiled package version constants"
+    );
+}
+
+#[test]
 fn operator_docs_cover_system_df() {
     let docker = include_str!("../../../docs/src/docker.md");
     let using = include_str!("../../../docs/src/using.md");

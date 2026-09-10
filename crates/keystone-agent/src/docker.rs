@@ -17,14 +17,14 @@ use bollard::container::{
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::{ListImagesOptions, PruneImagesOptions, RemoveImageOptions};
 use bollard::network::{CreateNetworkOptions, ListNetworksOptions, PruneNetworksOptions};
-use bollard::volume::{CreateVolumeOptions, ListVolumesOptions, PruneVolumesOptions};
+use bollard::volume::{CreateVolumeOptions, PruneVolumesOptions};
 use bollard::Docker;
 use futures_util::future::join_all;
 use futures_util::StreamExt;
 use keystone_core::config::DockerConfig;
 use keystone_core::docker::{
-    docker_builder_prune_args, docker_config_auth, docker_login_args, registry_host_for_image,
-    summarize_system_df, ContainerExec, DockerOp, ImageLogin,
+    docker_builder_prune_args, docker_config_auth, docker_login_args, glance_volume_list,
+    registry_host_for_image, summarize_system_df, ContainerExec, DockerOp, ImageLogin,
 };
 use keystone_core::sample::Sample;
 use keystone_proto::StreamChunk;
@@ -882,44 +882,46 @@ impl DockerHandle {
     }
 
     async fn volume_list(&self) -> anyhow::Result<Value> {
-        match self.volume_list_engine().await {
+        if cfg!(test) {
+            anyhow::bail!("volume list does not open docker.sock or spawn docker in tests");
+        }
+        match self.volume_list_engine_json().await {
             Ok(rows) => Ok(json!(rows)),
             Err(e) => {
-                warn!("volume list via Engine API failed: {e}");
+                warn!("volume list via Engine JSON failed: {e}");
                 self.volume_list_cli().await
             }
         }
     }
 
-    async fn volume_list_engine(&self) -> anyhow::Result<Vec<Value>> {
-        let vols = self
-            .docker
-            .list_volumes(None::<ListVolumesOptions<String>>)
-            .await?;
-        Ok(vols
-            .volumes
-            .unwrap_or_default()
-            .into_iter()
-            .map(|v| {
-                json!({
-                    "name": v.name,
-                    "driver": v.driver,
-                    "mountpoint": v.mountpoint,
-                })
-            })
-            .collect())
+    fn unix_socket_path(&self) -> Option<String> {
+        let host = self.policy().host;
+        if host.is_empty() {
+            Some("/var/run/docker.sock".into())
+        } else {
+            host.strip_prefix("unix://").map(str::to_string)
+        }
+    }
+
+    async fn volume_list_engine_json(&self) -> anyhow::Result<Vec<Value>> {
+        let sock = self
+            .unix_socket_path()
+            .ok_or_else(|| anyhow!("docker.host is not a unix socket"))?;
+        let raw = docker_unix_get_json(&sock, "/v1.47/volumes").await?;
+        Ok(glance_volume_list(&raw))
     }
 
     async fn volume_list_cli(&self) -> anyhow::Result<Value> {
         if cfg!(test) {
             anyhow::bail!("docker volume ls is not invoked in tests");
         }
-        // Hardcoded argv, not a shell. Used when Engine JSON does not match bollard.
-        let output = Command::new("docker")
-            .args(["volume", "ls", "--format", "{{.Name}}\t{{.Driver}}"])
+        // Hardcoded argv, not a shell. Used when Engine JSON does not match.
+        let bin = docker_cli_bin();
+        let output = Command::new(bin)
+            .args(["volume", "ls", "--format", "{{json .}}"])
             .output()
             .await
-            .context("docker volume ls")?;
+            .with_context(|| format!("{bin} volume ls"))?;
         if !output.status.success() {
             anyhow::bail!(
                 "docker volume ls failed: {}{}",
@@ -927,25 +929,20 @@ impl DockerHandle {
                 String::from_utf8_lossy(&output.stdout)
             );
         }
-        let rows: Vec<Value> = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                if line.is_empty() {
-                    return None;
-                }
-                let mut parts = line.splitn(2, '\t');
-                let name = parts.next().unwrap_or("");
-                if name.is_empty() {
-                    return None;
-                }
-                Some(json!({
-                    "name": name,
-                    "driver": parts.next().unwrap_or(""),
-                    "mountpoint": "",
-                }))
-            })
-            .collect();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut rows = Vec::new();
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(line) {
+                rows.extend(glance_volume_list(&v));
+            }
+        }
+        if rows.is_empty() && stdout.contains('\t') {
+            rows = volume_list_cli_tabs(&stdout);
+        }
         Ok(json!(rows))
     }
 
@@ -1310,6 +1307,61 @@ fn cpu_ratio(stats: &bollard::container::Stats) -> f64 {
     (delta / sys_delta) * ncpu
 }
 
+fn docker_cli_bin() -> &'static str {
+    if Path::new("/usr/bin/docker").is_file() {
+        "/usr/bin/docker"
+    } else {
+        "docker"
+    }
+}
+
+fn volume_list_cli_tabs(stdout: &str) -> Vec<Value> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let mut parts = line.splitn(2, '\t');
+            let name = parts.next().unwrap_or("");
+            if name.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "name": name,
+                "driver": parts.next().unwrap_or(""),
+                "mountpoint": "",
+            }))
+        })
+        .collect()
+}
+
+async fn docker_unix_get_json(sock: &str, path: &str) -> anyhow::Result<Value> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream;
+    let mut stream = UnixStream::connect(sock)
+        .await
+        .with_context(|| format!("connect {sock}"))?;
+    let req = format!("GET {path} HTTP/1.0\r\nHost: docker\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).await?;
+    let _ = stream.shutdown().await;
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await?;
+    let text = String::from_utf8_lossy(&buf);
+    let status = text.lines().next().unwrap_or("");
+    if !status.contains(" 200 ") && !status.ends_with(" 200") {
+        anyhow::bail!("GET {path} {status}");
+    }
+    let body = text
+        .split("\r\n\r\n")
+        .nth(1)
+        .or_else(|| text.split("\n\n").nth(1))
+        .unwrap_or("")
+        .trim();
+    serde_json::from_str(body).context("docker JSON")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1345,11 +1397,13 @@ mod tests {
             .split("async fn network_list")
             .next()
             .expect("volume_list body");
-        assert!(body.contains("list_volumes"));
+        assert!(body.contains("volume_list_engine_json"));
+        assert!(body.contains("glance_volume_list"));
         assert!(body.contains("volume_list_cli"));
+        assert!(body.contains("{{json .}}"));
         assert!(body.contains("cfg!(test)"));
         assert!(!body.contains("sh -c") && !body.contains("bash -c"));
-        assert!(body.contains("volume") && body.contains("ls"));
+        assert!(!body.contains("list_volumes"));
     }
 
     #[test]

@@ -841,7 +841,7 @@ fn build_push(
         heartbeat: Some(Heartbeat {
             node_id: node_id.to_string(),
             hostname,
-            agent_version: keystone_core::VERSION.to_string(),
+            agent_version: keystone_core::AGENT_PACKAGE_VERSION.to_string(),
             os: std::env::consts::OS.to_string(),
             kernel: sysinfo::System::kernel_version().unwrap_or_default(),
             docker_version,
@@ -893,6 +893,22 @@ pub fn identity_from_heartbeat(hb: &Heartbeat) -> NodeIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heartbeat_reports_debian_package_version() {
+        let src = include_str!("session.rs");
+        let push = src
+            .split("fn build_push(")
+            .nth(1)
+            .expect("build_push")
+            .split("pub fn identity_from_heartbeat")
+            .next()
+            .expect("build_push body");
+        assert!(
+            push.contains("AGENT_PACKAGE_VERSION"),
+            "heartbeat must send the Debian revision, not crate 0.1.0 alone"
+        );
+    }
 
     #[test]
     fn set_interval_clamps() {

@@ -52,6 +52,20 @@ pub use widgets::{
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// `keystone-agent` Debian version (`0.1.0-16`). Heartbeat and `--version`.
+pub const AGENT_PACKAGE_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "-",
+    env!("KEYSTONE_AGENT_DEB_REVISION")
+);
+
+/// `keystone-server` Debian version (`0.1.0-19`). Settings and `--version`.
+pub const SERVER_PACKAGE_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "-",
+    env!("KEYSTONE_SERVER_DEB_REVISION")
+);
+
 #[cfg(test)]
 mod docs_coverage;
 #[cfg(test)]

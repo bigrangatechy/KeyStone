@@ -1198,8 +1198,13 @@
     }
 
     const list = Array.isArray(data) ? data : ((data && data.volumes) || []);
+    if (data && data.error) {
+      board.appendChild(el("p", "error", String(data.error)));
+    }
     if (!list.length) {
-      board.appendChild(el("p", "muted", "No volumes."));
+      if (!(data && data.error)) {
+        board.appendChild(el("p", "muted", "No volumes."));
+      }
     } else {
       list.forEach((v) => {
         const name = v.name || "";

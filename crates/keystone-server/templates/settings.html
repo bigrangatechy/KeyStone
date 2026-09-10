@@ -9,6 +9,26 @@
 {% if rotated %}<p>New ingest token generated. Update each agent’s <code>ingest_token</code> and restart it.</p>{% endif %}
 {% if !error.is_empty() %}<p class="error">{{ error }}</p>{% endif %}
 
+<fieldset>
+  <legend>Versions</legend>
+  <p>This server is <code>{{ server_version }}</code> (<code>keystone-server</code>). Each agent’s string is from its last heartbeat. A node that still shows <code>0.1.0</code> with no Debian revision is an older binary — crate <code>0.1.0</code> does not change when you install a new <code>.deb</code>.</p>
+  <table>
+    <thead>
+      <tr><th>Node</th><th>Agent</th><th>Last seen</th></tr>
+    </thead>
+    <tbody>
+      {% for a in agents %}
+      <tr>
+        <td><a href="/nodes/{{ a.node_id }}">{{ a.hostname }}</a><div class="muted host-id"><code>{{ a.node_id }}</code></div></td>
+        <td><code>{{ a.agent_version }}</code></td>
+        <td class="muted">{{ a.last_seen }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if agents.is_empty() %}<p class="muted">No agents have checked in yet.</p>{% endif %}
+</fieldset>
+
 <form class="stack wide" method="post" action="/settings">
   <fieldset>
     <legend>Series</legend>

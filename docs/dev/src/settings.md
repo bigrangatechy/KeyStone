@@ -41,6 +41,10 @@ table after `ensure_admin`. TOTP is not a `ServerSettings` field. Helpers in
 `crates/keystone-server/src/totp.rs`. TLS helpers in
 `crates/keystone-server/src/tls.rs`. Empty cert/key is plaintext.
 
+Package versions on Settings are not JSON fields. The server paints
+`SERVER_PACKAGE_VERSION` and each node's last heartbeat `agent_version`
+(`AGENT_PACKAGE_VERSION` from the agent binary).
+
 ## `NodeSettings`
 
 JSON on `nodes.settings_json`. Empty object = defaults (poll 1s, Docker

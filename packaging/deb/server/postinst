@@ -75,4 +75,17 @@ esac
 
 #DEBHELPER#
 
+# Replacing /usr/bin/keystone does not update a running process. If the UI
+# is already up, pick up the new binary. Never enable or start it when it
+# was off.
+case "$1" in
+configure)
+	if [ -d /run/systemd/system ]; then
+		if systemctl is-active --quiet keystone-server.service 2>/dev/null; then
+			systemctl try-restart keystone-server.service || true
+		fi
+	fi
+	;;
+esac
+
 exit 0

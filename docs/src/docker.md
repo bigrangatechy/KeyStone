@@ -134,6 +134,9 @@ not this form.
   `container_list` does not share `docker.sock` with images/volumes.
 - The `keystone` user cannot open the socket (`Permission denied`).
 - Docker is not installed, or `docker.host` points at the wrong path.
+- Volumes still empty with no error: Settings **Versions** still shows
+  crate `0.1.0` — the running agent is older than 0.1.0-17. Install the
+  new `.deb` (upgrade `try-restart`s a running unit).
 
 The Overview still works without Docker. Container CPU/memory gauges on the
 dashboard only appear when Observe is on and the agent is pushing container

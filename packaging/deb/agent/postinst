@@ -81,12 +81,16 @@ esac
 
 #DEBHELPER#
 
-# The helper is a long-running Accept=false process. Replacing the binary
-# does not update RAM. If the operator already enabled the socket, pick up
-# the new keystone-sys. Never enable or start it when it was off.
+# Long-running units keep the old binary in RAM after dpkg replaces the
+# file. If the operator already started them, pick up the new process.
+# Never enable or start a unit that was off (first install still needs
+# enable --now after editing toml).
 case "$1" in
 configure)
 	if [ -d /run/systemd/system ]; then
+		if systemctl is-active --quiet keystone-agent.service 2>/dev/null; then
+			systemctl try-restart keystone-agent.service || true
+		fi
 		if systemctl is-active --quiet keystone-sys.socket 2>/dev/null; then
 			systemctl try-restart keystone-sys.socket || true
 		elif systemctl is-active --quiet keystone-sys.service 2>/dev/null; then

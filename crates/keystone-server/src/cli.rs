@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[command(
     name = "keystone",
     about = "KeyStone server: homelab metrics and per-node Docker (Portainer + Netdata)",
-    version
+    version = keystone_core::SERVER_PACKAGE_VERSION
 )]
 pub struct ServerCli {
     #[command(subcommand)]

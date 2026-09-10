@@ -74,6 +74,15 @@ token is read from `agent.toml` at process start).
 The ingest token cannot log into the UI and cannot run Docker or System
 mutations.
 
+### Versions
+
+Read-only. Header **Settings** shows this UI's `keystone-server` Debian
+version and a table of each node's last heartbeat `agent_version`. The node
+**Settings** tab repeats that node's agent and this server. Heartbeats send
+`0.1.0-17`, not crate `0.1.0` alone. An agent that still shows `0.1.0` is an
+older binary (or the process was not reloaded). Current packages
+`try-restart` a running agent or server on upgrade.
+
 ### Prometheus scrape
 
 One job per line:
@@ -139,6 +148,7 @@ On each node’s **Settings** tab:
 | Observe / Manage / Exec | Docker gates. See [Docker](docker.md). |
 | Observe host / Allow apt upgrade, autoremove, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, timezone, unattended-upgrades, and reboot | System-admin gates. See [System](system.md). Off until you also enable `keystone-sys.socket` on the node. Settings shows a warning before System Manage: that flag is apt, IPv4, IPv6, VLAN, Wi-Fi, SSH password, leftover restart, start on boot, GitLab backup, GitLab restore, timezone, unattended-upgrades, and reboot. |
 | Compose files | Extra `docker compose -f` paths, one per line. Needed for **Up** after **Down**. Must be readable by user `keystone`. |
+| Versions | Read-only. This node's last heartbeat and this UI's `keystone-server` package. |
 
 Save applies to a connected agent immediately.
 

@@ -818,6 +818,31 @@ pub fn summarize_image_inspect(raw: &serde_json::Value) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
+/// Glance rows for the Volumes tab. Untyped so Docker 29 `Status` maps and
+/// null `Labels` cannot drop the whole list the way bollard's `Volume`
+/// struct does.
+pub fn glance_volume_list(raw: &serde_json::Value) -> Vec<serde_json::Value> {
+    let items: Vec<&serde_json::Value> = if let Some(arr) = raw.as_array() {
+        arr.iter().collect()
+    } else if let Some(arr) = json_field(raw, &["Volumes", "volumes"]).and_then(|v| v.as_array()) {
+        arr.iter().collect()
+    } else if json_str(raw, &["Name", "name"]).is_some() {
+        vec![raw]
+    } else {
+        return Vec::new();
+    };
+    items.into_iter().filter_map(glance_volume_row).collect()
+}
+
+fn glance_volume_row(v: &serde_json::Value) -> Option<serde_json::Value> {
+    let name = json_str(v, &["Name", "name"])?;
+    Some(serde_json::json!({
+        "name": name,
+        "driver": json_str(v, &["Driver", "driver"]).unwrap_or_default(),
+        "mountpoint": json_str(v, &["Mountpoint", "mountpoint"]).unwrap_or_default(),
+    }))
+}
+
 /// Map Engine volume inspect JSON to what the Volumes detail pane may show.
 /// Drops Labels, Options, and driver Status.
 pub fn summarize_volume_inspect(raw: &serde_json::Value) -> serde_json::Value {
@@ -1235,6 +1260,34 @@ mod tests {
         assert_eq!(out["size"], 42100000);
         assert_eq!(out["exposed_ports"][0], "443/tcp");
         assert_eq!(out["exposed_ports"][1], "80/tcp");
+    }
+
+    #[test]
+    fn glance_volume_list_keeps_rows_when_status_is_not_empty_maps() {
+        let raw = serde_json::json!({
+            "Volumes": [{
+                "Name": "gitlab-data",
+                "Driver": "local",
+                "Mountpoint": "/var/lib/docker/volumes/gitlab-data/_data",
+                "Labels": null,
+                "Status": { "Mounted": true, "hello": "world" }
+            }]
+        });
+        let rows = glance_volume_list(&raw);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["name"], "gitlab-data");
+        assert_eq!(rows[0]["driver"], "local");
+        let dumped = rows[0].to_string();
+        assert!(
+            !dumped.contains("Labels") && !dumped.contains("Status"),
+            "glance must not copy driver Status or Labels: {dumped}"
+        );
+        let cli_line = serde_json::json!({
+            "Name": "gitlab-data",
+            "Driver": "local",
+            "Mountpoint": "/var/lib/docker/volumes/gitlab-data/_data"
+        });
+        assert_eq!(glance_volume_list(&cli_line).len(), 1);
     }
 
     #[test]

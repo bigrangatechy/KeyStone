@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[command(
     name = "keystone-agent",
     about = "KeyStone node agent: push catalog metrics and optional Docker control",
-    version
+    version = keystone_core::AGENT_PACKAGE_VERSION
 )]
 pub struct AgentCli {
     /// Path to TOML config
