@@ -525,7 +525,7 @@ pub struct KeystoneBootUnit {
 }
 
 pub fn systemctl_is_enabled_args(unit: &str) -> Result<Vec<String>, SysError> {
-    if !KEYSTONE_BOOT_UNITS.iter().any(|u| *u == unit) {
+    if !KEYSTONE_BOOT_UNITS.contains(&unit) {
         return Err(SysError::Unit);
     }
     Ok(vec!["is-enabled".into(), "--".into(), unit.into()])
@@ -533,7 +533,7 @@ pub fn systemctl_is_enabled_args(unit: &str) -> Result<Vec<String>, SysError> {
 
 /// `enable` / `disable` only. Never `--now` (that would start/stop now).
 pub fn systemctl_boot_args(enabled: bool, unit: &str) -> Result<Vec<String>, SysError> {
-    if !KEYSTONE_BOOT_UNITS.iter().any(|u| *u == unit) {
+    if !KEYSTONE_BOOT_UNITS.contains(&unit) {
         return Err(SysError::Unit);
     }
     let verb = if enabled { "enable" } else { "disable" };
@@ -1425,7 +1425,7 @@ pub const SENSITIVE_RESTART_UNITS: &[&str] =
     &["keystone-server.service", "docker.service", "ssh.service"];
 
 pub fn sensitive_restart_unit(name: &str) -> bool {
-    SENSITIVE_RESTART_UNITS.iter().any(|u| *u == name)
+    SENSITIVE_RESTART_UNITS.contains(&name)
 }
 
 /// Form/JSON `unit` for `unit_restart`. Token only — membership of the
@@ -2670,11 +2670,10 @@ mod tests {
             systemctl_unattended_boot_args(false),
             vec!["disable", "--", "unattended-upgrades.service"]
         );
-        assert_eq!(
+        assert!(
             UnattendedSet::parse_json(r#"{"enabled":true}"#)
                 .unwrap()
-                .enabled,
-            true
+                .enabled
         );
         assert!(UnattendedSet::parse_json(r#"{"enabled":"yes;rm"}"#).is_err());
     }

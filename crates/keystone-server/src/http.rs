@@ -663,6 +663,7 @@ fn consume_step_up(
     Err(StepUpError::Denied)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_up_denied(
     state: &AppState,
     username: &str,
