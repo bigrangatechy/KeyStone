@@ -56,6 +56,27 @@ ks_prepare_etc_keystone() {
 	chmod 0750 /etc/keystone
 }
 
+# After the debhelper section: cargo-deb uses start=false so dh never starts
+# a unit the operator disabled. If the unit is enabled for boot, it should be
+# running. try-restart when already up (new binary). Start when enabled but
+# down (first install, or a host reboot after an older package that never
+# started). Never start a unit the operator disabled. Use deb-systemd-invoke
+# (not the systemctl start substring). Never start keystone-sys here.
+ks_start_if_enabled() {
+	unit=$1
+	if [ ! -d /run/systemd/system ]; then
+		return 0
+	fi
+	if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+		return 0
+	fi
+	if systemctl is-active --quiet "$unit" 2>/dev/null; then
+		systemctl try-restart "$unit" || true
+	else
+		deb-systemd-invoke start "$unit" >/dev/null || true
+	fi
+}
+
 case "$1" in
 configure)
 	if ! getent group keystone >/dev/null; then
@@ -81,16 +102,12 @@ esac
 
 #DEBHELPER#
 
-# Long-running units keep the old binary in RAM after dpkg replaces the
-# file. If the operator already started them, pick up the new process.
-# Never enable or start a unit that was off (first install still needs
-# enable --now after editing toml).
 case "$1" in
 configure)
+	ks_start_if_enabled keystone-agent.service
+	# Sys helper stays opt-in. If the operator already enabled the socket,
+	# pick up the new binary. Never enable or start it when it was off.
 	if [ -d /run/systemd/system ]; then
-		if systemctl is-active --quiet keystone-agent.service 2>/dev/null; then
-			systemctl try-restart keystone-agent.service || true
-		fi
 		if systemctl is-active --quiet keystone-sys.socket 2>/dev/null; then
 			systemctl try-restart keystone-sys.socket || true
 		elif systemctl is-active --quiet keystone-sys.service 2>/dev/null; then

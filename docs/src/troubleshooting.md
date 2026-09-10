@@ -226,12 +226,17 @@ token does not.
 
 ## Did not start after reboot
 
-`systemctl start` is not enough. The unit must be **enabled**:
+The unit must be **enabled**. `systemctl start` is not enough:
 
 ```
 systemctl is-enabled keystone-server keystone-agent
 sudo systemctl enable --now keystone-server keystone-agent
 ```
+
+Current packages enable on install and start on configure when the unit is
+already enabled. After a **host** reboot, systemd starts those enabled
+units. If you disabled them on Settings (**Start KeyStone on boot** off),
+they stay down on purpose.
 
 Or tick **Start KeyStone on boot** on that node's Settings (System helper
 and Manage on). That is `systemctl enable` without `--now`: it does not

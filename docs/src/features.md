@@ -43,7 +43,8 @@ Unlimited nodes. Agents **push** over gRPC; the server never opens a remote
 
 One slice at a time. Not mixed into the current tree:
 
-- Fedora `dnf`.
+- Fedora `dnf` and openSUSE `zypper` apply (this binary already reads os-release).
+- `.rpm` from the same tree (not a per-distro application fork).
 - LAN-only LLM Agent API (Unix socket, off by default, never on the internet).
 
 ## Not this product

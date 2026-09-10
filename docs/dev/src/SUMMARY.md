@@ -13,6 +13,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 - [Host system admin](system.md)
 - [Ingest protocol](ingest.md)
 - [LLM Agent API](agent-api.md)
+- [Headless Linux OS support](os-support.md)
 - [Stores](stores.md)
 - [HTTP API](http-api.md)
 - [Settings](settings.md)

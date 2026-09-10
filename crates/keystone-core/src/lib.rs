@@ -18,6 +18,7 @@ pub mod mdns;
 pub mod metrics;
 pub mod net;
 pub mod node;
+pub mod os;
 pub mod rbac;
 pub mod sample;
 pub mod settings;
@@ -42,6 +43,7 @@ pub use fleet::{fleet_chips, FleetChip};
 pub use mdns::{ingest_url_from_mdns, wants_mdns, MDNS_SERVICE_TYPE};
 pub use metrics::{catalog, is_known_metric, MetricDef, MetricType, Stability};
 pub use node::NodeIdentity;
+pub use os::{HostOs, OsFamily, PackageKind};
 pub use rbac::Permission;
 pub use sample::{Label, Sample};
 pub use settings::{AgentRuntime, NodeSettings, ServerSettings};
@@ -52,14 +54,14 @@ pub use widgets::{
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// `keystone-agent` Debian version (`0.1.0-16`). Heartbeat and `--version`.
+/// `keystone-agent` Debian version (`0.1.0-18`). Heartbeat and `--version`.
 pub const AGENT_PACKAGE_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "-",
     env!("KEYSTONE_AGENT_DEB_REVISION")
 );
 
-/// `keystone-server` Debian version (`0.1.0-19`). Settings and `--version`.
+/// `keystone-server` Debian version (`0.1.0-21`). Settings and `--version`.
 pub const SERVER_PACKAGE_VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "-",

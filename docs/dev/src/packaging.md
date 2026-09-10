@@ -39,11 +39,13 @@ Docker’s data root or `/`. Invariants (enforced by
   that inode only — never `chown -R`.
 - `prerm` / `#DEBHELPER#` stop `keystone-*` only.
 - `cargo-deb` `enable = true, start = false`: install turns the unit on for
-  boot; first configure does not start a unit that was off. Custom
-  maintainer scripts never `systemctl enable`/`start`/`restart` (the
-  substring). If `keystone-agent`, `keystone-server`, or `keystone-sys.socket`
-  is **already active**, `postinst` `try-restart`s it so the new binary is
-  in RAM. They never enable the sys helper.
+  boot; dh itself does not start a unit that was off. After `#DEBHELPER#`,
+  `postinst` `ks_start_if_enabled`: `systemctl try-restart` when already
+  active, or `deb-systemd-invoke start` when enabled but down (first install,
+  or a host reboot after an older `--no-start` package). They never
+  `systemctl enable`/`start`/`restart` (the substring) and never enable or
+  start the sys helper. If `keystone-sys.socket` is **already active**,
+  `postinst` `try-restart`s it so the new helper binary is in RAM.
   The UI **Start KeyStone on boot** checkbox is live `is-enabled` then
   `enable`/`disable` without `--now` — it does not run during a `.deb`
   upgrade.

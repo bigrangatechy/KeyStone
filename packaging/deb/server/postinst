@@ -55,6 +55,27 @@ ks_prepare_etc_keystone() {
 	chmod 0750 /etc/keystone
 }
 
+# After the debhelper section: cargo-deb uses start=false so dh never starts
+# a unit the operator disabled. If the unit is enabled for boot, it should be
+# running. try-restart when already up (new binary). Start when enabled but
+# down (first install, or a host reboot after an older package that never
+# started). Never start a unit the operator disabled. Use deb-systemd-invoke
+# (not the systemctl start substring).
+ks_start_if_enabled() {
+	unit=$1
+	if [ ! -d /run/systemd/system ]; then
+		return 0
+	fi
+	if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+		return 0
+	fi
+	if systemctl is-active --quiet "$unit" 2>/dev/null; then
+		systemctl try-restart "$unit" || true
+	else
+		deb-systemd-invoke start "$unit" >/dev/null || true
+	fi
+}
+
 case "$1" in
 configure)
 	if ! getent group keystone >/dev/null; then
@@ -75,16 +96,9 @@ esac
 
 #DEBHELPER#
 
-# Replacing /usr/bin/keystone does not update a running process. If the UI
-# is already up, pick up the new binary. Never enable or start it when it
-# was off.
 case "$1" in
 configure)
-	if [ -d /run/systemd/system ]; then
-		if systemctl is-active --quiet keystone-server.service 2>/dev/null; then
-			systemctl try-restart keystone-server.service || true
-		fi
-	fi
+	ks_start_if_enabled keystone-server.service
 	;;
 esac
 

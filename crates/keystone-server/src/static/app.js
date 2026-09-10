@@ -1508,6 +1508,8 @@
     const meta = el("p", "muted");
     const bits = [];
     if (data.hostname) bits.push(data.hostname);
+    if (data.os && data.os.pretty) bits.push(data.os.pretty);
+    else if (data.os && data.os.id) bits.push(data.os.id);
     if (data.kernel) bits.push("kernel " + data.kernel);
     if (data.backend) bits.push(data.backend);
     meta.textContent = bits.join(" · ") || "No host snapshot yet.";
@@ -1742,9 +1744,10 @@
 
     const listed = Array.isArray(data.packages);
     const pkgs = listed ? data.packages : [];
+    const aptManage = !data.os || data.os.package === "apt";
     const pkgHead = el("div", "compose-head");
     pkgHead.appendChild(el("h3", null, "Pending apt upgrades"));
-    if (helperOn) {
+    if (helperOn && aptManage) {
       const tools = el("div", "actions");
       const check = document.createElement("button");
       check.type = "button";
@@ -1797,7 +1800,9 @@
       pkgHead.appendChild(tools);
     }
     actions.appendChild(pkgHead);
-    if (!pkgs.length) {
+    if (!aptManage) {
+      actions.appendChild(el("p", "muted", "Host updates are apt on this version. Fedora dnf and openSUSE zypper are later."));
+    } else if (!pkgs.length) {
       actions.appendChild(el("p", "muted", listed ? "No pending upgrades." : "No list yet. Check for updates runs apt-get update on the node."));
     } else {
       if (data.capped) {

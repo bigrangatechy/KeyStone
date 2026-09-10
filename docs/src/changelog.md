@@ -8,6 +8,14 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Newest first. Each heading is `HH:MM:SS DD/MM/YYYY AEST` (Australian Eastern
 Standard Time). What this binary does vs later work is in [Features](features.md).
 
+## 18:26:47 10/09/2026 AEST
+
+Package server 0.1.0-21 and agent 0.1.0-18. If a unit is enabled for boot,
+configure starts it (`deb-systemd-invoke start`) so a host reboot is not
+left waiting on a manual `systemctl start`. `status` reads os-release
+(Debian / Fedora / Suse). Apt Apply stays Debian-family; Fedora dnf and
+openSUSE zypper apply are later.
+
 ## 17:55:00 10/09/2026 AEST
 
 Package server 0.1.0-20 and agent 0.1.0-17. Heartbeat and Settings show the

@@ -106,14 +106,21 @@ the log). **Enable/disable** writes the KeyStone drop-in and
 `20auto-upgrades`.
 
 Packaged `keystone-server` and `keystone-agent` use `Restart=always` and
-are enabled for boot (`WantedBy=multi-user.target`). After a kernel or
-`apt upgrade` reboot they should come back on their own. The node's
+are enabled for boot (`WantedBy=multi-user.target`). After configure, if
+the unit is enabled, `postinst` starts it (`deb-systemd-invoke start`) or
+`try-restart`s a running process. After a kernel or `apt upgrade` reboot
+they should come back on their own. The node's
 Settings tab has a **Start KeyStone on boot** checkbox (live
 `systemctl is-enabled`, then `enable`/`disable` without `--now`). That does
 not restart the running process and does not change on a package upgrade.
 Confirm with `systemctl is-enabled keystone-server keystone-agent` (must print
 `enabled`) — `systemctl start` alone does not survive a reboot. See
 [Troubleshooting](troubleshooting.md).
+
+The System tab shows the host from `os-release` (Ubuntu, Fedora Server,
+openSUSE, …). **Apply** / Check for updates is apt on this version. Fedora
+`dnf` and openSUSE `zypper` are later; the buttons stay hidden on those
+hosts.
 
 ## Addressing
 

@@ -156,6 +156,46 @@ fn developer_agent_api_plan_is_documented() {
 }
 
 #[test]
+fn developer_os_support_plan_is_documented() {
+    let plan = include_str!("../../../docs/dev/src/os-support.md");
+    let feat = include_str!("../../../docs/src/features.md");
+    let arch = include_str!("../../../docs/dev/src/architecture.md");
+    let summary = include_str!("../../../docs/dev/src/SUMMARY.md");
+    let system = include_str!("../../../docs/dev/src/system.md");
+    assert!(
+        summary.contains("os-support.md") && plan.contains("# Headless Linux OS support"),
+        "developer SUMMARY must list the OS support plan"
+    );
+    assert!(
+        plan.contains("not a per-distro")
+            && plan.contains("os-release")
+            && plan.contains("Fedora Server")
+            && plan.contains("openSUSE")
+            && plan.contains(".rpm")
+            && plan.contains("keystone-sys.socket")
+            && plan.contains("useradd")
+            && plan.contains("/usr/lib/systemd/system"),
+        "OS support plan must keep one-tree, rpm, sys-socket, and useradd rules"
+    );
+    assert!(
+        plan.contains("apt on this version") && plan.contains("dnf") && plan.contains("zypper"),
+        "this slice detects Fedora/openSUSE; apply stays apt"
+    );
+    assert!(
+        feat.contains("Fedora `dnf`") && feat.contains("`.rpm`") && feat.contains("same tree"),
+        "features.md Later must mention dnf apply and rpm from the same tree"
+    );
+    assert!(
+        arch.contains("os-support.md") && arch.contains("os-release"),
+        "architecture.md must point at the OS support plan"
+    );
+    assert!(
+        system.contains("HostOs::apt_sys_manage") && system.contains("Non-apt hosts"),
+        "developer system.md must say apt apply refuses Fedora/openSUSE"
+    );
+}
+
+#[test]
 fn operator_dashboard_documents_page_and_widget_styles() {
     let dash = include_str!("../../../docs/src/dashboard.md");
     for needle in [
@@ -1228,7 +1268,9 @@ fn operator_docs_cover_keystone_boot_enable() {
         "architecture.md must say boot enable is in and --now stays out of that op"
     );
     assert!(
-        packaging.contains("start = false") && packaging.contains("without `--now`"),
-        "packaging.md must say upgrades do not start the daemon and the UI checkbox is not --now"
+        packaging.contains("start = false")
+            && packaging.contains("without `--now`")
+            && packaging.contains("deb-systemd-invoke start"),
+        "packaging.md must say dh does not start a disabled unit, postinst starts if enabled, and the UI checkbox is not --now"
     );
 }

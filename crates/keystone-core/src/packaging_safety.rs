@@ -210,8 +210,19 @@ fn sys_helper_is_opt_in_root_socket() {
         "upgrade must try-restart an already-active sys socket so the new helper binary is used"
     );
     assert!(
-        postinst.contains("systemctl try-restart keystone-agent.service"),
-        "upgrade must try-restart a running agent so the new binary is in RAM"
+        postinst.contains("ks_start_if_enabled keystone-agent.service")
+            && postinst.contains("deb-systemd-invoke start")
+            && postinst.contains("is-enabled"),
+        "configure must start the agent when it is enabled for boot"
+    );
+    assert!(
+        !postinst.contains("ks_start_if_enabled keystone-sys")
+            && !postinst.contains("deb-systemd-invoke start keystone-sys"),
+        "postinst must not start the sys helper"
+    );
+    assert!(
+        postinst.contains("systemctl try-restart") && postinst.contains("\"$unit\""),
+        "enabled-and-active agent must try-restart via ks_start_if_enabled"
     );
     assert!(
         !postinst.contains("systemctl enable") && !postinst.contains("enable --now keystone-sys"),
@@ -234,7 +245,7 @@ fn sys_helper_is_opt_in_root_socket() {
 }
 
 #[test]
-fn cargo_deb_enables_boot_without_starting_on_upgrade() {
+fn cargo_deb_enables_boot_without_starting_disabled_units() {
     for (name, cargo) in [("agent", AGENT_CARGO), ("server", SERVER_CARGO)] {
         let line = cargo
             .lines()
@@ -246,18 +257,20 @@ fn cargo_deb_enables_boot_without_starting_on_upgrade() {
         );
         assert!(
             line.contains("start = false"),
-            "{name} package must not start a unit that was off (first install still needs enable --now)"
+            "{name} dh snippet must not start a unit that was off; postinst starts only if is-enabled"
         );
     }
     let agent_post = active_shell(AGENT_POSTINST);
     let server_post = active_shell(SERVER_POSTINST);
     assert!(
-        agent_post.contains("systemctl try-restart keystone-agent.service"),
-        "upgrade of a running agent must load the new binary"
+        agent_post.contains("ks_start_if_enabled keystone-agent.service")
+            && agent_post.contains("deb-systemd-invoke start"),
+        "upgrade/install of an enabled agent must start or try-restart it"
     );
     assert!(
-        server_post.contains("systemctl try-restart keystone-server.service"),
-        "upgrade of a running server must load the new binary"
+        server_post.contains("ks_start_if_enabled keystone-server.service")
+            && server_post.contains("deb-systemd-invoke start"),
+        "upgrade/install of an enabled server must start or try-restart it"
     );
     for s in scripts() {
         let active = active_shell(s);
@@ -267,7 +280,7 @@ fn cargo_deb_enables_boot_without_starting_on_upgrade() {
         );
         assert!(
             !active.contains("systemctl start"),
-            "custom maintainer script must not start KeyStone during upgrade"
+            "custom maintainer script must not use the systemctl start substring (deb-systemd-invoke start is the allowed path)"
         );
         assert!(
             !active.contains("systemctl restart"),
@@ -277,6 +290,28 @@ fn cargo_deb_enables_boot_without_starting_on_upgrade() {
             !active.contains("systemctl disable"),
             "upgrade must not disable a unit the operator enabled"
         );
+    }
+}
+
+#[test]
+fn maintainer_scripts_debhelper_token_is_its_own_line() {
+    for (name, src) in [
+        ("agent postinst", AGENT_POSTINST),
+        ("agent prerm", AGENT_PRERM),
+        ("agent postrm", AGENT_POSTRM),
+        ("server postinst", SERVER_POSTINST),
+        ("server prerm", SERVER_PRERM),
+        ("server postrm", SERVER_POSTRM),
+    ] {
+        for line in src.lines() {
+            if line.contains("#DEBHELPER#") {
+                assert_eq!(
+                    line.trim(),
+                    "#DEBHELPER#",
+                    "{name}: cargo-deb substitutes #DEBHELPER# inside comments, got {line:?}"
+                );
+            }
+        }
     }
 }
 

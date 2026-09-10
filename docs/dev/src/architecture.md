@@ -34,7 +34,7 @@ stream; the server never dials an agent and never opens a remote
 
 | Crate | Binary / role |
 |---|---|
-| `keystone-core` | Catalog, `DockerOp`, `SysOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers, Docker Hub search/tag mapping (no I/O). |
+| `keystone-core` | Catalog, `DockerOp`, `SysOp`, `Permission`, configs, `NodeSettings` / `ServerSettings`, widget kinds and hydrate, `fleet_chips` / alert transitions, mDNS URL helpers, Docker Hub search/tag mapping (no I/O), `os-release` family (`HostOs`). |
 | `keystone-proto` | Generated from `proto/ingest.proto`. |
 | `keystone-store` | `keystone.sqlite` + `series.redb`. |
 | `keystone-agent` | `keystone-agent`: sysinfo / hwmon / GPU, Docker handle, session client, optional mDNS browse. Extra bin `keystone-sys` (root helper, socket-activated, off until enabled). |
@@ -101,8 +101,10 @@ WebAuthn, remote Docker, 32-bit ARM packages, a node cap, per-node alert
 thresholds, PagerDuty, a CasaOS-style app shop, GHCR/private registry
 browse, System shutdown from the UI, hostname /
 timezone textbox / users / firewall / sshd_config editors, Wi-Fi hotspot / 802.1X, Fedora /
-Arch host updates, unattended-upgrades config editor, Watchtower,
-Docker GitLab backup. Allowlisted `journalctl` follow (six units, including
+Arch host **apply**, unattended-upgrades config editor, Watchtower,
+Docker GitLab backup. `os-release` family (Debian / Fedora / Suse) is in;
+dnf/zypper apply is not. See [Headless Linux OS support](os-support.md).
+Allowlisted `journalctl` follow (six units, including
 `unattended-upgrades.service`) is in
 this slice; a unit-name textbox is not. Leftover/failed **unit restart** from
 those listed names is in (`systemctl restart`, step-up when TOTP is on).

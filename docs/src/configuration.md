@@ -79,7 +79,7 @@ mutations.
 Read-only. Header **Settings** shows this UI's `keystone-server` Debian
 version and a table of each node's last heartbeat `agent_version`. The node
 **Settings** tab repeats that node's agent and this server. Heartbeats send
-`0.1.0-17`, not crate `0.1.0` alone. An agent that still shows `0.1.0` is an
+`0.1.0-18`, not crate `0.1.0` alone. An agent that still shows `0.1.0` is an
 older binary (or the process was not reloaded). Current packages
 `try-restart` a running agent or server on upgrade.
 

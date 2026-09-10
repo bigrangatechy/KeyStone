@@ -216,6 +216,7 @@ async fn status() -> anyhow::Result<Value> {
     );
     Ok(json!({
         "helper": true,
+        "os": keystone_core::os::HostOs::from_host().to_json(),
         "backend": backend,
         "reboot_required": reboot_required() || leftovers.kernel_pending,
         "kernel_pending": leftovers.kernel_pending,
@@ -612,6 +613,7 @@ async fn updates_list() -> anyhow::Result<Value> {
     if cfg!(test) {
         anyhow::bail!("updates list is not invoked in tests");
     }
+    require_apt_host()?;
     apt_cmd(&["update"], false).await?;
     let mut pkgs = parse_apt_list_upgradable(&apt_list_upgradable().await.unwrap_or_default());
     let sim = apt_cmd(
@@ -654,10 +656,17 @@ async fn apt_list_upgradable() -> anyhow::Result<String> {
     Ok(s)
 }
 
+fn require_apt_host() -> anyhow::Result<()> {
+    keystone_core::os::HostOs::from_host()
+        .require_apt()
+        .map_err(anyhow::Error::msg)
+}
+
 async fn updates_apply(writer: &mut tokio::net::unix::OwnedWriteHalf) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("updates apply is not invoked in tests");
     }
+    require_apt_host()?;
     stream_apt(writer, &["update"]).await?;
     stream_apt(
         writer,
@@ -677,6 +686,7 @@ async fn updates_autoremove(writer: &mut tokio::net::unix::OwnedWriteHalf) -> an
     if cfg!(test) {
         anyhow::bail!("autoremove is not invoked in tests");
     }
+    require_apt_host()?;
     stream_apt(writer, &["-y", "autoremove"]).await
 }
 
@@ -1250,6 +1260,7 @@ async fn unattended_set(req: &UnattendedSet) -> anyhow::Result<()> {
     if cfg!(test) {
         anyhow::bail!("unattended set is not invoked in tests");
     }
+    require_apt_host()?;
     if !Path::new(UNATTENDED_UPGRADE_BIN).is_file() {
         anyhow::bail!("unattended-upgrades is not installed on this node");
     }
@@ -1392,6 +1403,23 @@ mod tests {
         assert!(
             v.get("payload").and_then(|p| p.get("backend")).is_some(),
             "status payload must include backend, got {line}"
+        );
+        let os = v.get("payload").and_then(|p| p.get("os"));
+        let family = os.and_then(|o| o.get("family")).and_then(|f| f.as_str());
+        let package = os.and_then(|o| o.get("package")).and_then(|p| p.as_str());
+        assert!(
+            matches!(
+                family,
+                Some("debian") | Some("fedora") | Some("suse") | Some("other")
+            ),
+            "status os.family must be a known family, got {line}"
+        );
+        assert!(
+            matches!(
+                package,
+                Some("apt") | Some("dnf") | Some("zypper") | Some("unknown")
+            ),
+            "status os.package must be a known kind, got {line}"
         );
         let kind = v
             .get("payload")
@@ -1689,6 +1717,10 @@ mod tests {
             list.contains("cfg!(test)"),
             "Check for updates must not run apt-get update in cargo test"
         );
+        assert!(
+            list.contains("require_apt_host"),
+            "Check for updates must refuse Fedora/openSUSE until dnf/zypper apply ships"
+        );
         let apply = src
             .split("async fn updates_apply")
             .nth(1)
@@ -1705,6 +1737,10 @@ mod tests {
             !apply.contains("dist-upgrade"),
             "Apply stays apt-get upgrade, not dist-upgrade"
         );
+        assert!(
+            apply.contains("require_apt_host"),
+            "Apply must refuse non-apt hosts rather than running apt-get"
+        );
         let autoremove = src
             .split("async fn updates_autoremove")
             .nth(1)
@@ -1715,6 +1751,7 @@ mod tests {
         assert!(autoremove.contains("autoremove"));
         assert!(autoremove.contains("stream_apt"));
         assert!(autoremove.contains("cfg!(test)"));
+        assert!(autoremove.contains("require_apt_host"));
         assert!(!autoremove.contains("dist-upgrade"));
         assert!(!autoremove.contains("sh -c") && !autoremove.contains("bash -c"));
     }
@@ -2097,6 +2134,7 @@ mod tests {
         assert!(body.contains("UNATTENDED_KEYSTONE_DROPIN"));
         assert!(body.contains("systemctl_unattended_boot_args"));
         assert!(body.contains("cfg!(test)"));
+        assert!(body.contains("require_apt_host"));
         assert!(!body.contains("UNATTENDED_AUTO_UPGRADES"));
         assert!(!body.contains("--now"));
         assert!(!body.contains("sh -c") && !body.contains("bash -c"));

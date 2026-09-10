@@ -4764,6 +4764,12 @@ mod tests {
             "Apply updates must ask before apt-get upgrade"
         );
         assert!(
+            js.contains("Host updates are apt on this version")
+                && js.contains("Fedora dnf")
+                && js.contains("os.package === \"apt\""),
+            "System tab must hide apt Apply on Fedora/openSUSE until dnf/zypper ships"
+        );
+        assert!(
             js.contains("Remove unused packages with apt-get autoremove"),
             "Autoremove must ask before apt-get autoremove"
         );

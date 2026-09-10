@@ -134,6 +134,7 @@ pub async fn local_status() -> Value {
     json!({
         "hostname": hostname,
         "kernel": kernel,
+        "os": keystone_core::os::HostOs::from_host().to_json(),
         "helper_running": socket_present(),
         "reboot_required": std::path::Path::new("/run/reboot-required").is_file()
             || std::path::Path::new("/var/run/reboot-required").is_file(),
@@ -260,6 +261,10 @@ mod tests {
         }
         assert!(v.get("interfaces").is_some());
         assert!(v.get("ntp").is_some());
+        assert!(
+            v["os"]["family"].as_str().is_some() && v["os"]["package"].as_str().is_some(),
+            "os-release family is observe, not helper-only, got {v}"
+        );
     }
 
     #[test]

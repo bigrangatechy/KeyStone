@@ -53,14 +53,14 @@ Copy the files onto the machine (into `/tmp` if apt cannot read
 
 ```
 # Copy out of ~/Downloads first if apt complains that _apt cannot read the file
-sudo cp keystone-server_0.1.0-20_amd64.deb keystone-agent_0.1.0-17_amd64.deb /tmp/
+sudo cp keystone-server_0.1.0-21_amd64.deb keystone-agent_0.1.0-18_amd64.deb /tmp/
 
 # The one UI box (optional: agent as well, so this host is in the list)
-sudo apt install /tmp/keystone-server_0.1.0-20_amd64.deb
-sudo apt install /tmp/keystone-agent_0.1.0-17_amd64.deb   # optional on the UI host
+sudo apt install /tmp/keystone-server_0.1.0-21_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-18_amd64.deb   # optional on the UI host
 
 # Every other node: agent only
-sudo apt install /tmp/keystone-agent_0.1.0-17_amd64.deb
+sudo apt install /tmp/keystone-agent_0.1.0-18_amd64.deb
 ```
 
 A **Notice** about `_apt` / `pkgAcquire::Run (13: Permission denied)` means
@@ -93,9 +93,10 @@ sudo systemctl enable --now keystone-server
 systemctl is-enabled keystone-server
 ```
 
-`is-enabled` must print `enabled`. The package turns the unit on for boot;
-`systemctl start` without `enable` does **not** come back after a reboot.
-After the UI is up, **Start KeyStone on boot** on that node's Settings does
+Current packages enable the unit for boot and start it on configure when
+it is enabled (`deb-systemd-invoke start`). `systemctl start` without
+`enable` does **not** come back after a reboot. After the UI is up,
+**Start KeyStone on boot** on that node's Settings does
 the same `enable` without `--now`. Units use `Restart=always` so a crash
 or a boot race with the network does not leave the UI down.
 
@@ -245,7 +246,7 @@ already generated a token.
 
 Same Debian revision (`0.1.0-1` over itself) looks like “already the
 newest version” and does not replace the binary; use
-`apt install --reinstall ./….deb`. A newer revision (`0.1.0-20`) is a
+`apt install --reinstall ./….deb`. A newer revision (`0.1.0-21`) is a
 normal upgrade.
 
 Do **not** `apt purge` to pick up a new binary: purge deletes
